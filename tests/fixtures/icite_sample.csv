@@ -1,0 +1,5 @@
+pmid,doi,year,title,journal,relative_citation_ratio,nih_percentile,citation_count,citations_per_year,expected_citations_per_year,field_citation_rate,is_research_article,is_clinical,apt,human,animal
+23456789,10.1002/CNCR.27976,2013,"Hospital volume, survival, and multimodality therapy",Cancer,2.51,88.4,142,9.4,3.7,5.12,Yes,No,0.75,1.0,0.0
+30000001,10.1016/J.CELL.2018.01.001,2018,"A study of, commas in titles",Cell,1.05,55.0,40,5.0,4.8,6.01,Yes,No,0.40,0.5,0.5
+30000002,,2020,No DOI here,Nature,0.80,42.1,12,2.0,2.5,3.30,Yes,No,0.30,1.0,0.0
+notapmid,10.9/notapmidrow,,Bad pmid row should drop,,,,,,,,No,No,,,
