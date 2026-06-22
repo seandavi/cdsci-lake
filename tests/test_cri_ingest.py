@@ -105,3 +105,18 @@ def test_icite_resolve_latest_live():
     info = icite.resolve_latest()
     assert info["version"]
     assert info["files"]
+
+
+@pytest.mark.skipif(not os.getenv("RUN_INTEGRATION"), reason="needs GSM creds + network")
+def test_shared_lake_attach_live():
+    """Read-only attach of the live Postgres+R2 lake (catalog-only; no data scan)."""
+    from cri.lake import lake_connect
+
+    con = lake_connect(Settings(lake_backend="postgres"), read_only=True)
+    tables = {
+        r[0]
+        for r in con.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_catalog='lake'"
+        ).fetchall()
+    }
+    assert "pubmed_article" in tables

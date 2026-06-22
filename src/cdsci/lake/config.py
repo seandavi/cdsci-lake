@@ -39,13 +39,32 @@ class Settings(BaseSettings):
     duckdb_memory_limit: str | None = None  # None → ~70% RAM (see lake._auto_memory_limit)
     duckdb_threads: int = Field(default=4, ge=1)
 
-    # --- Lake catalog (single-file DuckDB catalog, ALWAYS local; ADR-0022) ---
-    # Path is relative to the local ``./data`` root (or absolute). Start with a
-    # single-file catalog to preserve "no server to run"; swap to Postgres only
-    # when concurrent multi-project writers require it.
+    # --- Lake backend selection ---
+    # "local"    → single-file DuckDB catalog + Parquet under the storage seam
+    #              (dev/test/prototype; no server to run).
+    # "postgres" → the shared platform DuckLake: Postgres catalog + R2 data,
+    #              credentials read from Google Secret Manager (ADR-0024).
+    lake_backend: str = "local"
+
+    # --- Local catalog (lake_backend="local") ---
+    # Path relative to the local ``./data`` root (or absolute); data Parquet
+    # lands under the storage seam at ``lake_data_prefix``.
     lake_catalog: str = "lake/catalog.ducklake"
-    # Lake data (Parquet) lives under the storage seam at this prefix.
     lake_data_prefix: str = "lake/data"
+
+    # --- Shared catalog (lake_backend="postgres") ---
+    # Catalog is the Postgres ``lake`` DB; data is the R2 bucket recorded in the
+    # catalog (data path inherited on ATTACH, not re-specified). All secrets come
+    # from Google Secret Manager — see :mod:`cri.secrets`.
+    gsm_project: str = "cdsci-infra"
+    lake_pg_host: str = "100.74.53.55"
+    lake_pg_port: int = 5432
+    lake_pg_dbname: str = "lake"
+    lake_pg_user: str = "postgres"  # admin for now; switch to lake_writer/reader role
+    lake_pg_password_secret: str = "cdsci-postgres-admin-password"
+    r2_account_id_secret: str = "cdsci-r2-account-id"
+    r2_access_key_secret: str = "cdsci-r2-access-key-id"
+    r2_secret_key_secret: str = "cdsci-r2-secret-access-key"
 
     # --- Source locations (configurable; defaults verified 2026-06-22) ---
     # iCite monthly bulk: figshare collection "iCite Database Snapshots". The

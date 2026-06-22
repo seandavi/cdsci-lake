@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 import duckdb
 
 from .config import Settings, get_settings
+from .secrets import get_secret
 
 LAKE = "lake"  # the ATTACH alias every query uses: ``lake.<table>``
 
@@ -85,18 +86,34 @@ def lake_connect(
 ) -> duckdb.DuckDBPyConnection:
     """Open an in-memory DuckDB that ``ATTACH``es the lake as ``lake``.
 
-    * ``httpfs`` is loaded so ingestors can stream remote files and serving can
-      read Parquet from R2; ``ducklake`` provides the table format.
-    * When the landing pad is R2, an S3-compatible secret is created so reads and
-      writes hit the bucket.
-    * ``read_only=True`` attaches the lake read-only — the right mode for serving
-      (a dashboard/API must never mutate the substrate).
+    Two backends (``settings.lake_backend``):
+
+    * ``"local"`` — a single-file DuckDB catalog + Parquet under the storage seam
+      (dev/test/prototype; no server).
+    * ``"postgres"`` — the shared platform lake: Postgres ``lake`` catalog + R2
+      data, all credentials from Google Secret Manager (ADR-0024).
+
+    ``httpfs`` + ``ducklake`` are always loaded; ``read_only=True`` attaches the
+    lake read-only — the right mode for serving (a dashboard/API/project must
+    never mutate the shared substrate).
     """
     s = settings or get_settings()
     con = duckdb.connect()
     con.execute("INSTALL httpfs; LOAD httpfs;")
     con.execute("INSTALL ducklake; LOAD ducklake;")
+    _apply_limits(con, s)
 
+    if s.lake_backend == "postgres":
+        _attach_postgres(con, s, read_only=read_only)
+    elif s.lake_backend == "local":
+        _attach_local(con, s, read_only=read_only)
+    else:
+        raise ValueError(f"Unknown lake_backend: {s.lake_backend!r}")
+    return con
+
+
+def _apply_limits(con: duckdb.DuckDBPyConnection, s: Settings) -> None:
+    """Bound memory/threads and spill to a local temp dir rather than OOM."""
     tmp_dir = _local_root(s) / "lake" / "duckdb_tmp"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     con.execute(f"SET memory_limit = '{s.duckdb_memory_limit or _auto_memory_limit()}';")
@@ -104,6 +121,9 @@ def lake_connect(
     con.execute(f"SET temp_directory = '{tmp_dir}';")
     con.execute("SET preserve_insertion_order = false;")
 
+
+def _attach_local(con: duckdb.DuckDBPyConnection, s: Settings, *, read_only: bool) -> None:
+    """Attach a single-file DuckLake catalog with an explicit local/R2 data path."""
     if s.writes_to_r2 and s.r2_endpoint_url and s.r2_access_key_id:
         endpoint = urlparse(s.r2_endpoint_url).netloc or s.r2_endpoint_url
         con.execute(
@@ -115,13 +135,35 @@ def lake_connect(
             """,
             [s.r2_access_key_id, s.r2_secret_access_key, endpoint, s.r2_region],
         )
-
     ro = ", READ_ONLY" if read_only else ""
     con.execute(
         f"ATTACH 'ducklake:{catalog_path(s)}' AS {LAKE} "
         f"(DATA_PATH '{data_path(s)}'{ro});"
     )
-    return con
+
+
+def _attach_postgres(con: duckdb.DuckDBPyConnection, s: Settings, *, read_only: bool) -> None:
+    """Attach the shared Postgres-catalog DuckLake; secrets come from GSM.
+
+    The data path is inherited from the catalog (not re-specified). Postgres auth
+    goes through ``PGPASSWORD`` so the password never lands in the ATTACH string
+    or DuckDB error text; the R2 credentials become a DuckDB ``r2`` secret.
+    """
+    con.execute("INSTALL postgres; LOAD postgres;")
+    con.execute(
+        "CREATE OR REPLACE SECRET r2_lake (TYPE r2, KEY_ID ?, SECRET ?, ACCOUNT_ID ?);",
+        [
+            get_secret(s.r2_access_key_secret, s.gsm_project),
+            get_secret(s.r2_secret_key_secret, s.gsm_project),
+            get_secret(s.r2_account_id_secret, s.gsm_project),
+        ],
+    )
+    os.environ["PGPASSWORD"] = get_secret(s.lake_pg_password_secret, s.gsm_project)
+    opts = " (READ_ONLY)" if read_only else ""
+    con.execute(
+        f"ATTACH 'ducklake:postgres:dbname={s.lake_pg_dbname} host={s.lake_pg_host} "
+        f"port={s.lake_pg_port} user={s.lake_pg_user}' AS {LAKE}{opts};"
+    )
 
 
 def csv_source(paths: list[Path] | str) -> str:
