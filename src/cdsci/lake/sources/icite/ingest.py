@@ -21,11 +21,12 @@ from pathlib import Path
 import duckdb
 
 from ...config import Settings, get_settings
-from ...connect import LAKE, csv_source, lake_connect, raw_dir
+from ...connect import LAKE, csv_source, lake_connect, raw_dir, upsert
 from ...download import download, get_json, unzip
 
 _FIGSHARE = "https://api.figshare.com/v2"
-_TABLE = "icite"
+_TABLE = "icite.metadata"  # lake table (schema.table)
+_RAW = "icite"  # raw-download subdir name
 
 
 def _sql_str(value: str) -> str:
@@ -75,10 +76,10 @@ def download_snapshot(
     latest = resolve_latest(s)
     version = version or latest["version"]
     meta = _pick_metadata_file(latest["files"])
-    dest = raw_dir(_TABLE, s) / f"{version}-{meta['name']}"
+    dest = raw_dir(_RAW, s) / f"{version}-{meta['name']}"
     archive = download(meta["download_url"], dest)
     if archive.suffix == ".zip":
-        extract_to = raw_dir(_TABLE, s) / version
+        extract_to = raw_dir(_RAW, s) / version
         return version, [p for p in unzip(archive, extract_to) if _is_data(p)]
     return version, [archive]
 
@@ -87,24 +88,16 @@ def _is_data(path: Path) -> bool:
     return path.suffix.lower() in {".csv", ".tsv", ".gz"}
 
 
-def curate(
-    con: duckdb.DuckDBPyConnection,
-    csv_paths: list[Path] | str,
-    version: str,
-    *,
-    limit: int | None = None,
-) -> int:
-    """Build ``lake.icite`` from the snapshot CSV(s); return the row count.
+def _select_sql(csv_paths: list[Path] | str, version: str, limit: int | None) -> str:
+    """Typed, join-focused projection over the iCite metadata CSV.
 
     Reads every column as text (``all_varchar``) and casts in SQL, so a monthly
-    schema tweak upstream never breaks the scan — only a renamed *core* column
-    would, and that fails loudly rather than silently dropping data.
+    schema tweak upstream never breaks the scan. The bulky ``cited_by`` /
+    ``references`` PMID-list columns are intentionally dropped (they belong in a
+    citation-graph / open-citations table, not the per-paper metrics table).
     """
-    source = csv_source(csv_paths)
     limit_sql = f" LIMIT {int(limit)}" if limit else ""
-    con.execute(
-        f"""
-        CREATE OR REPLACE TABLE {LAKE}.{_TABLE} AS
+    return f"""
         SELECT
             TRY_CAST(pmid AS BIGINT)                          AS pmid,
             NULLIF(lower(doi), '')                            AS doi,
@@ -126,33 +119,53 @@ def curate(
             TRY_CAST(animal AS DOUBLE)                        AS animal,
             CAST({_sql_str(version)} AS VARCHAR)              AS snapshot_version
         FROM read_csv(
-            {source},
+            {csv_source(csv_paths)},
             header = true, all_varchar = true, sample_size = -1,
             quote = '"', escape = '"', ignore_errors = true
         )
-        WHERE TRY_CAST(pmid AS BIGINT) IS NOT NULL{limit_sql};
-        """
-    )
-    return con.execute(f"SELECT count(*) FROM {LAKE}.{_TABLE}").fetchone()[0]
+        WHERE TRY_CAST(pmid AS BIGINT) IS NOT NULL{limit_sql}
+    """
+
+
+def curate(
+    con: duckdb.DuckDBPyConnection,
+    csv_paths: list[Path] | str,
+    version: str,
+    *,
+    target: str | None = None,
+    limit: int | None = None,
+) -> int:
+    """Upsert the snapshot CSV(s) into ``icite.metadata`` on ``pmid``.
+
+    A monthly snapshot mostly *updates* existing PMIDs (citations accrue) and
+    inserts new ones — a textbook MERGE. Keying on ``pmid`` keeps DuckLake
+    time-travel meaningful month over month (see :func:`cdsci.lake.upsert`).
+    """
+    target = target or f"{LAKE}.{_TABLE}"
+    return upsert(con, target, _select_sql(csv_paths, version, limit), key="pmid")
 
 
 def ingest(
     *,
     file: str | None = None,
     version: str | None = None,
+    schema: str = "icite",
     limit: int | None = None,
     settings: Settings | None = None,
 ) -> dict:
-    """End-to-end: (download unless ``file`` given) → curate → return a summary."""
+    """End-to-end: (download unless ``file`` given) → upsert → return a summary."""
     s = settings or get_settings()
     if file:
         paths: list[Path] | str = file
         version = version or "local"
     else:
         version, paths = download_snapshot(version, s)
+    target = f"{LAKE}.{schema}.metadata"
     con = lake_connect(s)
     try:
-        rows = curate(con, paths, version, limit=limit)
+        snap_before = con.execute(f"SELECT max(snapshot_id) FROM {LAKE}.snapshots()").fetchone()[0]
+        rows = curate(con, paths, version, target=target, limit=limit)
+        snap_after = con.execute(f"SELECT max(snapshot_id) FROM {LAKE}.snapshots()").fetchone()[0]
     finally:
         con.close()
-    return {"table": f"{LAKE}.{_TABLE}", "version": version, "rows": rows}
+    return {"table": target, "version": version, "rows": rows, "changed": snap_after != snap_before}

@@ -1,12 +1,11 @@
-"""NIH RePORTER — all federally funded research projects, bulk-loaded.
+"""NIH RePORTER — federally funded research, bulk-loaded from ExPORTER.
 
-Loaded from the **ExPORTER** per-fiscal-year project files (CSV in a zip), not
-the per-PI API. ``lake.reporter_projects`` holds *every* NIH project for the
-fetched years — institution-neutral. Matching grants to a center's members by PI
-name stays a *project* concern (``cu_openalex.cancer_center.reporter``, ADR-0020);
-this table is the shared, unattributed substrate it draws from.
+Each ExPORTER file group becomes a lake table under the ``reporter`` schema —
+``projects``, ``abstracts``, ``publications``, and the ``publink`` grants<->PMID
+crosswalk — institution-neutral facts. Matching grants to a center's members by
+PI name stays a *project* concern; these tables are the shared substrate.
 """
 
-from .ingest import curate, download_years, ingest, list_files
+from .ingest import GROUPS, available_years, curate, download_group, ingest, list_files
 
-__all__ = ["curate", "download_years", "ingest", "list_files"]
+__all__ = ["GROUPS", "available_years", "curate", "download_group", "ingest", "list_files"]

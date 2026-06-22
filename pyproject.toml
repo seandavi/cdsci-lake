@@ -18,6 +18,7 @@ ingest = [
     "httpx>=0.28.1",
     "tenacity>=9.1.4",
     "typer>=0.15.0",
+    "pytz>=2025.1",  # DuckDB needs it to return tz-timestamps (maintenance result sets)
 ]
 
 [build-system]

@@ -1,4 +1,4 @@
-"""CLI: ``python -m cri.sources.icite`` — load the iCite snapshot into the lake."""
+"""CLI: ``python -m cdsci.lake.sources.icite`` — load the iCite snapshot into the lake."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ import typer
 from .ingest import ingest, resolve_latest
 
 app = typer.Typer(
-    help="Ingest the monthly iCite bulk snapshot into lake.icite.", add_completion=False
+    help="Ingest the monthly iCite bulk snapshot into lake.icite.metadata.",
+    add_completion=False,
 )
 
 
@@ -26,11 +27,18 @@ def run(
         None, "--file", help="Local CSV/TSV (glob ok) to load instead of downloading."
     ),
     version: str | None = typer.Option(None, "--version", help="Label this snapshot version."),
+    schema: str = typer.Option(
+        "icite", "--schema", help="Target lake schema (e.g. _dev to stage before promoting)."
+    ),
     limit: int | None = typer.Option(None, "--limit", help="Cap rows (smoke test)."),
 ) -> None:
-    """Download (unless --file) and curate the snapshot into lake.icite."""
-    summary = ingest(file=file, version=version, limit=limit)
-    typer.echo(f"{summary['table']} <- {summary['rows']:,} rows (snapshot {summary['version']})")
+    """Download (unless --file) and MERGE-upsert the snapshot into lake.icite.metadata."""
+    summary = ingest(file=file, version=version, schema=schema, limit=limit)
+    delta = "changed" if summary["changed"] else "no change (idempotent)"
+    typer.echo(
+        f"{summary['table']} <- {summary['rows']:,} rows "
+        f"(snapshot {summary['version']}) — {delta}"
+    )
 
 
 if __name__ == "__main__":

@@ -37,11 +37,11 @@ def test_icite_curate(lake_settings: Settings):
         rows = icite.curate(con, [FIXTURES / "icite_sample.csv"], "test-2026-06")
         # 4 rows in the fixture; the non-numeric pmid row is dropped.
         assert rows == 3
-        assert table_exists(con, "icite")
+        assert table_exists(con, "metadata")
 
         r = con.execute(
             "SELECT pmid, doi, rcr, citation_count, is_research_article, snapshot_version "
-            "FROM lake.icite WHERE pmid = 23456789"
+            "FROM lake.icite.metadata WHERE pmid = 23456789"
         ).fetchone()
         pmid, doi, rcr, citations, is_article, version = r
         assert pmid == 23456789
@@ -52,7 +52,9 @@ def test_icite_curate(lake_settings: Settings):
         assert version == "test-2026-06"
 
         # Empty DOI becomes NULL, not "".
-        null_doi = con.execute("SELECT doi FROM lake.icite WHERE pmid = 30000002").fetchone()[0]
+        null_doi = con.execute(
+            "SELECT doi FROM lake.icite.metadata WHERE pmid = 30000002"
+        ).fetchone()[0]
         assert null_doi is None
 
         # A snapshot was committed to the catalog (time-travel / versioning).
@@ -92,15 +94,15 @@ def test_upsert_time_travel_semantics(lake_settings: Settings):
         con.close()
 
 
-def test_reporter_curate(lake_settings: Settings):
+def test_reporter_projects_curate(lake_settings: Settings):
     con = lake_connect(lake_settings)
     try:
-        rows = reporter.curate(con, [FIXTURES / "reporter_sample.csv"])
+        rows = reporter.curate(con, "projects", [FIXTURES / "reporter_sample.csv"])
         assert rows == 2  # the 'badid' row drops on non-numeric appl_id
 
         r = con.execute(
             "SELECT core_project_num, fiscal_year, total_cost, org_name, pi_names "
-            "FROM lake.reporter_projects WHERE appl_id = 10617263"
+            "FROM lake.reporter.projects WHERE appl_id = 10617263"
         ).fetchone()
         core, fy, total, org, pis = r
         assert core == "5R01CA123456"
@@ -108,6 +110,48 @@ def test_reporter_curate(lake_settings: Settings):
         assert total == pytest.approx(750000.0)
         assert "COLORADO" in org.upper()
         assert "DAVIS, SEAN" in pis  # PI_NAMEs header read case-insensitively
+    finally:
+        con.close()
+
+
+def test_reporter_publink_composite_key(lake_settings: Settings, tmp_path):
+    """The LINK group keys on (pmid, project_number) — the grants<->PMID crosswalk."""
+    csv = tmp_path / "publink.csv"
+    csv.write_text("PMID,PROJECT_NUMBER\n111,R01CA1\n111,R01CA2\n222,R01CA1\nx,R01BAD\n")
+    con = lake_connect(lake_settings)
+    try:
+        rows = reporter.curate(con, "publink", [csv])
+        assert rows == 3  # 3 valid edges; the non-numeric pmid row drops
+
+        before = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+        reporter.curate(con, "publink", [csv])  # identical re-run
+        after = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+        assert before == after  # idempotent on the composite key
+    finally:
+        con.close()
+
+
+def test_maintenance_dry_run(lake_settings: Settings):
+    """expire (dry-run, bounded) + cleanup on a local lake; preview is non-destructive."""
+    from cdsci.lake import maintenance
+
+    con = lake_connect(lake_settings)
+    try:
+        upsert(con, "lake.main.t", "SELECT * FROM (VALUES (1,'a'),(2,'b')) v(id,val)", key="id")
+        upsert(con, "lake.main.t", "SELECT * FROM (VALUES (2,'B'),(3,'c')) v(id,val)", key="id")
+        n0 = con.execute("SELECT count(*) FROM lake.snapshots()").fetchone()[0]
+
+        # Unbounded expiry is refused.
+        with pytest.raises(ValueError):
+            maintenance.expire_snapshots(con, older_than=None)
+
+        # Dry-run previews without changing the catalog.
+        preview = maintenance.expire_snapshots(con, older_than="2999-01-01", dry_run=True)
+        assert isinstance(preview, list)
+        assert con.execute("SELECT count(*) FROM lake.snapshots()").fetchone()[0] == n0
+
+        # cleanup_files (orphans only) runs and returns a list.
+        assert isinstance(maintenance.cleanup_files(con, dry_run=True), list)
     finally:
         con.close()
 
