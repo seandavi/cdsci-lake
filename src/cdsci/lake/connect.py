@@ -227,6 +227,6 @@ def table_exists(con: duckdb.DuckDBPyConnection, table: str) -> bool:
 def snapshots(con: duckdb.DuckDBPyConnection) -> list[tuple]:
     """List the lake's snapshots (id, time, schema_version) — the version log."""
     return con.execute(
-        f"SELECT snapshot_id, snapshot_time, schema_version "
+        f"SELECT snapshot_id, snapshot_time::VARCHAR AS snapshot_time, schema_version "
         f"FROM {LAKE}.snapshots() ORDER BY snapshot_id"
     ).fetchall()

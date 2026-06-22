@@ -1,0 +1,25 @@
+# Secrets / local config
+.env
+
+# Lake raw downloads + local catalog/data (R2 is the real data store)
+/data/
+*.duckdb
+*.duckdb.wal
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Logs
+/logs/

@@ -18,8 +18,8 @@ from pathlib import Path
 import duckdb
 
 from ...config import Settings, get_settings
+from ...connect import LAKE, csv_source, lake_connect, raw_dir, upsert
 from ...download import download, post_json, unzip
-from ...lake import LAKE, csv_source, lake_connect, raw_dir, upsert
 
 _TABLE = "reporter_projects"
 _FILE_GROUP = "PROJECT"

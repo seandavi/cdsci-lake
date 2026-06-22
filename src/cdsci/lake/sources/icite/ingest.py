@@ -21,8 +21,8 @@ from pathlib import Path
 import duckdb
 
 from ...config import Settings, get_settings
+from ...connect import LAKE, csv_source, lake_connect, raw_dir
 from ...download import download, get_json, unzip
-from ...lake import LAKE, csv_source, lake_connect, raw_dir
 
 _FIGSHARE = "https://api.figshare.com/v2"
 _TABLE = "icite"

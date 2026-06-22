@@ -1,18 +1,46 @@
-"""``cri`` — the shared research-intelligence substrate.
+"""``cdsci.lake`` — the shared research-data lake: read client + source ingestors.
 
-A single repository with **strong internal separation** (ADR-0022/0023):
+A single DuckLake (Postgres catalog + Cloudflare R2 data) holds canonical,
+source-faithful biomedical reference corpora — published by this package and by
+omicidx — that internal projects consume instead of re-fetching from APIs.
 
-* ``cri`` (this package root) — the *platform library*: the DuckLake connection
-  (:mod:`cri.lake`), shared config (:mod:`cri.config`), and I/O helpers
-  (:mod:`cri.download`). Depends on nothing else in the repo.
-* ``cri.sources.*`` — *ingestors*. Each pulls one canonical, source-faithful
-  corpus (bulk dumps) into the lake. A source imports the platform library and
-  **never another source or a project**.
-* ``cri.projects.*`` — *consumers* (marts, dashboards, "ask" portals). Read the
-  lake; own their cohort/entity-resolution logic. (Not yet migrated here — the
-  existing ``cu_openalex.cancer_center`` package is the first such project.)
+Two surfaces, split by install extra:
 
-The boundary rule, stated so it can be enforced: the lake holds *what is true
-about a paper/grant*; a project decides *and it belongs to our cohort*. Entity
-resolution never enters a source or the shared lake.
+* **Read client** (base install, ``pip install cdsci-lake``) — :func:`lake_connect`
+  and config. Consumers attach the lake read-only and join across sources; they
+  "assume the data exists" and never run ingest. This is the contract surface.
+* **Ingest** (``pip install cdsci-lake[ingest]``) — :mod:`cdsci.lake.sources`,
+  the bulk source importers (iCite, NIH RePORTER, …). Platform-side only.
+
+``cdsci`` is a PEP 420 namespace (no ``__init__`` at ``src/cdsci/``); sibling
+``cdsci.*`` packages may live in other repos. The boundary rule: the lake holds
+*what is true about a paper/grant*; a consuming project decides *and it belongs
+to our cohort* — entity resolution never enters a source or the lake.
 """
+
+from .config import Settings, get_settings
+from .connect import (
+    LAKE,
+    catalog_path,
+    csv_source,
+    data_path,
+    lake_connect,
+    raw_dir,
+    snapshots,
+    table_exists,
+    upsert,
+)
+
+__all__ = [
+    "LAKE",
+    "Settings",
+    "get_settings",
+    "lake_connect",
+    "upsert",
+    "csv_source",
+    "snapshots",
+    "table_exists",
+    "raw_dir",
+    "catalog_path",
+    "data_path",
+]

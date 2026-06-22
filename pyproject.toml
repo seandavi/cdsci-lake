@@ -1,0 +1,51 @@
+[project]
+name = "cdsci-lake"
+version = "0.1.0"
+description = "Shared DuckLake platform: read client + bulk source ingestors for the cdsci research-data lake"
+readme = "README.md"
+authors = [{ name = "Sean Davis", email = "seandavi@gmail.com" }]
+requires-python = ">=3.13"
+# Base install = the READ CLIENT. Consumers attach the lake and query; that's all
+# they need. Credentials come from Google Secret Manager via the `gcloud` CLI.
+dependencies = [
+    "duckdb>=1.5.3",
+    "pydantic-settings>=2.14.1",
+]
+
+[project.optional-dependencies]
+# Platform-side only: the bulk source ingestors and their HTTP/CLI deps.
+ingest = [
+    "httpx>=0.28.1",
+    "tenacity>=9.1.4",
+    "typer>=0.15.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.11,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# PEP 420 namespace package: `cdsci` is the namespace, `lake` the module. No
+# __init__.py at src/cdsci/ — sibling cdsci.* packages may live in other repos.
+module-name = "cdsci.lake"
+module-root = "src"
+namespace = true
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.15.15",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+flake8-bugbear.extend-immutable-calls = ["typer.Option", "typer.Argument"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

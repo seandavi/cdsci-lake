@@ -13,10 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from cri.config import Settings
-from cri.lake import csv_source, lake_connect, snapshots, table_exists, upsert
-from cri.sources import icite, reporter
-from cri.sources.icite.ingest import _pick_metadata_file
+from cdsci.lake import Settings, csv_source, lake_connect, snapshots, table_exists, upsert
+from cdsci.lake.sources import icite, reporter
+from cdsci.lake.sources.icite.ingest import _pick_metadata_file
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -132,7 +131,7 @@ def test_icite_resolve_latest_live():
 @pytest.mark.skipif(not os.getenv("RUN_INTEGRATION"), reason="needs GSM creds + network")
 def test_shared_lake_attach_live():
     """Read-only attach of the live Postgres+R2 lake (catalog-only; no data scan)."""
-    from cri.lake import lake_connect
+    from cdsci.lake import lake_connect
 
     con = lake_connect(Settings(lake_backend="postgres"), read_only=True)
     tables = {
