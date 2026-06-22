@@ -174,6 +174,46 @@ def csv_source(paths: list[Path] | str) -> str:
     return f"[{quoted}]"
 
 
+def upsert(
+    con: duckdb.DuckDBPyConnection,
+    target: str,
+    source_sql: str,
+    key: str | list[str],
+) -> int:
+    """MERGE the rows of ``source_sql`` into ``target`` on ``key``; return row count.
+
+    ``target`` is a fully-qualified ``catalog.schema.table``. The schema and an
+    empty target are created on first run; thereafter each call MERGEs — a row
+    INSERTs when new and UPDATEs **only when a non-key column actually differs**
+    (``IS DISTINCT FROM``). So a re-run of unchanged data writes nothing and adds
+    no snapshot, and every DuckLake snapshot records just the real deltas — the
+    point of time-travel. A bulk ``CREATE OR REPLACE`` would instead make every
+    snapshot a full rewrite.
+    """
+    parts = target.split(".")
+    if len(parts) != 3:
+        raise ValueError(f"target must be catalog.schema.table, got {target!r}")
+    catalog, schema, _ = parts
+    keys = [key] if isinstance(key, str) else list(key)
+
+    con.execute(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema};")
+    con.execute(f"CREATE OR REPLACE TEMP TABLE _cri_stage AS {source_sql};")
+    con.execute(f"CREATE TABLE IF NOT EXISTS {target} AS SELECT * FROM _cri_stage WHERE false;")
+
+    cols = [c[0] for c in con.execute("DESCRIBE _cri_stage").fetchall()]
+    nonkey = [c for c in cols if c not in keys]
+    on = " AND ".join(f"t.{k} = s.{k}" for k in keys)
+    matched = ""
+    if nonkey:
+        changed = " OR ".join(f"t.{c} IS DISTINCT FROM s.{c}" for c in nonkey)
+        matched = f"WHEN MATCHED AND ({changed}) THEN UPDATE SET * "
+    con.execute(
+        f"MERGE INTO {target} AS t USING _cri_stage AS s ON {on} "
+        f"{matched}WHEN NOT MATCHED THEN INSERT *;"
+    )
+    return con.execute(f"SELECT count(*) FROM {target}").fetchone()[0]
+
+
 def table_exists(con: duckdb.DuckDBPyConnection, table: str) -> bool:
     """True if ``lake.<table>`` exists in the attached catalog."""
     rows = con.execute(

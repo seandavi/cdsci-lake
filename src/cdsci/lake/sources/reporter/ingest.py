@@ -19,7 +19,7 @@ import duckdb
 
 from ...config import Settings, get_settings
 from ...download import download, post_json, unzip
-from ...lake import LAKE, csv_source, lake_connect, raw_dir
+from ...lake import LAKE, csv_source, lake_connect, raw_dir, upsert
 
 _TABLE = "reporter_projects"
 _FILE_GROUP = "PROJECT"
@@ -61,13 +61,8 @@ def _is_csv(path: Path) -> bool:
     return path.suffix.lower() == ".csv"
 
 
-def curate(
-    con: duckdb.DuckDBPyConnection,
-    csv_paths: list[Path] | str,
-    *,
-    limit: int | None = None,
-) -> int:
-    """Build ``lake.reporter_projects`` from the ExPORTER CSV(s); return row count.
+def _select_sql(csv_paths: list[Path] | str, limit: int | None = None) -> str:
+    """The typed projection over the ExPORTER CSV(s) — the upsert source query.
 
     Projects a stable subset of the (wide, drifting) ExPORTER schema. DuckDB
     identifiers are case-insensitive, so the upstream ``PI_NAMEs`` header is read
@@ -75,9 +70,7 @@ def curate(
     """
     source = csv_source(csv_paths)
     limit_sql = f" LIMIT {int(limit)}" if limit else ""
-    con.execute(
-        f"""
-        CREATE OR REPLACE TABLE {LAKE}.{_TABLE} AS
+    return f"""
         SELECT
             TRY_CAST(application_id AS BIGINT)   AS appl_id,
             core_project_num                     AS core_project_num,
@@ -108,20 +101,41 @@ def curate(
             quote = '"', escape = '"', union_by_name = true,
             ignore_errors = true, null_padding = true
         )
-        WHERE TRY_CAST(application_id AS BIGINT) IS NOT NULL{limit_sql};
-        """
-    )
-    return con.execute(f"SELECT count(*) FROM {LAKE}.{_TABLE}").fetchone()[0]
+        WHERE TRY_CAST(application_id AS BIGINT) IS NOT NULL{limit_sql}
+    """
+
+
+def curate(
+    con: duckdb.DuckDBPyConnection,
+    csv_paths: list[Path] | str,
+    *,
+    target: str | None = None,
+    limit: int | None = None,
+) -> int:
+    """Upsert ExPORTER CSV(s) into the ``reporter_projects`` table; return row count.
+
+    Keyed on ``appl_id`` (one row per project-year award), so re-loading a year
+    or adding a year records only the real deltas as a DuckLake snapshot, keeping
+    time-travel meaningful (see :func:`cri.lake.upsert`).
+    """
+    target = target or f"{LAKE}.main.{_TABLE}"
+    return upsert(con, target, _select_sql(csv_paths, limit), key="appl_id")
 
 
 def ingest(
     *,
     years: list[int] | None = None,
     files: list[str] | str | None = None,
+    schema: str = "main",
     limit: int | None = None,
     settings: Settings | None = None,
 ) -> dict:
-    """End-to-end: (download ``years`` unless ``files`` given) → curate → summary."""
+    """End-to-end: (download ``years`` unless ``files`` given) → upsert → summary.
+
+    ``schema`` is the lake schema to write (e.g. ``_dev`` to stage on the shared
+    lake before promoting to ``reporter``). The summary reports whether the
+    upsert produced a new snapshot — an unchanged re-run produces none.
+    """
     s = settings or get_settings()
     if files:
         paths: list[Path] | str = files if isinstance(files, str) else [Path(f) for f in files]
@@ -129,16 +143,22 @@ def ingest(
         paths = download_years(years, s)
     else:
         raise ValueError("Provide either years=[...] or files=[...].")
+
+    target = f"{LAKE}.{schema}.{_TABLE}"
     con = lake_connect(s)
     try:
-        rows = curate(con, paths, limit=limit)
+        snap_before = con.execute(f"SELECT max(snapshot_id) FROM {LAKE}.snapshots()").fetchone()[0]
+        rows = curate(con, paths, target=target, limit=limit)
+        snap_after = con.execute(f"SELECT max(snapshot_id) FROM {LAKE}.snapshots()").fetchone()[0]
         years_loaded = con.execute(
-            f"SELECT DISTINCT fiscal_year FROM {LAKE}.{_TABLE} ORDER BY 1"
+            f"SELECT DISTINCT fiscal_year FROM {target} ORDER BY 1"
         ).fetchall()
     finally:
         con.close()
     return {
-        "table": f"{LAKE}.{_TABLE}",
+        "table": target,
         "rows": rows,
         "fiscal_years": [y[0] for y in years_loaded],
+        "snapshot": snap_after,
+        "changed": snap_after != snap_before,
     }

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from cri.config import Settings
-from cri.lake import csv_source, lake_connect, snapshots, table_exists
+from cri.lake import csv_source, lake_connect, snapshots, table_exists, upsert
 from cri.sources import icite, reporter
 from cri.sources.icite.ingest import _pick_metadata_file
 
@@ -67,6 +67,28 @@ def test_icite_curate_limit(lake_settings: Settings):
     try:
         rows = icite.curate(con, [FIXTURES / "icite_sample.csv"], "test", limit=1)
         assert rows == 1
+    finally:
+        con.close()
+
+
+def test_upsert_time_travel_semantics(lake_settings: Settings):
+    """MERGE upsert: new rows insert, changed rows update, a no-op adds no snapshot."""
+    con = lake_connect(lake_settings)
+    try:
+        src1 = "SELECT * FROM (VALUES (1, 'a'), (2, 'b')) v(id, val)"
+        assert upsert(con, "lake.main.t", src1, key="id") == 2
+
+        # Identical re-run must be idempotent: no new snapshot.
+        before = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+        upsert(con, "lake.main.t", src1, key="id")
+        after = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+        assert before == after
+
+        # A real change updates the matched row and inserts the new one.
+        src2 = "SELECT * FROM (VALUES (2, 'B2'), (3, 'c')) v(id, val)"
+        assert upsert(con, "lake.main.t", src2, key="id") == 3
+        assert con.execute("SELECT val FROM lake.main.t WHERE id = 2").fetchone()[0] == "B2"
+        assert con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0] > after
     finally:
         con.close()
 

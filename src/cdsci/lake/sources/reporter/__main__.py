@@ -27,12 +27,16 @@ def run(
     file: list[str] = typer.Option(
         None, "--file", help="Local CSV(s) to load instead of downloading; repeatable."
     ),
+    schema: str = typer.Option(
+        "main", "--schema", help="Lake schema to write (e.g. _dev to stage before promoting)."
+    ),
     limit: int | None = typer.Option(None, "--limit", help="Cap rows (smoke test)."),
 ) -> None:
-    """Download (unless --file) and curate ExPORTER projects into the lake."""
-    summary = ingest(years=years or None, files=file or None, limit=limit)
+    """Download (unless --file) and upsert ExPORTER projects into the lake."""
+    summary = ingest(years=years or None, files=file or None, schema=schema, limit=limit)
     fys = ", ".join(str(y) for y in summary["fiscal_years"])
-    typer.echo(f"{summary['table']} <- {summary['rows']:,} rows (FY {fys})")
+    delta = f"snapshot {summary['snapshot']}" if summary["changed"] else "no change (idempotent)"
+    typer.echo(f"{summary['table']} <- {summary['rows']:,} rows (FY {fys}) — {delta}")
 
 
 if __name__ == "__main__":
