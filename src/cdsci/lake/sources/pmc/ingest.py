@@ -19,6 +19,7 @@ the last bulk; the same MERGE-on-pmcid makes bulk and API top-ups idempotent.
 
 from __future__ import annotations
 
+import gzip
 import json
 import re
 import tarfile
@@ -50,9 +51,14 @@ def download_range(filename: str, settings: Settings | None = None) -> Path:
 
 
 def tar_to_ndjson(tar_path: Path, ndjson_path: Path) -> int:
-    """Stream a BioC tarball → NDJSON (one compact BioC collection per line)."""
+    """Stream a BioC tarball → gzipped NDJSON (one compact BioC collection per line).
+
+    Gzip keeps the transient extract ~4 GB/range instead of ~20 GB; DuckDB reads
+    ``.ndjson.gz`` directly.
+    """
     n = 0
-    with tarfile.open(tar_path, "r:gz") as tf, open(ndjson_path, "w") as out:
+    opener = gzip.open if str(ndjson_path).endswith(".gz") else open
+    with tarfile.open(tar_path, "r:gz") as tf, opener(ndjson_path, "wt") as out:
         for member in tf:
             if not member.isfile():
                 continue
@@ -71,7 +77,12 @@ def tar_to_ndjson(tar_path: Path, ndjson_path: Path) -> int:
 def materialize_raw(con: duckdb.DuckDBPyConnection, ndjson: Path | str) -> Path:
     """Bronze: compact Parquet ``(pmcid, record)`` from the NDJSON extract."""
     ndjson = Path(ndjson)
-    raw = ndjson.with_name(ndjson.stem + ".parquet")
+    base = ndjson.name
+    for suffix in (".ndjson.gz", ".ndjson", ".gz"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    raw = ndjson.with_name(base + ".parquet")
     con.execute(
         f"""
         COPY (
@@ -150,14 +161,18 @@ def ingest(
 
         for filename in ranges if ranges is not None else list_ranges(s):
             tar = download_range(filename, s)
-            ndjson = raw_dir("pmc", s) / (filename.replace(".tar.gz", ".ndjson"))
+            ndjson = raw_dir("pmc", s) / (filename.replace(".tar.gz", ".ndjson.gz"))
             n_files = tar_to_ndjson(tar, ndjson)
             raw = materialize_raw(con, ndjson)
             curate(con, raw, schema=schema, snapshot=snapshot, limit=limit)
             summary["ranges"].append({"file": filename, "articles": n_files})
             if not keep_raw:
+                # The silver record on R2 is the faithful copy, so the local
+                # tarball / NDJSON / bronze Parquet are all transient — delete
+                # them per range so disk stays ~one range, not 22 × 7 GB.
                 tar.unlink(missing_ok=True)
                 ndjson.unlink(missing_ok=True)
+                raw.unlink(missing_ok=True)
         summary["rows"] = con.execute(
             f"SELECT count(*) FROM {LAKE}.{schema}.{_TABLE}"
         ).fetchone()[0]
