@@ -42,6 +42,13 @@ cdsci-lake` and `lake_connect(read_only=True)`.
   `record` + extracted `pmid`/`doi` crosswalk, key `pmcid`. API for incrementals.
   Loaded for corpus-wide mining (accession/software/CFDE FTS) — see ADR-0002 +
   `docs/design/pmc.md`. (Full ~210 GB load in progress.)
+- **Census geo / `ref` schema** (`census_geo`) — canonical US FIPS + boundaries from
+  Census cartographic shapefiles via DuckDB `spatial` (`ST_Read`, no parser). MERGE
+  on `fips`: `ref.geo_state` (fips↔abbrev↔name + WKB geom) and `ref.geo_county`
+  (5-digit GEOID). Geometry stored as WKB (consumers `ST_GeomFromWKB`). This is the
+  geographic anchor for `ref.id_crosswalk`: `scp.fips`/`substr(fips,1,2)` ⋈
+  `ref.geo_state.fips` and `reporter.org_state` ⋈ `ref.geo_state.abbrev` — a real
+  key (verified) replacing the inline state-name map; plus polygons for choropleths.
 - **MERGE-upsert** (`cdsci.lake.upsert`, ADR-0003) — keyed, change-detecting (updates
   only on real diffs), idempotent (no-op re-run adds no snapshot) → meaningful
   time-travel. Per-load stamps (`snapshot_version`) are excluded from change-detection
@@ -73,6 +80,8 @@ go straight to the source schemas. Promoted (full history):
 | `lake.scp.risk`          | 83,429 | behavioral-risk / screening prevalence (2026-06-01) |
 | `lake.scp.demographics`  | 3,310,984 | WIDE socio-economic table, ~44 cols (2026-06-01) |
 | `lake.pmc.fulltext`      | _(loading, full corpus)_ | full BioC record + pmid/doi crosswalk (~6–12M) |
+| `lake.ref.geo_state`     | 56 | FIPS↔abbrev↔name + WKB geometry (cb 2023) |
+| `lake.ref.geo_county`    | 3,235 | 5-digit FIPS + WKB geometry (cb 2023) |
 
 **Trial↔grant↔literature triangle verified:** 70,376 trials link to 92,470 NIH
 grants via 145,811 shared publications (`ctgov.references` ⋈ `reporter.publink`);

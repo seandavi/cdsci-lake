@@ -91,6 +91,13 @@ class Settings(BaseSettings):
     biocpmc_ftp: str = "https://ftp.ncbi.nlm.nih.gov/pub/wilbur/BioC-PMC/"
     biocpmc_variant: str = "json_unicode"
     biocpmc_api: str = "https://www.ncbi.nlm.nih.gov/research/bionlp/RESTful/pmcoa.cgi/BioC_json"
+    # US Census cartographic boundary shapefiles — canonical FIPS + geometry.
+    # Read via DuckDB's spatial extension (ST_Read) into ref.geo_* ; geometry is
+    # stored as WKB (consumers use ST_GeomFromWKB). CRS: NAD83 / EPSG:4269.
+    census_geo_year: int = 2023
+    census_geo_url: str = (
+        "https://www2.census.gov/geo/tiger/GENZ{year}/shp/cb_{year}_us_{layer}_500k.zip"
+    )
 
     @property
     def scp_releases_api(self) -> str:

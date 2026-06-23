@@ -293,6 +293,48 @@ def test_pmc_curate(lake_settings: Settings, tmp_path):
         con.close()
 
 
+def test_census_geo_upsert_wkb(lake_settings: Settings):
+    """ref.geo_state: geometry stored as WKB round-trips; tag-only change is idempotent."""
+    con = lake_connect(lake_settings)
+    con.execute("INSTALL spatial; LOAD spatial;")
+    try:
+        src = (
+            "SELECT '01' AS fips, 'AL' AS abbrev, 'Alabama' AS name, "
+            "ST_AsWKB(ST_Point(1.0, 2.0)) AS geom_wkb, '2023' AS snapshot_version"
+        )
+        upsert(con, "lake.ref.geo_state", src, key="fips", exclude_change_cols=["snapshot_version"])
+        wkt = con.execute(
+            "SELECT ST_AsText(ST_GeomFromWKB(geom_wkb)) FROM lake.ref.geo_state WHERE fips='01'"
+        ).fetchone()[0]
+        assert wkt.startswith("POINT")
+
+        before = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+        upsert(
+            con, "lake.ref.geo_state", src.replace("'2023'", "'2024'"),
+            key="fips", exclude_change_cols=["snapshot_version"],
+        )
+        after = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+        assert after == before  # only the cb vintage changed → no rewrite
+    finally:
+        con.close()
+
+
+@pytest.mark.skipif(not os.getenv("RUN_INTEGRATION"), reason="downloads a Census shapefile")
+def test_census_geo_state_live(lake_settings: Settings):
+    from cdsci.lake.sources import census_geo
+
+    con = lake_connect(lake_settings)
+    try:
+        shp = census_geo.download_layer("geo_state", 2023)
+        assert census_geo.curate(con, "geo_state", shp, year=2023) >= 50
+        assert (
+            con.execute("SELECT abbrev FROM lake.ref.geo_state WHERE fips='06'").fetchone()[0]
+            == "CA"
+        )
+    finally:
+        con.close()
+
+
 def test_maintenance_dry_run(lake_settings: Settings):
     """expire (dry-run, bounded) + cleanup on a local lake; preview is non-destructive."""
     from cdsci.lake import maintenance
