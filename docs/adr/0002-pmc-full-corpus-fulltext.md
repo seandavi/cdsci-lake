@@ -1,0 +1,64 @@
+# 0002. PMC full text: load the full corpus, full BioC record
+
+- Status: accepted
+- Date: 2026-06-23
+
+## Context
+
+PubMed Central full text is available via **BioC-PMC**: a bulk FTP of per-PMCID-range
+tarballs (`PMC{range}XXXXX_json_unicode.tar.gz`, one BioC *collection* JSON per
+article — inner files named `.xml` but JSON content) and a per-article REST API
+for incrementals. The json-unicode set is **22 tarballs ≈ 130 GB compressed, ~6–12M
+articles**.
+
+This is by far the heaviest source, so scope was a real decision. A 1-range pilot
+(`PMC000XXXXX`) measured: **390,347 articles → 7.3 GB on R2** (~19.6 KB/article,
+full record kept), **93% have a PMID** / 74% a DOI, **~12 min/range**. Extrapolated:
+**~210 GB on R2, ~5–7 h** one-time load (~$3–4/mo R2 storage + read egress).
+
+The choice: load the **full corpus** vs a cohort/cancer-topic **subset** (filter to
+PMIDs already in the lake via `reporter.publink` / `ctgov.references` / cohort).
+
+## Decision
+
+**Load the full PMC corpus**, storing the **complete BioC record** per article.
+
+The use cases are **corpus-wide text mining, not cohort lookup**, so a PMID subset
+would discard most of the signal:
+
+1. **Accession FTS** — find GEO / SRA / BioSample / BioProject accessions mentioned
+   in the literature (omicidx-adjacent: which papers reference which deposits).
+2. **Software mentions** — GitHub / Bioconductor / CRAN / PyPI URLs in text.
+3. **CFDE** — project names and URLs, for CFDE evaluation.
+
+These span all of biomedical literature; restricting to cancer/grant/trial-linked
+PMIDs would miss the bulk of accessions, software, and CFDE references.
+
+- **Table `pmc.fulltext`** — key `pmcid`; `pmid`/`doi` (extracted from
+  `passages[0].infons.article-id_*` — the crosswalk into iCite/grants/trials/omicidx),
+  `license`, `title`, `n_passages`, and the **full BioC JSON `record`** (nothing
+  lost; any future extraction is re-derivable without re-fetch).
+- **Per-range streaming** bounds local disk: download tarball → gzipped NDJSON →
+  bronze Parquet → MERGE (on `pmcid`) → **delete all local transients** → next range.
+  The silver `record` on R2 is the faithful copy, so no local bronze is retained.
+- **Incrementals** via the per-article REST API for PMCIDs newer than the bulk;
+  same MERGE-on-`pmcid` makes bulk + top-ups idempotent (one-time bulk, then API).
+
+## Consequences
+
+- ~210 GB on R2 — the largest table in the lake, an accepted cost given the
+  corpus-wide use cases. (Maintenance/expiry reclaims superseded versions.)
+- Keeping the full `record` means the mining layer (accession / software / CFDE
+  extraction, FTS) is **derived** from the lake and recomputable as patterns
+  improve — no re-download. See `docs/design/pmc.md`.
+- `pmcid`↔`pmid`/`doi` (93%/74%) completes the literature layer and gives the
+  planned `ref.id_crosswalk` its PMCID anchor.
+
+## Alternatives considered
+
+- **Cohort/topic subset.** Cheaper (~20–60 GB) but defeats the use cases —
+  accessions/software/CFDE mentions live across the whole corpus, not our PMIDs.
+- **Flat text / dropping the record.** Lossy; couldn't re-mine for new patterns
+  (new accession formats, software hosts) without re-fetching 130 GB.
+- **Live-scrape / API for the bulk.** The bulk FTP exists and is far cheaper than
+  ~6–12M API calls; API is for incrementals only.

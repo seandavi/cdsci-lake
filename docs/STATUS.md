@@ -36,13 +36,23 @@ cdsci-lake` and `lake_connect(read_only=True)`.
   `persistent_poverty` kept categorical). Drops `_extracted_at` and the
   year-prefixed RUCC note column from silver for schema stability. CLI: `latest` /
   `run --schema scp [--file domain=path]`. See `docs/design/scp.md`.
-- **MERGE-upsert** (`cdsci.lake.upsert`) — keyed, change-detecting (updates only on
-  real diffs), idempotent (no-op re-run adds no snapshot) → meaningful time-travel.
+- **BioC-PMC full-text importer** (`pmc`) — **full corpus** from the BioC-PMC bulk
+  tarballs (json-unicode), per-range streaming (download → gz NDJSON → bronze
+  Parquet → MERGE → delete) to bound disk; `pmc.fulltext` keeps the full BioC
+  `record` + extracted `pmid`/`doi` crosswalk, key `pmcid`. API for incrementals.
+  Loaded for corpus-wide mining (accession/software/CFDE FTS) — see ADR-0002 +
+  `docs/design/pmc.md`. (Full ~210 GB load in progress.)
+- **MERGE-upsert** (`cdsci.lake.upsert`, ADR-0003) — keyed, change-detecting (updates
+  only on real diffs), idempotent (no-op re-run adds no snapshot) → meaningful
+  time-travel. Per-load stamps (`snapshot_version`) are excluded from change-detection
+  via `exclude_change_cols`, so a monthly load rewrites only changed rows (not the
+  whole table) and the stamp records each row's last-changed snapshot.
 - **DuckLake maintenance** (`cdsci.lake.maintenance`) — expire snapshots → cleanup
   unused files (+ compact / vacuum), `dry_run` default; loud warning that expiry is
   catalog-global.
-- **Docs**: ADR-0001 (platform charter), `docs/design/reporter-icite-mapping.md`
-  (empirically-verified source mapping). **Tests**: 8 offline pass; ruff clean.
+- **Docs**: ADR-0001 (platform charter), ADR-0002 (PMC full corpus), ADR-0003 (lake
+  write semantics); designs `reporter-icite-mapping.md`, `scp.md`, `pmc.md`.
+  **Tests**: 12 offline pass; ruff clean.
 
 ## Live lake state — PROMOTED to production source schemas
 
@@ -62,6 +72,7 @@ go straight to the source schemas. Promoted (full history):
 | `lake.scp.mortality`     | 1,034,042 | county+state cancer mortality (2026-06-01) |
 | `lake.scp.risk`          | 83,429 | behavioral-risk / screening prevalence (2026-06-01) |
 | `lake.scp.demographics`  | 3,310,984 | WIDE socio-economic table, ~44 cols (2026-06-01) |
+| `lake.pmc.fulltext`      | _(loading, full corpus)_ | full BioC record + pmid/doi crosswalk (~6–12M) |
 
 **Trial↔grant↔literature triangle verified:** 70,376 trials link to 92,470 NIH
 grants via 145,811 shared publications (`ctgov.references` ⋈ `reporter.publink`);
