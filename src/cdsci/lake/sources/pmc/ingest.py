@@ -124,13 +124,25 @@ def curate(
     schema: str = "pmc",
     snapshot: str = "bulk",
     limit: int | None = None,
+    mode: str = "merge",
 ) -> int:
-    """Upsert ``pmc.fulltext`` from a bronze Parquet; MERGE on ``pmcid``."""
+    """Load ``pmc.fulltext`` from a bronze Parquet.
+
+    ``mode="merge"`` (default) MERGE-upserts on ``pmcid`` — for incrementals/re-runs.
+    ``mode="append"`` INSERTs without reading the target — for the initial bulk,
+    whose PMCID ranges are disjoint, so a MERGE's whole-table read (growing to
+    ~200 GB by the last range) is pure waste. Returns rows written this call (no
+    full-table count, which would re-read the growing table from R2).
+    """
     src = csv_source(str(raw_parquet))
-    return upsert(
-        con, f"{LAKE}.{schema}.{_TABLE}", _select_sql(src, snapshot, limit),
-        key="pmcid", exclude_change_cols=["snapshot_version"],
-    )
+    sql = _select_sql(src, snapshot, limit)
+    target = f"{LAKE}.{schema}.{_TABLE}"
+    if mode == "append":
+        catalog, sch, _ = target.split(".")
+        con.execute(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{sch};")
+        con.execute(f"CREATE TABLE IF NOT EXISTS {target} AS SELECT * FROM ({sql}) WHERE false;")
+        return con.execute(f"INSERT INTO {target} SELECT * FROM ({sql});").fetchone()[0]
+    return upsert(con, target, sql, key="pmcid", exclude_change_cols=["snapshot_version"])
 
 
 def ingest(
@@ -140,14 +152,18 @@ def ingest(
     schema: str = "pmc",
     snapshot: str = "bulk",
     limit: int | None = None,
+    mode: str = "merge",
     keep_raw: bool = False,
     settings: Settings | None = None,
 ) -> dict:
     """Load BioC-PMC into ``pmc.fulltext``, one range at a time.
 
     ``ranges`` selects tarball filenames (default: all json-unicode ranges).
-    ``file`` loads a single local NDJSON/Parquet instead (for tests/pilots).
-    Local tarball + NDJSON are deleted after each range unless ``keep_raw``.
+    ``mode`` is ``"append"`` for the initial disjoint-range bulk (no target reads)
+    or ``"merge"`` for incrementals. ``file`` loads a single local NDJSON/Parquet.
+    Local transients are deleted after each range unless ``keep_raw``. Rows are
+    summed per range — no final whole-table ``count(*)`` (which would re-read the
+    growing table from R2).
     """
     s = settings or get_settings()
     con = lake_connect(s)
@@ -155,7 +171,7 @@ def ingest(
     try:
         if file:
             raw = Path(file) if str(file).endswith(".parquet") else materialize_raw(con, file)
-            summary["rows"] = curate(con, raw, schema=schema, snapshot=snapshot, limit=limit)
+            summary["rows"] = curate(con, raw, schema=schema, snapshot=snapshot, limit=limit, mode=mode)
             summary["ranges"].append(Path(file).name)
             return summary
 
@@ -164,8 +180,9 @@ def ingest(
             ndjson = raw_dir("pmc", s) / (filename.replace(".tar.gz", ".ndjson.gz"))
             n_files = tar_to_ndjson(tar, ndjson)
             raw = materialize_raw(con, ndjson)
-            curate(con, raw, schema=schema, snapshot=snapshot, limit=limit)
-            summary["ranges"].append({"file": filename, "articles": n_files})
+            wrote = curate(con, raw, schema=schema, snapshot=snapshot, limit=limit, mode=mode)
+            summary["rows"] += wrote
+            summary["ranges"].append({"file": filename, "articles": n_files, "rows": wrote})
             if not keep_raw:
                 # The silver record on R2 is the faithful copy, so the local
                 # tarball / NDJSON / bronze Parquet are all transient — delete
@@ -173,9 +190,6 @@ def ingest(
                 tar.unlink(missing_ok=True)
                 ndjson.unlink(missing_ok=True)
                 raw.unlink(missing_ok=True)
-        summary["rows"] = con.execute(
-            f"SELECT count(*) FROM {LAKE}.{schema}.{_TABLE}"
-        ).fetchone()[0]
         return summary
     finally:
         con.close()

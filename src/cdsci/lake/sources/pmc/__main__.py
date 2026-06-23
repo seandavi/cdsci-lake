@@ -30,6 +30,9 @@ def run(
     snapshot: str = typer.Option(
         "bulk", "--snapshot", help="snapshot_version label stamped on rows (e.g. 2026-06)."
     ),
+    mode: str = typer.Option(
+        "merge", "--mode", help="'append' for the initial bulk; 'merge' for incrementals."
+    ),
     limit: int | None = typer.Option(None, "--limit", help="Cap rows (smoke test)."),
     keep_raw: bool = typer.Option(
         False, "--keep-raw", help="Keep the local tarball + NDJSON per range (default: delete)."
@@ -38,7 +41,7 @@ def run(
     """Download (unless --file) and MERGE-upsert BioC-PMC into pmc.fulltext, per range."""
     s = ingest(
         ranges=range_ or None, file=file, schema=schema,
-        snapshot=snapshot, limit=limit, keep_raw=keep_raw,
+        snapshot=snapshot, mode=mode, limit=limit, keep_raw=keep_raw,
     )
     typer.echo(f"{s['table']} <- {s['rows']:,} rows; ranges: {s['ranges']}")
 

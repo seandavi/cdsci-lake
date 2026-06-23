@@ -120,6 +120,11 @@ def _apply_limits(con: duckdb.DuckDBPyConnection, s: Settings) -> None:
     con.execute(f"SET threads = {s.duckdb_threads};")
     con.execute(f"SET temp_directory = '{tmp_dir}';")
     con.execute("SET preserve_insertion_order = false;")
+    # Resilient R2 reads: large parquet GETs over the link exceed the 30s default,
+    # and transient timeouts shouldn't abort a multi-hour load.
+    con.execute("SET http_timeout = 600000;")  # ms (per request)
+    con.execute("SET http_retries = 8;")
+    con.execute("SET http_retry_backoff = 2;")
 
 
 def _attach_local(con: duckdb.DuckDBPyConnection, s: Settings, *, read_only: bool) -> None:

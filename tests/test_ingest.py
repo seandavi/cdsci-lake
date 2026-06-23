@@ -284,6 +284,11 @@ def test_pmc_curate(lake_settings: Settings, tmp_path):
             con.execute("SELECT doi FROM lake.pmc.fulltext WHERE pmcid = 'PMC13900'").fetchone()[0]
             is None
         )
+
+        # append mode (disjoint-range bulk path): INSERT, returns rows written.
+        raw2 = pmc.materialize_raw(con, nd)
+        assert pmc.curate(con, raw2, snapshot="bulk", mode="append", schema="pmcx") == 2
+        assert con.execute("SELECT count(*) FROM lake.pmcx.fulltext").fetchone()[0] == 2
     finally:
         con.close()
 
