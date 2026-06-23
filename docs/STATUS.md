@@ -31,22 +31,25 @@ cdsci-lake` and `lake_connect(read_only=True)`.
 - **Docs**: ADR-0001 (platform charter), `docs/design/reporter-icite-mapping.md`
   (empirically-verified source mapping). **Tests**: 8 offline pass; ruff clean.
 
-## Live lake state (verified end-to-end)
+## Live lake state — PROMOTED to production source schemas
 
-Loaded into the **`_dev`** schema on the shared lake (staging before promotion):
+`_dev` is **developer scratch only** (never a staging pipeline); production loads
+go straight to the source schemas. Promoted (full history):
 
 | table | rows | note |
 |-------|------|------|
-| `lake._dev.projects` | 159,309 | RePORTER projects FY2024–2025 |
-| `lake._dev.publink`  | 597,691 | grants↔PMID crosswalk 2024–2025 |
-| `lake._dev.metadata` | 40,588,073 | iCite — **full** snapshot 2026-05 |
+| `lake.reporter.projects` | 2,951,294 | all project-years 1985–2025 |
+| `lake.reporter.publink`  | 7,571,393 | grants↔PMID crosswalk 1980–2025 |
+| `lake.reporter.publications` | _(loading)_ | all years |
+| `lake.reporter.abstracts`    | _(loading)_ | all years |
+| `lake.icite.metadata`    | 40,588,073 | iCite full snapshot 2026-05 |
 
-Full cross-source chain proven live — **NIH grant → publink → iCite RCR** in one
-query attributes citation impact to grant portfolios:
+Cross-source chain verified against the **production** schemas — all-time NCI P30
+grant → `reporter.publink` → `icite.metadata` RCR:
 
 ```
-P30CA008748 (MSKCC)      2732 pubs   avg RCR 3.58   avg %ile 56.5
-P30CA016672 (MD Anderson) 651 pubs   avg RCR 2.94   avg %ile 52.2
+P30CA008748 (MSKCC)       23,804 pubs   avg RCR 3.40
+P30CA016672 (MD Anderson) 20,369 pubs   avg RCR 2.73
 …
 ```
 
@@ -55,11 +58,7 @@ benchmarking primitive (ADR-0021) working across three sources + omicidx.
 
 ## Next steps (not yet done)
 
-1. **Promote `_dev` → source schemas** once reviewed: load all years and write to
-   `reporter` / `icite` (drop the `--schema _dev`). E.g. full history:
-   `... reporter run -g publink --schema reporter` (all years), same for projects/
-   abstracts/publications; `... icite run --schema icite`.
-2. **CRISP (1970–2009, XML)** — the 2 historical RePORTER groups need an XML
+1. **CRISP (1970–2009, XML)** — the 2 historical RePORTER groups need an XML
    stream-parse path (design doc §1.7–1.8). Not implemented.
 3. **`ref.id_crosswalk`** — the cross-source ID table (PMID↔DOI↔PMCID↔core_project_num↔
    NCT). Note: `publink.pmid` is BIGINT but `omicidx.pubmed_article.pmid` is VARCHAR —
