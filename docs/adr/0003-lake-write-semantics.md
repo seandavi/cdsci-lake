@@ -28,7 +28,8 @@ exclude_change_cols=…)`**, which MERGEs on the natural key:
 Natural keys are per source: `icite.metadata` → `pmid`; `reporter.{projects,
 abstracts}` → `appl_id`, `publications` → `pmid`, `publink` → `(pmid,
 project_number)`; `ctgov.studies` → `nct_id`, `references` → `(nct_id, pmid)`;
-`scp.*` → its dimension tuple; `pmc.fulltext` → `pmcid`.
+`scp.*` → its dimension tuple; `pmc.documents` → `pmcid`, `passages` → `(pmcid,
+passage_index)`.
 
 **Per-load stamps are excluded from change-detection.** A `snapshot_version` column
 set to the load's tag on every row would otherwise differ on every row each load and

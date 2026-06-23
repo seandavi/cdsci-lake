@@ -100,7 +100,7 @@ can't see. `snapshot_version` excluded from change-detection.
 - `works.pmid` ↔ `icite.metadata.pmid` — RCR/citation metrics (kept there, not here).
 - `works.pmid` ↔ omicidx PubMed — recover `mesh` (dropped here) + titles.
 - `works.doi` (normalized) ↔ other sources' normalized DOI — the general bibliometric join.
-- `works.pmcid` ↔ `pmc.fulltext.pmcid` — link to full text for mining.
+- `works.pmcid` ↔ `pmc.documents.pmcid` (→ `pmc.passages`) — link to full text for mining.
 - `works_authorships.institution_ror` ↔ `institutions.ror` — the ROR institution
   graph for peer-center benchmarking (a first-class join, not JSON extraction).
 - `work_references` (work_id → referenced_work_id) — citation graph traversal.

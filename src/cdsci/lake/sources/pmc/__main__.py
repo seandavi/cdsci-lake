@@ -6,7 +6,10 @@ import typer
 
 from .ingest import ingest, list_ranges
 
-app = typer.Typer(help="Ingest BioC-PMC full text into lake.pmc.fulltext.", add_completion=False)
+app = typer.Typer(
+    help="Ingest BioC-PMC full text into lake.pmc.documents + lake.pmc.passages.",
+    add_completion=False,
+)
 
 
 @app.command("ranges")
@@ -38,12 +41,15 @@ def run(
         False, "--keep-raw", help="Keep the local tarball + NDJSON per range (default: delete)."
     ),
 ) -> None:
-    """Download (unless --file) and MERGE-upsert BioC-PMC into pmc.fulltext, per range."""
+    """Download (unless --file) BioC-PMC into pmc.documents + pmc.passages, per range."""
     s = ingest(
         ranges=range_ or None, file=file, schema=schema,
         snapshot=snapshot, mode=mode, limit=limit, keep_raw=keep_raw,
     )
-    typer.echo(f"{s['table']} <- {s['rows']:,} rows; ranges: {s['ranges']}")
+    typer.echo(
+        f"{s['schema']} <- documents={s['documents']:,} passages={s['passages']:,}; "
+        f"ranges: {s['ranges']}"
+    )
 
 
 if __name__ == "__main__":
