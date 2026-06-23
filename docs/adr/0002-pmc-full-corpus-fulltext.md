@@ -34,23 +34,31 @@ would discard most of the signal:
 These span all of biomedical literature; restricting to cancer/grant/trial-linked
 PMIDs would miss the bulk of accessions, software, and CFDE references.
 
-- **Table `pmc.fulltext`** — key `pmcid`; `pmid`/`doi` (extracted from
-  `passages[0].infons.article-id_*` — the crosswalk into iCite/grants/trials/omicidx),
-  `license`, `title`, `n_passages`, and the **full BioC JSON `record`** (nothing
-  lost; any future extraction is re-derivable without re-fetch).
+- **Two normalized tables, document → passage one-to-many** (not a flat table
+  carrying the BioC `record` as a nested blob):
+  - **`pmc.documents`** — key `pmcid`; `pmid`/`doi` (extracted from
+    `passages[0].infons.article-id_*` — the crosswalk into iCite/grants/trials/omicidx),
+    `license`, `title`, `n_passages`.
+  - **`pmc.passages`** — key `(pmcid, passage_index)`; one row per BioC passage with
+    `passage_offset`, `section_type`/`passage_type`, `text`, and the full passage
+    `infons` JSON. This is the full-text surface (FTS / mining read it directly).
+  Nothing passage-level is lost, and any future extraction is re-derivable from the
+  bronze `(pmcid, record)` Parquet without re-fetch.
 - **Per-range streaming** bounds local disk: download tarball → gzipped NDJSON →
-  bronze Parquet → MERGE (on `pmcid`) → **delete all local transients** → next range.
-  The silver `record` on R2 is the faithful copy, so no local bronze is retained.
+  bronze Parquet → curate both silver tables (MERGE on the keys above) → **delete all
+  local transients** → next range. The bronze `(pmcid, record)` Parquet is the
+  faithful capture; the silver tables on R2 are derived from it.
 - **Incrementals** via the per-article REST API for PMCIDs newer than the bulk;
   same MERGE-on-`pmcid` makes bulk + top-ups idempotent (one-time bulk, then API).
 
 ## Consequences
 
-- ~210 GB on R2 — the largest table in the lake, an accepted cost given the
+- ~210 GB on R2 — the largest tables in the lake, an accepted cost given the
   corpus-wide use cases. (Maintenance/expiry reclaims superseded versions.)
-- Keeping the full `record` means the mining layer (accession / software / CFDE
-  extraction, FTS) is **derived** from the lake and recomputable as patterns
-  improve — no re-download. See `docs/design/pmc.md`.
+- Exploding passages into their own rows makes the mining layer (accession /
+  software / CFDE extraction, FTS) read `pmc.passages.text` directly — section-aware
+  search with no per-query JSON parse — and it stays **derived** from the bronze
+  capture, recomputable as patterns improve. See `docs/design/pmc.md`.
 - `pmcid`↔`pmid`/`doi` (93%/74%) completes the literature layer and gives the
   planned `ref.id_crosswalk` its PMCID anchor.
 
@@ -58,7 +66,12 @@ PMIDs would miss the bulk of accessions, software, and CFDE references.
 
 - **Cohort/topic subset.** Cheaper (~20–60 GB) but defeats the use cases —
   accessions/software/CFDE mentions live across the whole corpus, not our PMIDs.
-- **Flat text / dropping the record.** Lossy; couldn't re-mine for new patterns
-  (new accession formats, software hosts) without re-fetching 130 GB.
+- **Flat text / dropping the bronze capture.** Lossy; couldn't re-mine for new
+  patterns (new accession formats, software hosts) without re-fetching 130 GB. The
+  bronze `(pmcid, record)` Parquet is kept precisely so silver can be re-derived.
+- **Nested passages in one flat table.** The earlier `pmc.fulltext` design carried
+  the whole BioC `record` per row; every text query re-parsed the JSON and passage
+  metadata (`section_type`/offset) wasn't queryable. Normalizing to
+  `documents` → `passages` makes passages first-class rows for FTS/mining.
 - **Live-scrape / API for the bulk.** The bulk FTP exists and is far cheaper than
   ~6–12M API calls; API is for incrementals only.

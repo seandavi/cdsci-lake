@@ -260,7 +260,7 @@ def test_scp_curate_all_domains(lake_settings: Settings):
 
 
 def test_pmc_curate(lake_settings: Settings, tmp_path):
-    """BioC-PMC: bronze parquet → pmc.fulltext with crosswalk ids + full record kept."""
+    """BioC-PMC: bronze parquet → pmc.documents (1/article) + pmc.passages (exploded)."""
     import shutil
 
     from cdsci.lake.sources import pmc
@@ -270,28 +270,56 @@ def test_pmc_curate(lake_settings: Settings, tmp_path):
     con = lake_connect(lake_settings)
     try:
         raw = pmc.materialize_raw(con, nd)  # bronze parquet
-        assert pmc.curate(con, raw, snapshot="test") == 2
+        # 2 documents; 121 + 82 = 203 passages exploded out of the nested record.
+        assert pmc.curate(con, raw, snapshot="test") == {"documents": 2, "passages": 203}
 
-        pmid, doi, lic, npass, rlen = con.execute(
-            "SELECT pmid, doi, license, n_passages, length(record) "
-            "FROM lake.pmc.fulltext WHERE pmcid = 'PMC1790863'"
+        pmid, doi, lic, npass = con.execute(
+            "SELECT pmid, doi, license, n_passages "
+            "FROM lake.pmc.documents WHERE pmcid = 'PMC1790863'"
         ).fetchone()
         assert pmid == 17299597  # extracted from passages[0].infons.article-id_pmid
         assert doi.startswith("10.1371")
         assert lic == "CC BY"
         assert npass == 121
-        assert rlen > 1000  # the full BioC JSON record is preserved
+
+        # n_passages on the document matches the passage rows for that pmcid.
+        assert (
+            con.execute(
+                "SELECT count(*) FROM lake.pmc.passages WHERE pmcid = 'PMC1790863'"
+            ).fetchone()[0]
+            == 121
+        )
+
+        # The title passage (index 0) is the article title; section/type/offset kept.
+        idx, off, sect, ptype, text = con.execute(
+            "SELECT passage_index, passage_offset, section_type, passage_type, text "
+            "FROM lake.pmc.passages WHERE pmcid = 'PMC1790863' AND passage_index = 0"
+        ).fetchone()
+        assert (idx, off) == (0, 0)
+        assert text.startswith("Quantifying Organismal Complexity")
+        # The first body passage carries BioC section metadata.
+        sect1, ptype1 = con.execute(
+            "SELECT section_type, passage_type FROM lake.pmc.passages "
+            "WHERE pmcid = 'PMC1790863' AND passage_index = 1"
+        ).fetchone()
+        assert (sect1, ptype1) == ("ABSTRACT", "abstract_title_1")
 
         # PMC13900 has no DOI → NULL (not "").
         assert (
-            con.execute("SELECT doi FROM lake.pmc.fulltext WHERE pmcid = 'PMC13900'").fetchone()[0]
+            con.execute(
+                "SELECT doi FROM lake.pmc.documents WHERE pmcid = 'PMC13900'"
+            ).fetchone()[0]
             is None
         )
 
         # append mode (disjoint-range bulk path): INSERT, returns rows written.
         raw2 = pmc.materialize_raw(con, nd)
-        assert pmc.curate(con, raw2, snapshot="bulk", mode="append", schema="pmcx") == 2
-        assert con.execute("SELECT count(*) FROM lake.pmcx.fulltext").fetchone()[0] == 2
+        assert pmc.curate(con, raw2, snapshot="bulk", mode="append", schema="pmcx") == {
+            "documents": 2,
+            "passages": 203,
+        }
+        assert con.execute("SELECT count(*) FROM lake.pmcx.documents").fetchone()[0] == 2
+        assert con.execute("SELECT count(*) FROM lake.pmcx.passages").fetchone()[0] == 203
     finally:
         con.close()
 

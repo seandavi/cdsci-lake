@@ -28,9 +28,11 @@ collection.documents[0]
 ## Ingest flow (medallion, per range)
 
 `download tarball → stream to gzipped NDJSON → bronze Parquet (pmcid, record) →
-load → delete local transients → next range`. The silver `record` on R2 is the
-faithful copy, so nothing local is retained (bounds disk to ~one range). Peak
-~15 GB/range; ~12 min/range.
+load both silver tables → delete local transients → next range`. The bronze
+Parquet `(pmcid, record)` is the faithful capture; the two silver tables on R2
+(`pmc.documents`, `pmc.passages`) are derived from it in one curate pass — one row
+per article and one row per passage — so nothing local is retained (bounds disk to
+~one range). Peak ~15 GB/range; ~12 min/range.
 
 **Bulk uses `append`, not `merge`.** The PMCID ranges are disjoint, so a MERGE's
 whole-table target read (which DuckLake can't prune — `pmcid` is a string and
@@ -43,15 +45,24 @@ idempotent on `pmcid`. Loads also set a generous HTTP timeout + retries
 
 ## Tables
 
-- **`pmc.fulltext`** (key `pmcid`) — `pmid`, `doi`, `license`, `title`,
-  `n_passages`, `snapshot_version`, and the full BioC JSON `record`. This is the
-  faithful base; everything below is **derived from `record`** and recomputable as
-  patterns improve (no re-download).
+Normalized into a **document → passage one-to-many** rather than a flat table that
+carried the whole BioC `record` as a nested blob. The bronze Parquet `(pmcid,
+record)` remains the faithful raw capture; both silver tables are derived from it
+and recomputable as extraction patterns improve (no re-download).
+
+- **`pmc.documents`** (key `pmcid`) — one row per article: `pmid`, `doi`,
+  `license`, `title`, `n_passages`, `snapshot_version`. The crosswalk + article
+  metadata, with no nested text.
+- **`pmc.passages`** (key `(pmcid, passage_index)`) — one row per BioC passage,
+  exploded out of `record.documents[0].passages[*]`: `passage_offset` (BioC char
+  offset), `section_type` / `passage_type` (from passage `infons`), `text`, and the
+  full passage `infons` JSON (nothing passage-level lost). `pmcid` →
+  `documents.pmcid`. This is the full-text surface the mining layer reads.
 
 ## Planned mining layer (the use cases)
 
-Derived tables/views over `pmc.fulltext.record` (text = the passages). These are
-the reason the full corpus is loaded:
+Derived tables/views over `pmc.passages.text`. These are the reason the full
+corpus is loaded:
 
 1. **`pmc.accession_mentions`** `(pmcid, accession, accession_type, passage_offset)`
    — regex for GEO (`GSE/GSM/GPL`), SRA (`SRR/SRX/SRP/PRJNA`), BioSample (`SAMN`),
@@ -63,14 +74,13 @@ the reason the full corpus is loaded:
 3. **`pmc.cfde_mentions`** `(pmcid, project, url)` — CFDE project names / URLs, for
    CFDE evaluation.
 
-Plus **full-text search**: either DuckDB's `fts` extension over an extracted text
-column, or a `pmc.passages` table `(pmcid, offset, section, type, text)` exploded
-from `record` for granular section-aware search. To be designed once the base load
-lands and we see real query patterns.
+Plus **full-text search**: DuckDB's `fts` extension over `pmc.passages.text` gives
+granular, section-aware search out of the box now that passages are first-class
+rows (`section_type` / `passage_type` are filterable columns).
 
 ## Crosswalk
 
 `pmcid` ↔ `pmid`/`doi` ties full text to `icite.metadata` (RCR), `reporter.publink`
 (grants), `ctgov.references` (trials), and `omicidx.pubmed_article`. Feeds the
 planned `ref.id_crosswalk` (PMCID anchor). Note the recurring type reconciliation:
-`pmc.fulltext.pmid` is BIGINT vs `omicidx.pubmed_article.pmid` VARCHAR.
+`pmc.documents.pmid` is BIGINT vs `omicidx.pubmed_article.pmid` VARCHAR.

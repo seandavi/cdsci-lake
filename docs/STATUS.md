@@ -38,8 +38,10 @@ cdsci-lake` and `lake_connect(read_only=True)`.
   `run --schema scp [--file domain=path]`. See `docs/design/scp.md`.
 - **BioC-PMC full-text importer** (`pmc`) — **full corpus** from the BioC-PMC bulk
   tarballs (json-unicode), per-range streaming (download → gz NDJSON → bronze
-  Parquet → MERGE → delete) to bound disk; `pmc.fulltext` keeps the full BioC
-  `record` + extracted `pmid`/`doi` crosswalk, key `pmcid`. API for incrementals.
+  Parquet → curate → delete) to bound disk. Normalized **document → passage**:
+  `pmc.documents` (key `pmcid`; `pmid`/`doi`/`license`/`title`/`n_passages`) and
+  `pmc.passages` (key `(pmcid, passage_index)`; exploded BioC passages with
+  `text` + `section_type`/`passage_type`/`offset`/`infons`). API for incrementals.
   Loaded for corpus-wide mining (accession/software/CFDE FTS) — see ADR-0002 +
   `docs/design/pmc.md`. (Full ~210 GB load in progress.)
 - **Census geo / `ref` schema** (`census_geo`) — canonical US FIPS + boundaries from
@@ -79,7 +81,8 @@ go straight to the source schemas. Promoted (full history):
 | `lake.scp.mortality`     | 1,034,042 | county+state cancer mortality (2026-06-01) |
 | `lake.scp.risk`          | 83,429 | behavioral-risk / screening prevalence (2026-06-01) |
 | `lake.scp.demographics`  | 3,310,984 | WIDE socio-economic table, ~44 cols (2026-06-01) |
-| `lake.pmc.fulltext`      | _(loading, full corpus)_ | full BioC record + pmid/doi crosswalk (~6–12M) |
+| `lake.pmc.documents`     | _(loading, full corpus)_ | 1 row/article: pmid/doi/license/title crosswalk (~6–12M) |
+| `lake.pmc.passages`      | _(loading, full corpus)_ | 1 row/BioC passage: text + section/type/offset (exploded) |
 | `lake.ref.geo_state`     | 56 | FIPS↔abbrev↔name + WKB geometry (cb 2023) |
 | `lake.ref.geo_county`    | 3,235 | 5-digit FIPS + WKB geometry (cb 2023) |
 

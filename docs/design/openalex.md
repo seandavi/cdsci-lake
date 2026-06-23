@@ -82,7 +82,7 @@ can't see. `snapshot_version` excluded from change-detection.
 - `works.pmid` ↔ `reporter.publink.pmid` ↔ `reporter.projects` — grant → OpenAlex.
 - `works.pmid` ↔ `icite.metadata.pmid` — RCR/citation metrics (kept there, not here).
 - `works.pmid` ↔ omicidx PubMed — recover `mesh` (dropped here) + titles.
-- `works.pmcid` ↔ `pmc.fulltext.pmcid` — link to full text for mining.
+- `works.pmcid` ↔ `pmc.documents.pmcid` (→ `pmc.passages`) — link to full text for mining.
 - `authorships[].institutions[].ror` ↔ `institutions.ror` — the ROR institution
   graph for peer-center benchmarking.
 - `work_references` (work_id → referenced_work_id) — citation graph traversal.
