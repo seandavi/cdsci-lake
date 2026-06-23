@@ -40,8 +40,8 @@ go straight to the source schemas. Promoted (full history):
 |-------|------|------|
 | `lake.reporter.projects` | 2,951,294 | all project-years 1985–2025 |
 | `lake.reporter.publink`  | 7,571,393 | grants↔PMID crosswalk 1980–2025 |
-| `lake.reporter.publications` | _(loading)_ | all years |
-| `lake.reporter.abstracts`    | _(loading)_ | all years |
+| `lake.reporter.publications` | 3,050,141 | all years |
+| `lake.reporter.abstracts`    | 2,558,580 | all years |
 | `lake.icite.metadata`    | 40,588,073 | iCite full snapshot 2026-05 |
 
 Cross-source chain verified against the **production** schemas — all-time NCI P30
