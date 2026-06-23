@@ -98,6 +98,23 @@ class Settings(BaseSettings):
     census_geo_url: str = (
         "https://www2.census.gov/geo/tiger/GENZ{year}/shp/cb_{year}_us_{layer}_500k.zip"
     )
+    # OpenAlex snapshot — the public S3 bucket, read anonymously over its https
+    # endpoint (no credentials, no AWS account). The snapshot IS the durable raw
+    # layer (immutable monthly release, partitioned by updated_date), so we read +
+    # project + filter directly from it with DuckDB and never re-stage 639 GB
+    # locally (see ADR-0005). Works are pruned by domain and the abstract is
+    # reconstructed from the inverted index on read; referenced_works become a
+    # separate edge table. ``openalex_domains`` are the OpenAlex domain numbers we
+    # keep — 1 = Life Sciences, 4 = Health Sciences (3 = Physical, 2 = Social are
+    # dropped). ``openalex_batch_files`` bounds memory: parts are processed in
+    # batches of this many (each ~300 MB gz / ~230k works) so a temp table never
+    # holds the whole corpus. ``openalex_max_files`` caps the part count for a
+    # laptop subset (None = full run); same code path either way.
+    openalex_s3_base: str = "https://openalex.s3.amazonaws.com"
+    openalex_domains: list[str] = ["1", "4"]
+    openalex_batch_files: int = Field(default=50, ge=1)
+    openalex_max_files: int | None = None
+    openalex_max_object_bytes: int = 67_108_864  # 64 MiB — hyperauthorship records
 
     @property
     def scp_releases_api(self) -> str:

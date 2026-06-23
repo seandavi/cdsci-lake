@@ -8,6 +8,8 @@ covered by an opt-in integration test (``RUN_INTEGRATION=1``).
 
 from __future__ import annotations
 
+import gzip
+import json
 import os
 from pathlib import Path
 
@@ -16,6 +18,7 @@ import pytest
 from cdsci.lake import Settings, csv_source, lake_connect, snapshots, table_exists, upsert
 from cdsci.lake.sources import icite, reporter, scp
 from cdsci.lake.sources.icite.ingest import _pick_metadata_file
+from cdsci.lake.sources.openalex.ingest import curate_works_batch
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -389,3 +392,112 @@ def test_shared_lake_attach_live():
         ).fetchall()
     }
     assert "pubmed_article" in tables
+
+
+def _write_openalex_parts(path: Path) -> None:
+    """A gzipped NDJSON works fixture: two in-domain works + one to be filtered."""
+    works = [
+        {  # Health Sciences (domain 4) — kept
+            "id": "https://openalex.org/W100",
+            "doi": "https://doi.org/10.1/x",
+            "title": "Cancer study",
+            "type": "article",
+            "publication_year": 2020,
+            "publication_date": "2020-03-01",
+            "cited_by_count": 10,
+            "referenced_works_count": 2,
+            "ids": {
+                "pmid": "https://pubmed.ncbi.nlm.nih.gov/28748124",
+                "pmcid": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5783702",
+            },
+            "primary_topic": {
+                "id": "https://openalex.org/T10", "display_name": "Oncology",
+                "subfield": {"display_name": "Cancer Research"},
+                "field": {"display_name": "Medicine"},
+                "domain": {"id": "https://openalex.org/domains/4",
+                           "display_name": "Health Sciences"},
+            },
+            "open_access": {"oa_status": "gold", "is_oa": True},
+            "primary_location": {"source": {
+                "id": "https://openalex.org/S5", "display_name": "Cancer Journal",
+                "issn_l": "1234-5678", "type": "journal"}},
+            "abstract_inverted_index": {"Tumor": [0], "growth": [1], "in": [2], "mice": [3]},
+            "referenced_works": ["https://openalex.org/W1", "https://openalex.org/W2"],
+        },
+        {  # Life Sciences (domain 1) — kept; no PMID
+            "id": "https://openalex.org/W200",
+            "title": "Gene study",
+            "type": "article",
+            "primary_topic": {
+                "id": "https://openalex.org/T20", "display_name": "Genetics",
+                "domain": {"id": "https://openalex.org/domains/1",
+                           "display_name": "Life Sciences"}},
+            "abstract_inverted_index": {"Gene": [0], "expression": [1]},
+            "referenced_works": ["https://openalex.org/W3"],
+        },
+        {  # Physical Sciences (domain 3) — filtered out
+            "id": "https://openalex.org/W300",
+            "title": "Quark study",
+            "primary_topic": {"domain": {"id": "https://openalex.org/domains/3",
+                                         "display_name": "Physical Sciences"}},
+            "referenced_works": ["https://openalex.org/W9"],
+        },
+    ]
+    with gzip.open(path, "wt", encoding="utf-8") as fh:
+        for w in works:
+            fh.write(json.dumps(w) + "\n")
+
+
+def test_openalex_works_prune_and_reconstruct(lake_settings: Settings):
+    part = Path(lake_settings.storage_base_uri[len("file://"):]) / "oa_works.json.gz"
+    part.parent.mkdir(parents=True, exist_ok=True)
+    _write_openalex_parts(part)
+
+    con = lake_connect(lake_settings)
+    try:
+        works, refs = curate_works_batch(
+            con, [str(part)], schema="openalex", version="test-2026-06",
+            mode="merge", domains=["1", "4"], max_obj=67_108_864,
+        )
+        # Physical-sciences work dropped by the domain filter.
+        assert works == 2
+        assert table_exists(con, "works")
+
+        r = con.execute(
+            "SELECT abstract, pmid, pmcid, domain_id, source_name, is_oa, "
+            "       publication_date, snapshot_version "
+            "FROM lake.openalex.works WHERE id = 'W100'"
+        ).fetchone()
+        abstract, pmid, pmcid, domain_id, source_name, is_oa, pub_date, version = r
+        assert abstract == "Tumor growth in mice"   # reconstructed from inverted index
+        assert pmid == 28748124                      # stripped to BIGINT
+        assert pmcid == "PMC5783702"
+        assert domain_id == "4"
+        assert source_name == "Cancer Journal"
+        assert is_oa is True
+        assert str(pub_date) == "2020-03-01"
+        assert version == "test-2026-06"
+
+        assert con.execute(
+            "SELECT count(*) FROM lake.openalex.works WHERE id = 'W300'"
+        ).fetchone()[0] == 0
+
+        # Edge table: 2 (W100) + 1 (W200) = 3, ids stripped to short form, no W9.
+        assert refs == 3
+        edge = con.execute(
+            "SELECT referenced_work_id FROM lake.openalex.work_references "
+            "WHERE work_id = 'W100' ORDER BY referenced_work_id"
+        ).fetchall()
+        assert [e[0] for e in edge] == ["W1", "W2"]
+        assert con.execute(
+            "SELECT count(*) FROM lake.openalex.work_references WHERE referenced_work_id = 'W9'"
+        ).fetchone()[0] == 0
+
+        # Idempotent: a re-merge of identical data writes nothing new.
+        works2, refs2 = curate_works_batch(
+            con, [str(part)], schema="openalex", version="test-2026-06",
+            mode="merge", domains=["1", "4"], max_obj=67_108_864,
+        )
+        assert works2 == 2 and refs2 == 3
+    finally:
+        con.close()
