@@ -49,6 +49,15 @@ cdsci-lake` and `lake_connect(read_only=True)`.
   geographic anchor for `ref.id_crosswalk`: `scp.fips`/`substr(fips,1,2)` ⋈
   `ref.geo_state.fips` and `reporter.org_state` ⋈ `ref.geo_state.abbrev` — a real
   key (verified) replacing the inline state-name map; plus polygons for choropleths.
+- **OpenAlex importer** (`openalex`) — **built + subset-validated, NOT yet loaded to
+  production.** Reads the public S3 snapshot directly with DuckDB (anonymous https),
+  pruned by topic domain (Life+Health ≈ 116M of 492M), abstracts reconstructed from
+  the inverted index, DOI normalized. `openalex.works` + edge tables
+  `works_authorships` (ROR affiliation = the benchmarking join) and `work_references`
+  (citation graph), plus reference entities `institutions`/`sources`/`funders`/
+  `topics`. Branch `openalex-source` (off `census-geo`). See ADR-0005 +
+  `docs/design/openalex.md`. To load: `python -m cdsci.lake.sources.openalex entities`
+  then `... works --mode append` (full server run).
 - **MERGE-upsert** (`cdsci.lake.upsert`, ADR-0003) — keyed, change-detecting (updates
   only on real diffs), idempotent (no-op re-run adds no snapshot) → meaningful
   time-travel. Per-load stamps (`snapshot_version`) are excluded from change-detection
