@@ -81,6 +81,15 @@ class Settings(BaseSettings):
     # it drops references/PMIDs, results, and structured modules).
     ctgov_api: str = "https://clinicaltrials.gov/api/v2/studies"
     ctgov_page_size: int = 1000
+    # State Cancer Profiles — the maintainer's monthly GitHub *releases* (not a
+    # live scrape). The latest release's tag is the snapshot_version and its
+    # ``.csv.gz`` assets are the per-domain bulk dumps (kept verbatim = bronze).
+    scp_repo: str = "seandavi/state-cancer-profile-scraper"
+
+    @property
+    def scp_releases_api(self) -> str:
+        """GitHub API URL for the latest State Cancer Profiles release."""
+        return f"https://api.github.com/repos/{self.scp_repo}/releases/latest"
 
     @property
     def writes_to_r2(self) -> bool:

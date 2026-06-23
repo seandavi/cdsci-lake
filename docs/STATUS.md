@@ -27,6 +27,15 @@ cdsci-lake` and `lake_connect(read_only=True)`.
   paginated API → NDJSON → bronze Parquet (`nct_id, record`) → curate `ctgov.studies`
   (typed + full record JSON, key `nct_id`) and `ctgov.references` (`nct_id`↔`pmid`
   crosswalk). MERGE-upsert both.
+- **State Cancer Profiles importer** — county/state cancer burden + risk +
+  demographics from the maintainer's **monthly GitHub releases** (versioned,
+  re-curatable; not a live scrape). The release tag is the `snapshot_version`; the
+  kept `.csv.gz` is the bronze layer. Domain registry → four MERGE-upsert tables:
+  `scp.incidence` / `scp.mortality` / `scp.risk` (tidy, rates `TRY_CAST` to DOUBLE)
+  and a **wide** `scp.demographics` (heterogeneous measures typed per-column,
+  `persistent_poverty` kept categorical). Drops `_extracted_at` and the
+  year-prefixed RUCC note column from silver for schema stability. CLI: `latest` /
+  `run --schema scp [--file domain=path]`. See `docs/design/scp.md`.
 - **MERGE-upsert** (`cdsci.lake.upsert`) — keyed, change-detecting (updates only on
   real diffs), idempotent (no-op re-run adds no snapshot) → meaningful time-travel.
 - **DuckLake maintenance** (`cdsci.lake.maintenance`) — expire snapshots → cleanup
@@ -49,6 +58,10 @@ go straight to the source schemas. Promoted (full history):
 | `lake.icite.metadata`    | 40,588,073 | iCite full snapshot 2026-05 |
 | `lake.ctgov.studies`     | 590,635 | full JSON record kept (~16.8 KB/study) |
 | `lake.ctgov.references`  | 1,057,838 | nct↔pmid crosswalk |
+| `lake.scp.incidence`     | 1,476,853 | county+state cancer incidence (snapshot 2026-06-01) |
+| `lake.scp.mortality`     | 1,034,042 | county+state cancer mortality (2026-06-01) |
+| `lake.scp.risk`          | 83,429 | behavioral-risk / screening prevalence (2026-06-01) |
+| `lake.scp.demographics`  | 3,310,984 | WIDE socio-economic table, ~44 cols (2026-06-01) |
 
 **Trial↔grant↔literature triangle verified:** 70,376 trials link to 92,470 NIH
 grants via 145,811 shared publications (`ctgov.references` ⋈ `reporter.publink`);
@@ -65,6 +78,15 @@ P30CA016672 (MD Anderson) 20,369 pubs   avg RCR 2.73
 
 (and grant → publink → `omicidx.pubmed_article` for titles). This is the peer-
 benchmarking primitive (ADR-0021) working across three sources + omicidx.
+
+**Burden-vs-funding sanity (scp ⋈ reporter):** state all-cancer age-adjusted
+incidence (`scp.incidence`, `areatype='By State'`) joined to all-time NCI grant
+funding (`reporter.projects`, `admin_ic='CA'`) over 51 states (50 + DC) shows
+Pearson r ≈ −0.11 — funding tracks research-institution concentration (CA, MD,
+NY, MA), not local burden (highest-incidence KY/IA/WV are not the best-funded).
+The join is on a state-name ↔ 2-letter map built inline; `scp` keys geography by
+FIPS/state-name while `reporter` uses `org_state` (2-letter), so a durable FIPS ↔
+state-abbrev crosswalk belongs in the planned `ref` schema (see `docs/design/scp.md`).
 
 ## Next steps (not yet done)
 
