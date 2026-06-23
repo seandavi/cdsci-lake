@@ -39,18 +39,19 @@ Loaded into the **`_dev`** schema on the shared lake (staging before promotion):
 |-------|------|------|
 | `lake._dev.projects` | 159,309 | RePORTER projects FY2024–2025 |
 | `lake._dev.publink`  | 597,691 | grants↔PMID crosswalk 2024–2025 |
-| `lake._dev.metadata` | _(loading)_ | iCite — full ~40M upsert running in background |
+| `lake._dev.metadata` | 40,588,073 | iCite — **full** snapshot 2026-05 |
 
-Cross-source crosswalk proven live: NCI grants → `publink` → `omicidx.pubmed_article`
-returns the expected top cancer-center grants (P30CA008748 MSKCC, P30CA016672 MD
-Anderson, …) and resolves grant→PMID→pubmed titles in one query.
+Full cross-source chain proven live — **NIH grant → publink → iCite RCR** in one
+query attributes citation impact to grant portfolios:
 
-## In progress / on return
+```
+P30CA008748 (MSKCC)      2732 pubs   avg RCR 3.58   avg %ile 56.5
+P30CA016672 (MD Anderson) 651 pubs   avg RCR 2.94   avg %ile 52.2
+…
+```
 
-- **iCite full load** is running in the background into `lake._dev.metadata`
-  (download → unzip → 40M-row upsert). Check `logs/icite_pipeline.log` in the
-  cu-research-intelligence repo. If it didn't finish, re-run:
-  `CU_OPENALEX_LAKE_BACKEND=postgres python -m cdsci.lake.sources.icite run --schema _dev`.
+(and grant → publink → `omicidx.pubmed_article` for titles). This is the peer-
+benchmarking primitive (ADR-0021) working across three sources + omicidx.
 
 ## Next steps (not yet done)
 
