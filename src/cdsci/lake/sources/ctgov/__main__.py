@@ -4,12 +4,22 @@ from __future__ import annotations
 
 import typer
 
+from ...config import get_settings
+from ...download import get_json
 from .ingest import ingest
 
 app = typer.Typer(
     help="Ingest ClinicalTrials.gov studies (full JSON) into lake.ctgov.{studies,references}.",
     add_completion=False,
 )
+
+
+@app.command("count")
+def count() -> None:
+    """Show how many studies the API currently has."""
+    s = get_settings()
+    data = get_json(s.ctgov_api, params={"pageSize": 1, "countTotal": "true", "format": "json"})
+    typer.echo(f"ClinicalTrials.gov studies available: {data.get('totalCount'):,}")
 
 
 @app.command("run")
