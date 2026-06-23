@@ -47,6 +47,10 @@ target-version = "py313"
 select = ["E", "F", "I", "UP", "B", "SIM"]
 flake8-bugbear.extend-immutable-calls = ["typer.Option", "typer.Argument"]
 
+[tool.ruff.lint.per-file-ignores]
+# Embedded SQL with long ClinicalTrials.gov JSON paths — keep them readable.
+"src/cdsci/lake/sources/ctgov/ingest.py" = ["E501"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

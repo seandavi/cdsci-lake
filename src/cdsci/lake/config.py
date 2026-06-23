@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     exporter_download_url: str = (
         "https://reporter.nih.gov/services/exporter/DownloadFromDocService"
     )
+    # ClinicalTrials.gov API v2 — paginated full JSON (the flat CSV is lossy:
+    # it drops references/PMIDs, results, and structured modules).
+    ctgov_api: str = "https://clinicaltrials.gov/api/v2/studies"
+    ctgov_page_size: int = 1000
 
     @property
     def writes_to_r2(self) -> bool:

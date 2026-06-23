@@ -131,6 +131,39 @@ def test_reporter_publink_composite_key(lake_settings: Settings, tmp_path):
         con.close()
 
 
+def test_ctgov_curate(lake_settings: Settings, tmp_path):
+    """Full-JSON ingest: bronze parquet → typed studies (record kept) + nct↔pmid refs."""
+    import shutil
+
+    from cdsci.lake.sources import ctgov
+
+    nd = tmp_path / "ctgov_sample.ndjson"
+    shutil.copy(FIXTURES / "ctgov_sample.ndjson", nd)
+    con = lake_connect(lake_settings)
+    try:
+        raw = ctgov.materialize_raw(con, nd)  # bronze parquet
+        counts = ctgov.curate(con, raw)
+        assert counts["studies"] == 2
+        assert counts["references"] == 2  # NCT03691623 has 2 PMIDs; NCT00860379 none
+
+        status, stype, enroll, rec_len = con.execute(
+            "SELECT status, study_type, enrollment, length(record) "
+            "FROM lake.ctgov.studies WHERE nct_id = 'NCT03691623'"
+        ).fetchone()
+        assert status == "COMPLETED" and stype == "INTERVENTIONAL" and enroll == 179
+        assert rec_len > 1000  # the full JSON record is preserved, not lost
+
+        pmids = {
+            x[0]
+            for x in con.execute(
+                "SELECT pmid FROM lake.ctgov.references WHERE nct_id = 'NCT03691623'"
+            ).fetchall()
+        }
+        assert pmids == {35172056, 39441691}
+    finally:
+        con.close()
+
+
 def test_maintenance_dry_run(lake_settings: Settings):
     """expire (dry-run, bounded) + cleanup on a local lake; preview is non-destructive."""
     from cdsci.lake import maintenance
