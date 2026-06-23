@@ -28,9 +28,18 @@ collection.documents[0]
 ## Ingest flow (medallion, per range)
 
 `download tarball → stream to gzipped NDJSON → bronze Parquet (pmcid, record) →
-curate → MERGE on pmcid → delete local transients → next range`. The silver
-`record` on R2 is the faithful copy, so nothing local is retained (bounds disk to
-~one range). Peak ~15 GB/range; ~12 min/range.
+load → delete local transients → next range`. The silver `record` on R2 is the
+faithful copy, so nothing local is retained (bounds disk to ~one range). Peak
+~15 GB/range; ~12 min/range.
+
+**Bulk uses `append`, not `merge`.** The PMCID ranges are disjoint, so a MERGE's
+whole-table target read (which DuckLake can't prune — `pmcid` is a string and
+sorts lexically, not numerically) finds zero matches yet grows to ~200 GB of R2
+reads by the last range (O(n²), and it timed out the first attempt). `mode=append`
+(INSERT, no target read) makes the initial bulk write-only. **Incrementals use
+`mode=merge`** (the per-article API fetches scattered PMCIDs that *do* exist) —
+idempotent on `pmcid`. Loads also set a generous HTTP timeout + retries
+(`lake.connect`) so large R2 parquet GETs survive the link.
 
 ## Tables
 
