@@ -22,4 +22,5 @@ row to the index below.
 | note | topic | relevance |
 |------|-------|-----------|
 | [2023-sciscinet-data-lake.md](2023-sciscinet-data-lake.md) | SciSciNet — open science-of-science data lake (MAG-based); disruption, novelty, sleeping-beauty, external linkages | Candidate source (ROADMAP); methods + linkage recipes to borrow |
-| [metrics-sql-sketch.md](metrics-sql-sketch.md) | The SciSciNet metrics as candidate DuckDB SQL over our OpenAlex tables (cf, hit-papers, disruption, novelty, sleeping-beauty, team size, h-index) | Working sketches toward derived metric views |
+| [bibliometric-network-methods.md](bibliometric-network-methods.md) | Co-citation, bibliographic coupling, co-authorship/co-affiliation networks + centrality, Rao–Stirling interdisciplinarity, FWCI/RCR | What/why for network + diversity metrics |
+| [metrics-sql-sketch.md](metrics-sql-sketch.md) | The metrics as candidate DuckDB SQL over our OpenAlex tables (cf, hit-papers, disruption, novelty, sleeping-beauty, team size, h-index, co-citation, bibliographic coupling, co-authorship, diversity) | Working sketches toward derived metric views |

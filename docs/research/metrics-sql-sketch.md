@@ -240,12 +240,132 @@ benchmarking primitive.
 
 ---
 
+## Network metrics
+
+Concepts in [bibliometric-network-methods.md](bibliometric-network-methods.md).
+The **edge constructions and degree are SQL-native**; path-based centralities and
+community detection need a graph library (materialize the edge list here, run the
+algorithm in Python). Every pairwise build below is **O(group size²)** — always
+restrict to a focal cohort and/or a minimum strength threshold before running
+corpus-wide.
+
+### 9. Co-citation (paper–paper; foundational/intellectual base)
+
+A,B linked when a later paper cites both; strength = #papers citing both.
+
+```sql
+WITH refs AS (   -- restrict to a cohort: WHERE referenced_work_id IN (…)
+    SELECT work_id AS citing, referenced_work_id AS cited
+    FROM lake.openalex.work_references
+)
+SELECT least(a.cited, b.cited)    AS paper1,
+       greatest(a.cited, b.cited) AS paper2,
+       count(*)                   AS cocitation_strength
+FROM refs a
+JOIN refs b ON a.citing = b.citing AND a.cited < b.cited
+GROUP BY 1, 2
+HAVING count(*) >= 3;            -- threshold tames the pair explosion
+```
+
+Per citing paper with R references this emits R·(R−1)/2 pairs — the `HAVING`
+floor and a cohort filter are not optional at scale. Co-citation **lags the
+frontier** (needs accumulated citers) and is edge-corpus-bounded (caveat 1).
+
+### 10. Bibliographic coupling (paper–paper; research front)
+
+A,B linked when they share a reference; strength = #shared references.
+**Time-invariant** and the most accurate research-front signal.
+
+```sql
+WITH refs AS (   -- restrict: WHERE work_id IN (cohort)
+    SELECT work_id, referenced_work_id FROM lake.openalex.work_references
+)
+SELECT least(a.work_id, b.work_id)    AS paper1,
+       greatest(a.work_id, b.work_id) AS paper2,
+       count(*)                       AS coupling_strength
+FROM refs a
+JOIN refs b ON a.referenced_work_id = b.referenced_work_id AND a.work_id < b.work_id
+GROUP BY 1, 2
+HAVING count(*) >= 3;
+```
+
+**Salton/cosine normalization** (so reference-rich papers don't dominate
+clustering): divide `coupling_strength` by `sqrt(refcount_a · refcount_b)` using
+`works.referenced_works_count`.
+
+### 11. Co-authorship & co-affiliation edges (+ degree)
+
+Author–author collaboration edges (weight = papers together):
+
+```sql
+WITH ap AS (SELECT DISTINCT work_id, author_id FROM lake.openalex.works_authorships),
+coauthor AS (
+    SELECT least(a.author_id, b.author_id)    AS author1,
+           greatest(a.author_id, b.author_id) AS author2,
+           count(*)                           AS papers_together
+    FROM ap a JOIN ap b ON a.work_id = b.work_id AND a.author_id < b.author_id
+    GROUP BY 1, 2
+)
+-- degree centrality = number of distinct collaborators
+SELECT author_id, count(*) AS degree, sum(papers_together) AS weighted_degree
+FROM (
+    SELECT author1 AS author_id, papers_together FROM coauthor
+    UNION ALL
+    SELECT author2, papers_together FROM coauthor
+) GROUP BY author_id;
+```
+
+Swap `author_id`→`institution_id` (or `institution_ror`) for the **institutional
+collaboration network** — the peer-center benchmarking graph. Betweenness /
+closeness / eigenvector / modularity: export the `coauthor` edge list to
+networkx/igraph. (`works_authorships` excludes unaffiliated authors — caveat 2.)
+
+### 12. Interdisciplinarity / diversity (reference-field diversity)
+
+Shares of the fields a paper's references fall into, then diversity indices:
+
+```sql
+WITH ref_field AS (
+    SELECT r.work_id AS focal, w.field_name AS field
+    FROM lake.openalex.work_references r
+    JOIN lake.openalex.works w ON w.id = r.referenced_work_id
+    WHERE w.field_name IS NOT NULL
+),
+shares AS (
+    SELECT focal, field,
+           count(*) * 1.0 / sum(count(*)) OVER (PARTITION BY focal) AS p
+    FROM ref_field GROUP BY focal, field
+)
+SELECT focal AS work_id,
+       count(*)              AS variety,                  -- # distinct fields
+       1 - sum(p * p)        AS gini_simpson,             -- Rao–Stirling with d_ij = 1[i≠j]
+       -sum(p * ln(p))       AS shannon,                  -- balance/evenness
+       -sum(p * ln(p)) / nullif(ln(count(*)), 0) AS shannon_evenness
+FROM shares GROUP BY focal;
+```
+
+`gini_simpson` is the **disparity-free** Rao–Stirling. Full Rao–Stirling
+`Σ p_i p_j d_ij` needs a **field–field disparity matrix** `d_ij` (e.g. `1 − cosine`
+of field co-citation vectors) joined against the share pairs — a precompute worth
+its own step. Reporting variety/balance/disparity separately (per the Leydesdorff
+critique) is the safer default.
+
+---
+
 ## Suggested next steps
 
 - **Tier by cost/value.** cf (#2), hit-papers (#3), team/institution (#7), h-index
-  (#8) are cheap, global-count-based, and high-value — natural **first derived
-  views**. Disruption (#4) is high-value but needs a scalable plan + a focal
-  subset. Novelty (#5) and sleeping-beauty (#6) need Python; defer.
+  (#8), and diversity (#12) are cheap, mostly global-count-based, and high-value —
+  natural **first derived views**. Disruption (#4) and the pairwise network builds
+  — co-citation (#9), bibliographic coupling (#10), co-authorship (#11) — are
+  high-value but O(n²); they need a focal cohort + threshold, and the path/community
+  metrics among them need a Python graph step. Novelty (#5) and sleeping-beauty (#6)
+  need Python; defer.
+- **Cohort-first for the heavy ones.** The benchmarking use case is naturally
+  scoped (a center's papers/authors/institutions), so the expensive pairwise metrics
+  are cheap *within a cohort* — build them cohort-parameterized rather than
+  corpus-wide. Re-expand the citation corpus (ADR-0005) only when a structure
+  metric must reach beyond Life+Health.
 - **Validate on a known slice.** Reproduce a handful of SciSciNet values for
   papers we both cover (join on OpenAlex Work ID / DOI) as an acceptance check
   before trusting our numbers — mirrors their rank-correlation validation.
