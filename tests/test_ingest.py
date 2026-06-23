@@ -229,6 +229,38 @@ def test_scp_curate_all_domains(lake_settings: Settings):
         con.close()
 
 
+def test_pmc_curate(lake_settings: Settings, tmp_path):
+    """BioC-PMC: bronze parquet → pmc.fulltext with crosswalk ids + full record kept."""
+    import shutil
+
+    from cdsci.lake.sources import pmc
+
+    nd = tmp_path / "pmc_sample.ndjson"
+    shutil.copy(FIXTURES / "pmc_sample.ndjson", nd)
+    con = lake_connect(lake_settings)
+    try:
+        raw = pmc.materialize_raw(con, nd)  # bronze parquet
+        assert pmc.curate(con, raw, snapshot="test") == 2
+
+        pmid, doi, lic, npass, rlen = con.execute(
+            "SELECT pmid, doi, license, n_passages, length(record) "
+            "FROM lake.pmc.fulltext WHERE pmcid = 'PMC1790863'"
+        ).fetchone()
+        assert pmid == 17299597  # extracted from passages[0].infons.article-id_pmid
+        assert doi.startswith("10.1371")
+        assert lic == "CC BY"
+        assert npass == 121
+        assert rlen > 1000  # the full BioC JSON record is preserved
+
+        # PMC13900 has no DOI → NULL (not "").
+        assert (
+            con.execute("SELECT doi FROM lake.pmc.fulltext WHERE pmcid = 'PMC13900'").fetchone()[0]
+            is None
+        )
+    finally:
+        con.close()
+
+
 def test_maintenance_dry_run(lake_settings: Settings):
     """expire (dry-run, bounded) + cleanup on a local lake; preview is non-destructive."""
     from cdsci.lake import maintenance

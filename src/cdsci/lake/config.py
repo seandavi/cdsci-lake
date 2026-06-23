@@ -85,6 +85,12 @@ class Settings(BaseSettings):
     # live scrape). The latest release's tag is the snapshot_version and its
     # ``.csv.gz`` assets are the per-domain bulk dumps (kept verbatim = bronze).
     scp_repo: str = "seandavi/state-cancer-profile-scraper"
+    # BioC-PMC full text — bulk per-PMCID-range tarballs (json-unicode = JSON
+    # content, one BioC collection per article) + a per-article REST API for
+    # incrementals. One-time bulk load, then API top-ups; MERGE on pmcid.
+    biocpmc_ftp: str = "https://ftp.ncbi.nlm.nih.gov/pub/wilbur/BioC-PMC/"
+    biocpmc_variant: str = "json_unicode"
+    biocpmc_api: str = "https://www.ncbi.nlm.nih.gov/research/bionlp/RESTful/pmcoa.cgi/BioC_json"
 
     @property
     def scp_releases_api(self) -> str:
