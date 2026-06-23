@@ -23,6 +23,10 @@ cdsci-lake` and `lake_connect(read_only=True)`.
   --schema`.
 - **iCite importer** — MERGE-upsert on `pmid` into `icite.metadata` from the monthly
   figshare snapshot (drops the huge `cited_by`/`references` list columns).
+- **ClinicalTrials.gov importer** — full v2-API JSON (the flat CSV is lossy). Stream
+  paginated API → NDJSON → bronze Parquet (`nct_id, record`) → curate `ctgov.studies`
+  (typed + full record JSON, key `nct_id`) and `ctgov.references` (`nct_id`↔`pmid`
+  crosswalk). MERGE-upsert both.
 - **MERGE-upsert** (`cdsci.lake.upsert`) — keyed, change-detecting (updates only on
   real diffs), idempotent (no-op re-run adds no snapshot) → meaningful time-travel.
 - **DuckLake maintenance** (`cdsci.lake.maintenance`) — expire snapshots → cleanup
@@ -43,6 +47,8 @@ go straight to the source schemas. Promoted (full history):
 | `lake.reporter.publications` | 3,050,141 | all years |
 | `lake.reporter.abstracts`    | 2,558,580 | all years |
 | `lake.icite.metadata`    | 40,588,073 | iCite full snapshot 2026-05 |
+| `lake.ctgov.studies`     | _(loading)_ | full JSON, ~590k trials |
+| `lake.ctgov.references`  | _(loading)_ | nct↔pmid crosswalk |
 
 Cross-source chain verified against the **production** schemas — all-time NCI P30
 grant → `reporter.publink` → `icite.metadata` RCR:
