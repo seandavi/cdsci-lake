@@ -50,6 +50,9 @@ flake8-bugbear.extend-immutable-calls = ["typer.Option", "typer.Argument"]
 [tool.ruff.lint.per-file-ignores]
 # Embedded SQL with long ClinicalTrials.gov JSON paths — keep them readable.
 "src/cdsci/lake/sources/ctgov/ingest.py" = ["E501"]
+# Embedded SQL with long State Cancer Profiles column aliases — keep them readable.
+"src/cdsci/lake/sources/scp/ingest.py" = ["E501"]
+"src/cdsci/lake/sources/scp/__main__.py" = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

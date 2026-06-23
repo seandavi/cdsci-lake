@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from cdsci.lake import Settings, csv_source, lake_connect, snapshots, table_exists, upsert
-from cdsci.lake.sources import icite, reporter
+from cdsci.lake.sources import icite, reporter, scp
 from cdsci.lake.sources.icite.ingest import _pick_metadata_file
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -160,6 +160,71 @@ def test_ctgov_curate(lake_settings: Settings, tmp_path):
             ).fetchall()
         }
         assert pmids == {35172056, 39441691}
+    finally:
+        con.close()
+
+
+def test_scp_curate_all_domains(lake_settings: Settings):
+    """Curate each State Cancer Profiles domain from its .csv.gz/.csv fixture.
+
+    Asserts: row counts, numeric TRY_CAST to DOUBLE on the tidy domains, the WIDE
+    demographics table keeps ``persistent_poverty`` as text while casting a
+    numeric measure to DOUBLE, and the release tag stamps every row.
+    """
+    con = lake_connect(lake_settings)
+    try:
+        tag = "test-2026-06-01"
+        counts = {
+            d: scp.curate(con, d, FIXTURES / f"scp_{d}.csv", tag)
+            for d in ("incidence", "mortality", "risk", "demographics")
+        }
+        assert counts == {"incidence": 5, "mortality": 5, "risk": 5, "demographics": 4}
+        for d in counts:
+            assert table_exists(con, d)
+
+        # Tidy domain: the age-adjusted rate cast to DOUBLE; tag stamped.
+        rate, ver = con.execute(
+            "SELECT age_adjusted_rate, snapshot_version FROM lake.scp.incidence "
+            "WHERE age_adjusted_rate IS NOT NULL ORDER BY age_adjusted_rate LIMIT 1"
+        ).fetchone()
+        assert isinstance(rate, float)
+        assert ver == tag
+
+        # risk: percent cast to DOUBLE.
+        pct = con.execute(
+            "SELECT percent FROM lake.scp.risk WHERE percent IS NOT NULL LIMIT 1"
+        ).fetchone()[0]
+        assert isinstance(pct, float)
+
+        # demographics column types: persistent_poverty is VARCHAR, a measure is DOUBLE.
+        types = dict(
+            con.execute(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_schema = 'scp' AND table_name = 'demographics'"
+            ).fetchall()
+        )
+        assert types["persistent_poverty"] == "VARCHAR"
+        assert types["people_below_poverty"] == "DOUBLE"
+
+        # The categorical text value is preserved verbatim ('no'/'yes'), not cast.
+        pp = {
+            r[0]
+            for r in con.execute(
+                "SELECT persistent_poverty FROM lake.scp.demographics "
+                "WHERE persistent_poverty IS NOT NULL"
+            ).fetchall()
+        }
+        assert "no" in pp
+        # The 'data not available' sentinel survives as text in persistent_poverty,
+        # but a numeric measure on a sentinel row is NULL (TRY_CAST), never an error.
+        assert "data not available" in pp
+
+        # An idempotent re-run of all domains adds no snapshot.
+        before = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+        for d in counts:
+            scp.curate(con, d, FIXTURES / f"scp_{d}.csv", tag)
+        after = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+        assert before == after
     finally:
         con.close()
 
