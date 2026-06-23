@@ -47,8 +47,12 @@ go straight to the source schemas. Promoted (full history):
 | `lake.reporter.publications` | 3,050,141 | all years |
 | `lake.reporter.abstracts`    | 2,558,580 | all years |
 | `lake.icite.metadata`    | 40,588,073 | iCite full snapshot 2026-05 |
-| `lake.ctgov.studies`     | _(loading)_ | full JSON, ~590k trials |
-| `lake.ctgov.references`  | _(loading)_ | nct↔pmid crosswalk |
+| `lake.ctgov.studies`     | 590,635 | full JSON record kept (~16.8 KB/study) |
+| `lake.ctgov.references`  | 1,057,838 | nct↔pmid crosswalk |
+
+**Trial↔grant↔literature triangle verified:** 70,376 trials link to 92,470 NIH
+grants via 145,811 shared publications (`ctgov.references` ⋈ `reporter.publink`);
+trial RESULT pubs average RCR 18.9 (`ctgov.references` ⋈ `icite.metadata`).
 
 Cross-source chain verified against the **production** schemas — all-time NCI P30
 grant → `reporter.publink` → `icite.metadata` RCR:
