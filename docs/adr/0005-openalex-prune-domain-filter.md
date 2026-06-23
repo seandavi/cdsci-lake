@@ -21,7 +21,7 @@ redundant with what we already hold or is OpenAlex-deprecated:
 
 | field | ~% of a work | disposition |
 |-------|-------------:|-------------|
-| `authorships` | 27% | keep (institution ROR is the benchmarking key) |
+| `authorships` | 27% | **split** to `works_authorships` (institution ROR is the benchmarking key — promote it out of JSON) |
 | `mesh` | 20% | **drop** — redundant with omicidx PubMed (MeSH only exists for PubMed-indexed works), recover via PMID |
 | `locations` (array) | 8% | **drop** — keep `primary_location` + `best_oa_location` subsets |
 | `abstract_inverted_index` | 6.5% | **transform** → plaintext (smaller, FTS-ready) |
@@ -55,10 +55,24 @@ Three prunings, all recorded here so they are auditable and revisitable:
    (`json_each` + positional `string_agg`). Plaintext is smaller than the position
    lists and directly usable for FTS (the same need as the PMC mining layer).
 
-`referenced_works` becomes a separate **`openalex.work_references`** edge table
-(`work_id` ↔ `referenced_work_id`, both short ids). This preserves the full citation
-graph — including the non-PubMed works iCite cannot see — without bloating the works
-row, and lets the edge table compress as two narrow columns.
+Two structures are promoted out of the works row into **edge tables**, both derived
+from the same single read of each part:
+
+- **`work_references`** (`work_id` ↔ `referenced_work_id`, short ids) — the citation
+  graph, including non-PubMed works iCite cannot see.
+- **`works_authorships`** (`work_id`, `author_id`, `institution_id` + author name /
+  position / `is_corresponding` / institution ROR / country) — the **ROR-keyed
+  affiliation edge**. This is the peer-center benchmarking join, so it must be a
+  first-class table, not a nested extraction from an `authorships` JSON blob. The
+  grain is one row per (work, author, institution); authorships with no institution
+  are dropped (the ROR is the point), and the full struct is unnested with the
+  *lenient* `from_json` so OpenAlex adding fields — or schema drift across the
+  historical partitions — does not break the load.
+
+DOIs are **normalized on read** — `lower(replace(doi,'https://doi.org/',''))` — so
+`works.doi` is the bare lowercase form. OpenAlex stores the prefixed URL, and the
+unprefixed lowercase form is the cross-source join key (a normalization other lakes
+learned the hard way; see Prior art).
 
 The small **reference entities** (`institutions`, `sources`, `funders`, `topics`)
 load as their own tables and are loaded **first** — they are cheap and are the actual
@@ -84,10 +98,32 @@ caps the part count, making a laptop subset and the full server run the same cod
 - **`referenced_works` is the citation graph**; dropping the nested array in favor of
   the edge table means citation *metrics* still come from iCite/`cited_by_count`,
   while graph traversal uses `work_references`.
-- `authorships`/`topics`/`keywords`/`grants` are kept as JSON for v1 (institution
-  ROR lives in `authorships`). A future refinement may trim `authorships`
-  (drop `raw_affiliation_strings`/`lineage`) or split a typed author edge table — both
-  are re-derivable from the snapshot, so deferring is cheap.
+- `topics`/`keywords`/`grants` are kept as JSON for v1 (small, and not yet a join
+  surface). `authorships` is **not** kept as JSON — it is fully represented by
+  `works_authorships`, which loses authors with no institution; the full author list
+  (incl. unaffiliated) is re-derivable from the snapshot if a use case needs it.
+- `works_authorships` is large (the upstream `authorships` is 1.3B rows corpus-wide;
+  our domain-filtered slice is a fraction of that). It is two-plus narrow columns, so
+  it compresses well, but it is a "filter aggressively" table for consumers.
+
+## Prior art
+
+The DOI normalization and the edge-table shape are adopted from
+[J0nasW/science-datalake](https://github.com/J0nasW/science-datalake), a portable
+DuckDB-over-Parquet lake of the same scholarly sources. We took its lessons on
+content/schema while keeping our own storage substrate (shared DuckLake on Postgres +
+R2, with change-detecting upserts and time-travel — vs. its view-only local Parquet):
+
+- **DOI normalization** — it documents that OpenAlex/SciSciNet ship `https://doi.org/`
+  -prefixed DOIs while S2AG ships bare lowercase, and centralizes
+  `lower(replace(doi,'https://doi.org/',''))`. We normalize at ingest so `works.doi`
+  is join-ready.
+- **Edge tables over nested JSON** — it decomposes works into `works_authorships`
+  (1.32B) and `works_referenced_works` (3.01B) rather than nesting; we do the same for
+  exactly the benchmarking-join reason.
+- Its `xref.doi_map` / `xref.unified_papers` are the template for our planned
+  `ref.id_crosswalk`, and its LLM-oriented `SCHEMA.md`/`CATALOG.md` inform the planned
+  consumer contract docs — both tracked in `docs/ROADMAP.md`.
 
 See `docs/design/openalex.md` for the table schemas and the join paths into the rest
 of the lake.

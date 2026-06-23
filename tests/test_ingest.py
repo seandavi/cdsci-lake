@@ -423,6 +423,18 @@ def _write_openalex_parts(path: Path) -> None:
                 "issn_l": "1234-5678", "type": "journal"}},
             "abstract_inverted_index": {"Tumor": [0], "growth": [1], "in": [2], "mice": [3]},
             "referenced_works": ["https://openalex.org/W1", "https://openalex.org/W2"],
+            "authorships": [
+                {"author_position": "first", "is_corresponding": True,
+                 "author": {"id": "https://openalex.org/A1", "display_name": "Jane Doe"},
+                 "institutions": [
+                     {"id": "https://openalex.org/I10", "ror": "https://ror.org/01",
+                      "country_code": "US"},
+                     {"id": "https://openalex.org/I11", "ror": "https://ror.org/02",
+                      "country_code": "US"}]},
+                {"author_position": "middle", "is_corresponding": False,
+                 "author": {"id": "https://openalex.org/A2", "display_name": "John Roe"},
+                 "institutions": []},  # no affiliation -> dropped from the edge table
+            ],
         },
         {  # Life Sciences (domain 1) — kept; no PMID
             "id": "https://openalex.org/W200",
@@ -455,21 +467,22 @@ def test_openalex_works_prune_and_reconstruct(lake_settings: Settings):
 
     con = lake_connect(lake_settings)
     try:
-        works, refs = curate_works_batch(
+        out = curate_works_batch(
             con, [str(part)], schema="openalex", version="test-2026-06",
             mode="merge", domains=["1", "4"], max_obj=67_108_864,
         )
         # Physical-sciences work dropped by the domain filter.
-        assert works == 2
+        assert out["works"] == 2
         assert table_exists(con, "works")
 
         r = con.execute(
-            "SELECT abstract, pmid, pmcid, domain_id, source_name, is_oa, "
+            "SELECT doi, abstract, pmid, pmcid, domain_id, source_name, is_oa, "
             "       publication_date, snapshot_version "
             "FROM lake.openalex.works WHERE id = 'W100'"
         ).fetchone()
-        abstract, pmid, pmcid, domain_id, source_name, is_oa, pub_date, version = r
-        assert abstract == "Tumor growth in mice"   # reconstructed from inverted index
+        doi, abstract, pmid, pmcid, domain_id, source_name, is_oa, pub_date, version = r
+        assert doi == "10.1/x"                       # normalized: prefix stripped, lowercased
+        assert abstract == "Tumor growth in mice"    # reconstructed from inverted index
         assert pmid == 28748124                      # stripped to BIGINT
         assert pmcid == "PMC5783702"
         assert domain_id == "4"
@@ -478,12 +491,16 @@ def test_openalex_works_prune_and_reconstruct(lake_settings: Settings):
         assert str(pub_date) == "2020-03-01"
         assert version == "test-2026-06"
 
+        # authorships JSON is promoted out of works into the edge table.
+        cols = {c[0] for c in con.execute("DESCRIBE lake.openalex.works").fetchall()}
+        assert "authorships" not in cols
+
         assert con.execute(
             "SELECT count(*) FROM lake.openalex.works WHERE id = 'W300'"
         ).fetchone()[0] == 0
 
-        # Edge table: 2 (W100) + 1 (W200) = 3, ids stripped to short form, no W9.
-        assert refs == 3
+        # Citation edges: 2 (W100) + 1 (W200) = 3, ids stripped to short form, no W9.
+        assert out["references"] == 3
         edge = con.execute(
             "SELECT referenced_work_id FROM lake.openalex.work_references "
             "WHERE work_id = 'W100' ORDER BY referenced_work_id"
@@ -493,11 +510,27 @@ def test_openalex_works_prune_and_reconstruct(lake_settings: Settings):
             "SELECT count(*) FROM lake.openalex.work_references WHERE referenced_work_id = 'W9'"
         ).fetchone()[0] == 0
 
+        # Affiliation edges: A1 × {I10, I11} = 2; A2 (no institution) dropped.
+        assert out["authorships"] == 2
+        aff = con.execute(
+            "SELECT author_id, institution_id, institution_ror, is_corresponding "
+            "FROM lake.openalex.works_authorships WHERE work_id = 'W100' "
+            "ORDER BY institution_id"
+        ).fetchall()
+        assert [(a[0], a[1], a[2]) for a in aff] == [
+            ("A1", "I10", "https://ror.org/01"),
+            ("A1", "I11", "https://ror.org/02"),
+        ]
+        assert all(a[3] is True for a in aff)        # A1 is_corresponding
+        assert con.execute(
+            "SELECT count(*) FROM lake.openalex.works_authorships WHERE author_id = 'A2'"
+        ).fetchone()[0] == 0
+
         # Idempotent: a re-merge of identical data writes nothing new.
-        works2, refs2 = curate_works_batch(
+        out2 = curate_works_batch(
             con, [str(part)], schema="openalex", version="test-2026-06",
             mode="merge", domains=["1", "4"], max_obj=67_108_864,
         )
-        assert works2 == 2 and refs2 == 3
+        assert out2 == {"works": 2, "references": 3, "authorships": 2}
     finally:
         con.close()

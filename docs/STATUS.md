@@ -110,6 +110,9 @@ state-abbrev crosswalk belongs in the planned `ref` schema (see `docs/design/scp
 
 ## Next steps (not yet done)
 
+> The canonical, maintained backlog (incl. candidate sources + their cadence) now
+> lives in **`docs/ROADMAP.md`**. The list below is the snapshot as of this handoff.
+
 1. **CRISP (1970–2009, XML)** — the 2 historical RePORTER groups need an XML
    stream-parse path (design doc §1.7–1.8). Not implemented.
 3. **`ref.id_crosswalk`** — the cross-source ID table (PMID↔DOI↔PMCID↔core_project_num↔

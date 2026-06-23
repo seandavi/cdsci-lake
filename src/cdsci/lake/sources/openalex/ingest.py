@@ -82,7 +82,7 @@ _DOMAIN_ID = "split_part(t.primary_topic->'domain'->>'id', '/', -1)"
 
 _WORKS_PROJECTION = f"""
     split_part(t.id, '/', -1)                                       AS id,
-    t.doi,
+    lower(replace(t.doi, 'https://doi.org/', ''))                   AS doi,
     TRY_CAST(regexp_extract(t.ids->>'pmid', '(\\d+)$', 1) AS BIGINT) AS pmid,
     regexp_extract(t.ids->>'pmcid', '(PMC\\d+)', 1)                  AS pmcid,
     t.ids->>'mag'                                                   AS mag_id,
@@ -316,6 +316,41 @@ def _load(
 
 # --- works + references --------------------------------------------------------
 
+# Unnest authorships JSON → (work, author, institution) affiliation edges. The
+# inner UNNEST over ``institutions`` naturally drops authorships with no institution
+# (an empty list yields no rows), so every emitted row has a non-null institution —
+# the ROR key for benchmarking — and a non-null author, a stable composite key for
+# idempotent MERGE. Authors with no affiliation are not represented here
+# (re-derivable from the snapshot if ever needed). ``from_json`` is the *lenient*
+# transform: it pulls only the keys named below and ignores the rest, so OpenAlex
+# adding authorship/institution fields (or a decade of schema drift across the
+# historical partitions) does not break the load — unlike a strict ``CAST``.
+_AUTHORSHIPS_STRUCT = (
+    '[{"author_position":"VARCHAR","is_corresponding":"BOOLEAN",'
+    '"author":{"id":"VARCHAR","display_name":"VARCHAR"},'
+    '"institutions":[{"id":"VARCHAR","ror":"VARCHAR","country_code":"VARCHAR"}]}]'
+)
+_AUTHORSHIPS_SQL = f"""
+    SELECT
+        work_id,
+        split_part(a.author.id, '/', -1)        AS author_id,
+        a.author.display_name                   AS author_name,
+        a.author_position                       AS author_position,
+        a.is_corresponding                      AS is_corresponding,
+        split_part(i.id, '/', -1)               AS institution_id,
+        i.ror                                   AS institution_ror,
+        i.country_code                          AS institution_country,
+        snapshot_version
+    FROM (
+        SELECT
+            id AS work_id, snapshot_version,
+            unnest(from_json(authorships, '{_AUTHORSHIPS_STRUCT}')) AS a
+        FROM _oa_raw WHERE authorships IS NOT NULL
+    ) sub, unnest(sub.a.institutions) AS t(i)
+    WHERE a.author.id IS NOT NULL AND i.id IS NOT NULL
+"""
+
+
 def curate_works_batch(
     con: duckdb.DuckDBPyConnection,
     urls: list[str],
@@ -325,13 +360,14 @@ def curate_works_batch(
     mode: str,
     domains: list[str],
     max_obj: int,
-) -> tuple[int, int]:
-    """Project + filter one batch of works part files; load works and edges.
+) -> dict:
+    """Project + filter one batch of works part files; load works + both edge tables.
 
-    Reads the parts **once** into a temp table (``_oa_raw``), then derives the
-    works table (everything except the ``referenced_works`` list) and the edge
-    table (``referenced_works`` unnested) from it — so the S3 bytes are read once.
-    Returns ``(works_total, references_total)`` row counts after the batch.
+    Reads the parts **once** into a temp table (``_oa_raw``), then derives three
+    targets from it so the S3 bytes are read once: the ``works`` row (minus the
+    ``referenced_works`` list and the ``authorships`` JSON — both promoted to edge
+    tables), the ``work_references`` citation edges, and the ``works_authorships``
+    affiliation edges. Returns row-count totals keyed by table.
     """
     domain_in = ", ".join(f"'{d}'" for d in domains)
     projection = _WORKS_PROJECTION.format(version=version)
@@ -343,7 +379,7 @@ def curate_works_batch(
     works = _load(
         con,
         f"{LAKE}.{schema}.works",
-        "SELECT * EXCLUDE (referenced_works) FROM _oa_raw",
+        "SELECT * EXCLUDE (referenced_works, authorships) FROM _oa_raw",
         ["id"],
         mode=mode,
         exclude_change_cols=["snapshot_version"],
@@ -358,8 +394,16 @@ def curate_works_batch(
         mode=mode,
         exclude_change_cols=["snapshot_version"],
     )
+    auth = _load(
+        con,
+        f"{LAKE}.{schema}.works_authorships",
+        _AUTHORSHIPS_SQL,
+        ["work_id", "author_id", "institution_id"],
+        mode=mode,
+        exclude_change_cols=["snapshot_version"],
+    )
     con.execute("DROP TABLE IF EXISTS _oa_raw;")
-    return works, refs
+    return {"works": works, "references": refs, "authorships": auth}
 
 
 def ingest_works(
@@ -382,18 +426,19 @@ def ingest_works(
     try:
         urls = part_urls(con, "works", base=s.openalex_s3_base, max_files=max_files)
         batches = _chunks(urls, batch)
-        works = refs = 0
+        totals = {"works": 0, "references": 0, "authorships": 0}
         for n, chunk in enumerate(batches, 1):
-            works, refs = curate_works_batch(
+            totals = curate_works_batch(
                 con, chunk, schema=schema, version=version, mode=mode,
                 domains=s.openalex_domains, max_obj=s.openalex_max_object_bytes,
             )
             print(f"  works batch {n}/{len(batches)} ({len(chunk)} parts): "
-                  f"works={works:,} refs={refs:,}")
+                  f"works={totals['works']:,} refs={totals['references']:,} "
+                  f"authorships={totals['authorships']:,}")
     finally:
         if owns:
             con.close()
-    return {"schema": schema, "parts": len(urls), "works": works, "references": refs}
+    return {"schema": schema, "parts": len(urls), **totals}
 
 
 def ingest_entity(

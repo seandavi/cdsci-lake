@@ -81,7 +81,8 @@ def works(
     )
     typer.echo(
         f"openalex works: {summary['works']:,} works, "
-        f"{summary['references']:,} references ({summary['parts']} parts)"
+        f"{summary['references']:,} references, "
+        f"{summary['authorships']:,} affiliation edges ({summary['parts']} parts)"
     )
 
 

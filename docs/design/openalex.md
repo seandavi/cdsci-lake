@@ -47,18 +47,35 @@ Plaintext is smaller than the position-list JSON and directly FTS-able.
 Typed core + crosswalk ids + reconstructed abstract; heavy structures kept as JSON.
 
 ```
-id, doi, pmid (BIGINT), pmcid (PMCxxxx), mag_id,
+id, doi (normalized: lowercase, no https://doi.org/ prefix),
+pmid (BIGINT), pmcid (PMCxxxx), mag_id,
 title, display_name, publication_year, publication_date (DATE), language, type,
 abstract,                                            -- reconstructed plaintext
 topic_id, topic_name, subfield_name, field_name, domain_id, domain_name,
 oa_status, is_oa, source_id, source_name, source_issn_l, source_type, oa_pdf_url,
 cited_by_count, fwci, is_retracted, referenced_works_count,
-authorships (JSON), topics (JSON), keywords (JSON), grants (JSON),
+topics (JSON), keywords (JSON), grants (JSON),
 updated_date, snapshot_version
 ```
 
-`pmid` is `BIGINT` (matches `reporter.publink.pmid`, `icite.metadata.pmid`).
-Institution ROR lives inside `authorships` (kept as JSON for v1).
+`doi` is normalized at ingest (the cross-source join key). `pmid` is `BIGINT`
+(matches `reporter.publink.pmid`, `icite.metadata.pmid`). Authorships are **not** on
+the works row — they are the `works_authorships` edge table below.
+
+### `works_authorships` — key (`work_id`, `author_id`, `institution_id`)
+
+The ROR-keyed affiliation edge — the peer-center benchmarking join, promoted out of
+the `authorships` JSON. One row per (work, author, institution):
+
+```
+work_id, author_id, author_name, author_position, is_corresponding,
+institution_id, institution_ror, institution_country, snapshot_version
+```
+
+Authorships with no institution are dropped (the ROR is the point); the full author
+list incl. unaffiliated is re-derivable from the snapshot. Unnested with lenient
+`from_json` (tolerates OpenAlex schema drift). `snapshot_version` excluded from
+change-detection. Large — "filter aggressively."
 
 ### `work_references` — key (`work_id`, `referenced_work_id`)
 
@@ -82,9 +99,10 @@ can't see. `snapshot_version` excluded from change-detection.
 - `works.pmid` ↔ `reporter.publink.pmid` ↔ `reporter.projects` — grant → OpenAlex.
 - `works.pmid` ↔ `icite.metadata.pmid` — RCR/citation metrics (kept there, not here).
 - `works.pmid` ↔ omicidx PubMed — recover `mesh` (dropped here) + titles.
+- `works.doi` (normalized) ↔ other sources' normalized DOI — the general bibliometric join.
 - `works.pmcid` ↔ `pmc.fulltext.pmcid` — link to full text for mining.
-- `authorships[].institutions[].ror` ↔ `institutions.ror` — the ROR institution
-  graph for peer-center benchmarking.
+- `works_authorships.institution_ror` ↔ `institutions.ror` — the ROR institution
+  graph for peer-center benchmarking (a first-class join, not JSON extraction).
 - `work_references` (work_id → referenced_work_id) — citation graph traversal.
 
 ## CLI
@@ -99,8 +117,7 @@ python -m cdsci.lake.sources.openalex works --max-files 4 --mode merge
 
 ## Deferred
 
-- Trim `authorships` (drop `raw_affiliation_strings`/`lineage`) and/or a typed author
-  edge table — re-derivable from the snapshot, so cheap to defer.
+- A full author table incl. unaffiliated authorships (re-derivable from the snapshot).
 - Watermark-driven incrementals (read only `updated_date > last_pull`) — wire into the
   planned `lake_ops` metadata model (ADR-0001 §6).
 - Type-normalize `pmid` against omicidx PubMed (`VARCHAR`) for `ref.id_crosswalk`.

@@ -57,7 +57,11 @@ src/cdsci/lake/
   sources/<src>/        # one canonical corpus each -> a lake schema
 docs/adr/               # architecture decisions
 docs/design/            # source mapping + import design
+docs/STATUS.md          # what's loaded now (point-in-time)
+docs/ROADMAP.md         # planned work + candidate sources
 ```
 
 See `docs/adr/` for the platform decisions (catalog topology, per-source-silver
-medallion, MERGE-upsert, credentials, orchestration).
+medallion, MERGE-upsert, credentials, orchestration), `docs/STATUS.md` for what's
+currently loaded, and `docs/ROADMAP.md` for what's next (candidate sources, the
+`ref.id_crosswalk`, and the consumer catalog/schema docs).
