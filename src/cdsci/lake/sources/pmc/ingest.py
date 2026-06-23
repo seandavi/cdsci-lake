@@ -116,7 +116,10 @@ def curate(
 ) -> int:
     """Upsert ``pmc.fulltext`` from a bronze Parquet; MERGE on ``pmcid``."""
     src = csv_source(str(raw_parquet))
-    return upsert(con, f"{LAKE}.{schema}.{_TABLE}", _select_sql(src, snapshot, limit), key="pmcid")
+    return upsert(
+        con, f"{LAKE}.{schema}.{_TABLE}", _select_sql(src, snapshot, limit),
+        key="pmcid", exclude_change_cols=["snapshot_version"],
+    )
 
 
 def ingest(

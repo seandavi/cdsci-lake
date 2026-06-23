@@ -287,7 +287,10 @@ def curate(
     """Upsert a domain's ``.csv.gz`` into its lake table on the domain's key."""
     dom = DOMAINS[domain]
     target = target or f"{LAKE}.scp.{dom.table}"
-    return upsert(con, target, _select_sql(domain, csv_path, tag, limit), key=list(dom.key))
+    return upsert(
+        con, target, _select_sql(domain, csv_path, tag, limit),
+        key=list(dom.key), exclude_change_cols=["snapshot_version"],
+    )
 
 
 def ingest(

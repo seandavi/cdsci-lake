@@ -94,6 +94,33 @@ def test_upsert_time_travel_semantics(lake_settings: Settings):
         con.close()
 
 
+def test_upsert_excludes_metadata_from_change(lake_settings: Settings):
+    """A per-load stamp (snapshot_version) must not force a rewrite by itself."""
+    con = lake_connect(lake_settings)
+    try:
+        excl = ["snapshot_version"]
+        s1 = "SELECT * FROM (VALUES (1,'a','2026-05'),(2,'b','2026-05')) v(id,val,snapshot_version)"
+        upsert(con, "lake.main.t", s1, key="id", exclude_change_cols=excl)
+        before = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+
+        # Same data, NEW tag only → no-op (no snapshot), old tag retained.
+        s2 = "SELECT * FROM (VALUES (1,'a','2026-06'),(2,'b','2026-06')) v(id,val,snapshot_version)"
+        upsert(con, "lake.main.t", s2, key="id", exclude_change_cols=excl)
+        tag1 = "SELECT snapshot_version FROM lake.main.t WHERE id=1"
+        assert con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0] == before
+        assert con.execute(tag1).fetchone()[0] == "2026-05"
+
+        # Real change to id=1 → updates AND re-stamps; id=2 untouched keeps old tag.
+        s3 = "SELECT * FROM (VALUES (1,'A','2026-07'),(2,'b','2026-07')) v(id,val,snapshot_version)"
+        upsert(con, "lake.main.t", s3, key="id", exclude_change_cols=excl)
+        row1 = con.execute("SELECT val, snapshot_version FROM lake.main.t WHERE id=1").fetchone()
+        assert row1 == ("A", "2026-07")
+        tag2 = con.execute("SELECT snapshot_version FROM lake.main.t WHERE id=2").fetchone()[0]
+        assert tag2 == "2026-05"  # unchanged row keeps its original stamp
+    finally:
+        con.close()
+
+
 def test_reporter_projects_curate(lake_settings: Settings):
     con = lake_connect(lake_settings)
     try:

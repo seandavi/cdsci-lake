@@ -142,7 +142,10 @@ def curate(
     time-travel meaningful month over month (see :func:`cdsci.lake.upsert`).
     """
     target = target or f"{LAKE}.{_TABLE}"
-    return upsert(con, target, _select_sql(csv_paths, version, limit), key="pmid")
+    return upsert(
+        con, target, _select_sql(csv_paths, version, limit),
+        key="pmid", exclude_change_cols=["snapshot_version"],
+    )
 
 
 def ingest(
