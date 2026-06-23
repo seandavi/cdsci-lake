@@ -109,6 +109,11 @@ def lake_connect(
         _attach_local(con, s, read_only=read_only)
     else:
         raise ValueError(f"Unknown lake_backend: {s.lake_backend!r}")
+
+    # The operational ledger is a writer concern (ADR-0006): attach it only when
+    # the lake is writable, never for read-only consumers.
+    if not read_only:
+        _attach_ops(con, s)
     return con
 
 
@@ -169,6 +174,36 @@ def _attach_postgres(con: duckdb.DuckDBPyConnection, s: Settings, *, read_only: 
         f"ATTACH 'ducklake:postgres:dbname={s.lake_pg_dbname} host={s.lake_pg_host} "
         f"port={s.lake_pg_port} user={s.lake_pg_user}' AS {LAKE}{opts};"
     )
+
+
+def ops_db_path(settings: Settings | None = None) -> Path:
+    """Local filesystem path to the operational-ledger DuckDB file (``ops``).
+
+    A sibling of the catalog file — deliberately a *separate* DuckDB file, not the
+    ``.ducklake`` catalog, so the ledger isn't a read-write double-attach of the
+    catalog (ADR-0006).
+    """
+    s = settings or get_settings()
+    return catalog_path(s).parent / "ops.duckdb"
+
+
+def _attach_ops(con: duckdb.DuckDBPyConnection, s: Settings) -> None:
+    """Attach the operational ledger as ``ops`` and ensure its schema (ADR-0006).
+
+    Postgres backend: the same ``lake`` Postgres DB, reached through the ``postgres``
+    extension (already loaded, ``PGPASSWORD`` already set by ``_attach_postgres``),
+    in its own ``lake_ops`` schema. Local backend: a sibling ``ops.duckdb`` file.
+    """
+    from . import ops  # local import avoids a connect<->ops circular dependency
+
+    if s.lake_backend == "postgres":
+        con.execute(
+            f"ATTACH 'dbname={s.lake_pg_dbname} host={s.lake_pg_host} "
+            f"port={s.lake_pg_port} user={s.lake_pg_user}' AS {ops.OPS} (TYPE postgres);"
+        )
+    else:
+        con.execute(f"ATTACH '{ops_db_path(s)}' AS {ops.OPS};")
+    ops.bootstrap(con)
 
 
 def csv_source(paths: list[Path] | str) -> str:

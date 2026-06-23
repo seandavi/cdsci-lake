@@ -26,8 +26,17 @@ runs the idempotent bootstrap (schema + tables `IF NOT EXISTS`, then upserts the
 
 Tables are addressed `ops.lake_ops.<table>` (local: `ops.main.<table>` or a
 `lake_ops` schema in the sibling file — see `cdsci.lake.ops` for the resolved
-prefix). The DDL below is written for Postgres; the local DuckDB variant is the
-same modulo `BIGSERIAL` → `BIGINT` + a sequence and `jsonb` → `JSON`.
+prefix). **Implementation note (as built).** `ops` may be a real Postgres database reached
+through DuckDB's `postgres` extension, whose DDL surface is narrow. So the tables
+as implemented in `cdsci.lake.ops` carry **no** `SERIAL`/`DEFAULT`/`PRIMARY
+KEY`/foreign-key constraints — one DDL works on both backends. Concretely:
+`run_id` is a **client-generated UUID** (`VARCHAR`, `uuid.uuid4()`) — race-free
+under the concurrent loads, no sequence; the watermark `value` is **JSON text**
+(`VARCHAR`, `json.dumps`/`loads`); timestamps are written explicitly with
+`current_timestamp` (no column `DEFAULT`); and uniqueness is enforced in code (the
+registry refresh and `set_watermark` are delete-then-insert). The DDL below shows
+the *intent* with Postgres types; read `BIGSERIAL`→client UUID, `jsonb`→JSON text,
+and the keys/defaults as code-enforced.
 
 ## Tables
 
