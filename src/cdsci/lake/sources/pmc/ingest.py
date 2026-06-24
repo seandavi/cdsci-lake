@@ -27,6 +27,7 @@ import gzip
 import json
 import re
 import tarfile
+from contextlib import nullcontext
 from pathlib import Path
 
 import duckdb
@@ -217,6 +218,7 @@ def curate(
     limit: int | None = None,
     mode: str = "merge",
     passage_batches: int = 1,
+    run: ops.Run | None = None,
 ) -> dict:
     """Load ``pmc.documents`` + ``pmc.passages`` from one bronze Parquet.
 
@@ -229,32 +231,42 @@ def curate(
     that many pmcid shards, each its own INSERT — a spill-reduction lever for the
     bulk load (peak memory ≈ whole-range / passage_batches). Default 1 is the
     original single-INSERT behavior; each shard is a separate snapshot.
+
+    ``run`` (the live :class:`ops.Run`) makes each write a **self-describing**
+    snapshot via :meth:`ops.Run.attribute` (ADR-0007); without it the writes run
+    unattributed (the original behavior, used by tests).
     """
+    def attr(op: str):
+        return run.attribute(op) if run is not None else nullcontext()
+
     src = csv_source(str(raw_parquet))
-    documents = _load(
-        con,
-        f"{LAKE}.{schema}.{_DOCUMENTS}",
-        _documents_sql(src, snapshot, limit),
-        ["pmcid"],
-        mode=mode,
-    )
+    with attr("documents"):
+        documents = _load(
+            con,
+            f"{LAKE}.{schema}.{_DOCUMENTS}",
+            _documents_sql(src, snapshot, limit),
+            ["pmcid"],
+            mode=mode,
+        )
     _log.info("documents: {:,} rows ({} mode)", documents, mode)
 
     target = f"{LAKE}.{schema}.{_PASSAGES}"
     if mode == "append" and passage_batches > 1:
         passages = 0
         for i in range(passage_batches):
-            n = _load(
-                con, target,
-                _passages_sql(src, snapshot, limit, batch=(i, passage_batches)),
-                ["pmcid", "passage_index"], mode=mode,
-            )
+            with attr(f"passages.shard{i + 1}/{passage_batches}"):
+                n = _load(
+                    con, target,
+                    _passages_sql(src, snapshot, limit, batch=(i, passage_batches)),
+                    ["pmcid", "passage_index"], mode=mode,
+                )
             passages += n
             _log.info("passages shard {}/{}: {:,} rows (cumulative {:,})",
                       i + 1, passage_batches, n, passages)
     else:
-        passages = _load(con, target, _passages_sql(src, snapshot, limit),
-                         ["pmcid", "passage_index"], mode=mode)
+        with attr("passages"):
+            passages = _load(con, target, _passages_sql(src, snapshot, limit),
+                             ["pmcid", "passage_index"], mode=mode)
         _log.info("passages: {:,} rows ({} mode)", passages, mode)
     return {"documents": documents, "passages": passages}
 
@@ -294,7 +306,7 @@ def ingest(
                 _log.info("loading single file {} (mode={}, schema={})", file, mode, schema)
                 raw = Path(file) if str(file).endswith(".parquet") else materialize_raw(con, file)
                 counts = curate(con, raw, schema=schema, snapshot=snapshot, limit=limit,
-                                mode=mode, passage_batches=passage_batches)
+                                mode=mode, passage_batches=passage_batches, run=r)
                 summary["documents"] += counts["documents"]
                 summary["passages"] += counts["passages"]
                 summary["ranges"].append(Path(file).name)
@@ -309,7 +321,7 @@ def ingest(
                     n_files = tar_to_ndjson(tar, ndjson)
                     raw = materialize_raw(con, ndjson)
                     counts = curate(con, raw, schema=schema, snapshot=snapshot, limit=limit,
-                                    mode=mode, passage_batches=passage_batches)
+                                    mode=mode, passage_batches=passage_batches, run=r)
                     summary["documents"] += counts["documents"]
                     summary["passages"] += counts["passages"]
                     summary["ranges"].append({"file": filename, "articles": n_files, **counts})
