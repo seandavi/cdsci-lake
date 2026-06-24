@@ -12,9 +12,9 @@ rationale for *what's next*, not how it was built.
   catalog-adjacent native state (a second `ops` attachment, not DuckLake data);
   wire every ingestor to record runs via `ops.run(...)`. Unblocks watermark-driven
   incrementals (e.g. OpenAlex `updated_date > last_pull`). *Module + bootstrap
-  done; 5/7 ingestors (icite, reporter, ctgov, scp, census_geo) + europepmc go
-  through `ops.run`. Remaining: convert `pmc`/`openalex` after their loads finish;
-  add watermarks; `dataset_contract`.*
+  done; **all 7 ingestors + europepmc** record runs via `ops.run`. Remaining: add
+  watermark cursors (OpenAlex `updated_date` first); `dataset_contract` (with the
+  versioned-views work).*
 - **Scoped roles** — replace the admin bootstrap credential with `lake_writer`
   (ingest) and `lake_reader` (consumers) Postgres roles + scoped R2 tokens.
 - **Versioned consumer views + `dataset_contract` registry** — per-source stable

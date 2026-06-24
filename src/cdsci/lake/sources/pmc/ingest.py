@@ -32,6 +32,7 @@ from pathlib import Path
 import duckdb
 import httpx
 
+from ... import ops
 from ...config import Settings, get_settings
 from ...connect import LAKE, csv_source, lake_connect, raw_dir, upsert
 from ...download import download
@@ -246,32 +247,31 @@ def ingest(
         "passages": 0,
     }
     try:
-        if file:
-            raw = Path(file) if str(file).endswith(".parquet") else materialize_raw(con, file)
-            counts = curate(con, raw, schema=schema, snapshot=snapshot, limit=limit, mode=mode)
-            summary["documents"] += counts["documents"]
-            summary["passages"] += counts["passages"]
-            summary["ranges"].append(Path(file).name)
-            return summary
-
-        for filename in ranges if ranges is not None else list_ranges(s):
-            tar = download_range(filename, s)
-            ndjson = raw_dir("pmc", s) / (filename.replace(".tar.gz", ".ndjson.gz"))
-            n_files = tar_to_ndjson(tar, ndjson)
-            raw = materialize_raw(con, ndjson)
-            counts = curate(con, raw, schema=schema, snapshot=snapshot, limit=limit, mode=mode)
-            summary["documents"] += counts["documents"]
-            summary["passages"] += counts["passages"]
-            summary["ranges"].append(
-                {"file": filename, "articles": n_files, **counts}
-            )
-            if not keep_raw:
-                # The silver tables on R2 are the faithful copy, so the local
-                # tarball / NDJSON / bronze Parquet are all transient — delete
-                # them per range so disk stays ~one range, not 22 × 7 GB.
-                tar.unlink(missing_ok=True)
-                ndjson.unlink(missing_ok=True)
-                raw.unlink(missing_ok=True)
-        return summary
+        with ops.run(con, source="pmc", target=f"{LAKE}.{schema}", version=snapshot) as r:
+            if file:
+                raw = Path(file) if str(file).endswith(".parquet") else materialize_raw(con, file)
+                counts = curate(con, raw, schema=schema, snapshot=snapshot, limit=limit, mode=mode)
+                summary["documents"] += counts["documents"]
+                summary["passages"] += counts["passages"]
+                summary["ranges"].append(Path(file).name)
+            else:
+                for filename in ranges if ranges is not None else list_ranges(s):
+                    tar = download_range(filename, s)
+                    ndjson = raw_dir("pmc", s) / (filename.replace(".tar.gz", ".ndjson.gz"))
+                    n_files = tar_to_ndjson(tar, ndjson)
+                    raw = materialize_raw(con, ndjson)
+                    counts = curate(con, raw, schema=schema, snapshot=snapshot, limit=limit, mode=mode)
+                    summary["documents"] += counts["documents"]
+                    summary["passages"] += counts["passages"]
+                    summary["ranges"].append({"file": filename, "articles": n_files, **counts})
+                    if not keep_raw:
+                        # The silver tables on R2 are the faithful copy, so the local
+                        # tarball / NDJSON / bronze Parquet are all transient — delete
+                        # them per range so disk stays ~one range, not 22 × 7 GB.
+                        tar.unlink(missing_ok=True)
+                        ndjson.unlink(missing_ok=True)
+                        raw.unlink(missing_ok=True)
+            r.rows = summary["documents"] + summary["passages"]
     finally:
         con.close()
+    return {**r.summary(), **summary}

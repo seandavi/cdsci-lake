@@ -31,6 +31,7 @@ from datetime import date
 
 import duckdb
 
+from ... import ops
 from ...config import Settings, get_settings
 from ...connect import LAKE, lake_connect, upsert
 
@@ -424,21 +425,23 @@ def ingest_works(
     owns = con is None
     con = con or lake_connect(s)
     try:
-        urls = part_urls(con, "works", base=s.openalex_s3_base, max_files=max_files)
-        batches = _chunks(urls, batch)
-        totals = {"works": 0, "references": 0, "authorships": 0}
-        for n, chunk in enumerate(batches, 1):
-            totals = curate_works_batch(
-                con, chunk, schema=schema, version=version, mode=mode,
-                domains=s.openalex_domains, max_obj=s.openalex_max_object_bytes,
-            )
-            print(f"  works batch {n}/{len(batches)} ({len(chunk)} parts): "
-                  f"works={totals['works']:,} refs={totals['references']:,} "
-                  f"authorships={totals['authorships']:,}")
+        with ops.run(con, source="openalex", target=f"{LAKE}.{schema}.works", version=version) as r:
+            urls = part_urls(con, "works", base=s.openalex_s3_base, max_files=max_files)
+            batches = _chunks(urls, batch)
+            totals = {"works": 0, "references": 0, "authorships": 0}
+            for n, chunk in enumerate(batches, 1):
+                totals = curate_works_batch(
+                    con, chunk, schema=schema, version=version, mode=mode,
+                    domains=s.openalex_domains, max_obj=s.openalex_max_object_bytes,
+                )
+                print(f"  works batch {n}/{len(batches)} ({len(chunk)} parts): "
+                      f"works={totals['works']:,} refs={totals['references']:,} "
+                      f"authorships={totals['authorships']:,}")
+            r.rows = totals["works"]
     finally:
         if owns:
             con.close()
-    return {"schema": schema, "parts": len(urls), **totals}
+    return {**r.summary(), "schema": schema, "parts": len(urls), **totals}
 
 
 def ingest_entity(
