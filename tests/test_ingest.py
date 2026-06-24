@@ -343,12 +343,17 @@ def test_pmc_curate(lake_settings: Settings, tmp_path):
         con.close()
 
 
-def test_pmc_ingest_attributes_snapshots(lake_settings: Settings):
+def test_pmc_ingest_attributes_snapshots(lake_settings: Settings, tmp_path: Path):
     """PMC append: each write is a self-describing snapshot (ADR-0007) bound by run_id."""
+    import shutil
+
     from cdsci.lake.sources import pmc
 
+    # stage into tmp so the bronze parquet lands there, not in the fixtures dir.
+    nd = tmp_path / "pmc_sample.ndjson"
+    shutil.copy(FIXTURES / "pmc_sample.ndjson", nd)
     summary = pmc.ingest(
-        file=str(FIXTURES / "pmc_sample.ndjson"),
+        file=str(nd),
         mode="append", passage_batches=2, snapshot="attr-test",
         settings=lake_settings,
     )
