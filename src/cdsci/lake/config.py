@@ -132,6 +132,12 @@ class Settings(BaseSettings):
     retractionwatch_url: str = (
         "https://gitlab.com/crossref/retraction-watch-data/-/raw/main/retraction_watch.csv"
     )
+    # NLM MeSH (Medical Subject Headings) — descriptor + qualifier XML, released
+    # annually (ADR-0010). ``desc{year}.gz`` is the controlled vocabulary + tree
+    # hierarchy; ``qual{year}.xml`` the ~80 subheadings. Supplementary Concept
+    # Records (``supp``) are deferred. ``mesh_year`` selects the annual edition.
+    mesh_xml_base: str = "https://nlmpubs.nlm.nih.gov/projects/mesh/MESH_FILES/xmlmesh/"
+    mesh_year: int = 2026
     # Reliance on Science (Marx) — patent↔paper links, keyed by OpenAlex Work ID.
     # **CC BY-NC 4.0**: internal non-commercial use only, NOT for redistribution;
     # the license is carried forward in the lake_ops source registry. A pinned

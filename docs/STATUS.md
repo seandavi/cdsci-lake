@@ -73,6 +73,15 @@ cdsci-lake` and `lake_connect(read_only=True)`.
   `topics`. Branch `openalex-source` (off `census-geo`). See ADR-0005 +
   `docs/design/openalex.md`. To load: `python -m cdsci.lake.sources.openalex entities`
   then `... works --mode append` (full server run).
+- **MeSH importer** (`mesh`) — **scaffolded, NOT yet loaded.** NLM controlled
+  vocabulary + tree hierarchy from the annual descriptor + qualifier XML, stdlib
+  `iterparse` → bronze Parquet → five MERGE-upsert tables: `mesh.descriptor`,
+  `mesh.tree` (exploded `(descriptor_ui, tree_number)` + `parent_tree_number`;
+  polyhierarchy native — `tree_number LIKE 'C04%'` rolls up "everything under
+  Neoplasms"), `mesh.qualifier`, `mesh.descriptor_qualifier`, `mesh.entry_term`.
+  Complementary to `openalex.topics`. The literature edge (`mesh.article_heading`
+  from `omicidx.pubmed_article.mesh_terms`, which carries the `D…`/`Q…` UIs) is
+  Phase 1b. See ADR-0010. To load: `python -m cdsci.lake.sources.mesh run`.
 - **MERGE-upsert** (`cdsci.lake.upsert`, ADR-0003) — keyed, change-detecting (updates
   only on real diffs), idempotent (no-op re-run adds no snapshot) → meaningful
   time-travel. Per-load stamps (`snapshot_version`) are excluded from change-detection
