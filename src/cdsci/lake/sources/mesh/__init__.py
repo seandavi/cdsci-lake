@@ -13,22 +13,28 @@ Five tables (Phase 1a — the vocabulary):
   qualifier_ui)``.
 * ``mesh.entry_term`` — synonyms ``(descriptor_ui, term, is_preferred)``.
 
-The literature edge (``mesh.article_heading`` exploded from ``omicidx.pubmed_article
-.mesh_terms``, which carries the ``D…``/``Q…`` UIs) is Phase 1b — not built here.
+Phase 1b adds the literature edge ``mesh.article_heading`` — ``(pmid,
+descriptor_ui, qualifier_ui)`` exploded from ``omicidx.pubmed_article.mesh_terms``
+(which carries the ``D…``/``Q…`` UIs). ``descriptor_ui`` joins ``mesh.tree`` for
+hierarchy rollups; ``pmid`` joins ``icite``/``reporter.publink``.
 """
 
 from .ingest import (
     curate,
+    curate_article_headings,
     descriptors_to_ndjson,
     ingest,
+    ingest_headings,
     materialize_raw,
     qualifiers_to_ndjson,
 )
 
 __all__ = [
     "curate",
+    "curate_article_headings",
     "descriptors_to_ndjson",
     "ingest",
+    "ingest_headings",
     "materialize_raw",
     "qualifiers_to_ndjson",
 ]

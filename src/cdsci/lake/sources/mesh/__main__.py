@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 
 from ...log import configure
-from .ingest import ingest
+from .ingest import ingest, ingest_headings
 
 app = typer.Typer(
     help="Ingest NLM MeSH descriptors + tree hierarchy + qualifiers into lake.mesh.*.",
@@ -41,6 +41,23 @@ def run(
     counts = {k: s[k] for k in
               ("descriptor", "tree", "qualifier", "descriptor_qualifier", "entry_term")}
     typer.echo(f"{s['schema']} <- {s['rows']:,} rows — {delta}: {counts}")
+
+
+@app.command("headings")
+def headings(
+    version: str | None = typer.Option(
+        None, "--version", help="Snapshot label (default: YYYY-MM)."
+    ),
+    source_table: str = typer.Option(
+        "lake.omicidx.pubmed_article", "--source-table", help="In-lake PubMed source."
+    ),
+    schema: str = typer.Option("mesh", "--schema", help="Target lake schema."),
+    limit: int | None = typer.Option(None, "--limit", help="Cap source articles (smoke test)."),
+) -> None:
+    """Build mesh.article_heading (pmid↔descriptor↔qualifier) from omicidx PubMed MeSH."""
+    s = ingest_headings(version=version, source_table=source_table, schema=schema, limit=limit)
+    delta = "changed" if s["changed"] else "no change (idempotent)"
+    typer.echo(f"{s['table']} <- {s['rows']:,} rows — {delta}")
 
 
 if __name__ == "__main__":

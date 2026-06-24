@@ -79,6 +79,46 @@ def test_mesh_curate_vocabulary_and_hierarchy(lake_settings: Settings, tmp_path:
         con.close()
 
 
+def test_mesh_article_headings_explosion(lake_settings: Settings):
+    """Phase 1b: explode omicidx mesh_terms → (pmid, descriptor_ui, qualifier_ui)."""
+    con = lake_connect(lake_settings)
+    try:
+        # stand up a tiny in-lake omicidx.pubmed_article (pmid VARCHAR, like production).
+        con.execute("CREATE SCHEMA lake.omicidx;")
+        con.execute(
+            "CREATE TABLE lake.omicidx.pubmed_article AS SELECT * FROM (VALUES "
+            "('100', 'D006801:Humans; D015820:Cadherins / Q000378:metabolism / Q000235:genetics'), "
+            "('200', 'D000328:Adult; D000653:Amniotic Fluid / Q000737:chemistry'), "
+            "('300', NULL)) t(pmid, mesh_terms);"
+        )
+        n = mesh.curate_article_headings(con, version="2026-06")
+        # 100: Humans=1 + Cadherins×2 quals=2 → 3 ; 200: Adult=1 + Amniotic/chem=1 → 2 ; 300 skip
+        assert n == 5
+        got = {
+            tuple(r) for r in con.execute(
+                "SELECT pmid, descriptor_ui, qualifier_ui FROM lake.mesh.article_heading"
+            ).fetchall()
+        }
+        assert got == {
+            (100, "D006801", ""),
+            (100, "D015820", "Q000378"),
+            (100, "D015820", "Q000235"),
+            (200, "D000328", ""),
+            (200, "D000653", "Q000737"),
+        }
+        # pmid normalized to BIGINT (joins icite/publink); no-qualifier sentinel is '', not NULL.
+        assert con.execute(
+            "SELECT count(*) FROM lake.mesh.article_heading WHERE qualifier_ui IS NULL"
+        ).fetchone()[0] == 0
+        # idempotent re-run adds no snapshot.
+        before = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+        mesh.curate_article_headings(con, version="2026-06")
+        after = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+        assert after == before
+    finally:
+        con.close()
+
+
 def test_mesh_curate_idempotent(lake_settings: Settings, tmp_path: Path):
     """A re-curate of identical data is a no-op (adds no snapshot)."""
     desc_nd = tmp_path / "desc.ndjson.gz"
