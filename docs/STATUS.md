@@ -79,9 +79,13 @@ cdsci-lake` and `lake_connect(read_only=True)`.
   `mesh.tree` (exploded `(descriptor_ui, tree_number)` + `parent_tree_number`;
   polyhierarchy native — `tree_number LIKE 'C04%'` rolls up "everything under
   Neoplasms"), `mesh.qualifier`, `mesh.descriptor_qualifier`, `mesh.entry_term`.
-  Complementary to `openalex.topics`. The literature edge (`mesh.article_heading`
-  from `omicidx.pubmed_article.mesh_terms`, which carries the `D…`/`Q…` UIs) is
-  Phase 1b. See ADR-0010. To load: `python -m cdsci.lake.sources.mesh run`.
+  Complementary to `openalex.topics`. **Phase 1b** (`mesh.article_heading`) is also
+  built — `(pmid, descriptor_ui, qualifier_ui)` exploded from
+  `omicidx.pubmed_article.mesh_terms` (carries the `D…`/`Q…` UIs; `''` sentinel for
+  no-qualifier; major-topic flag is the known gap). `descriptor_ui` joins
+  `mesh.tree` for rollups, `pmid` joins `icite`/`publink`. **No `mesh↔openalex_topic`
+  crosswalk** — researched, none is canonical (ADR-0010). See ADR-0010. To load:
+  `python -m cdsci.lake.sources.mesh run` (vocab) then `… mesh headings` (the edge).
 - **MERGE-upsert** (`cdsci.lake.upsert`, ADR-0003) — keyed, change-detecting (updates
   only on real diffs), idempotent (no-op re-run adds no snapshot) → meaningful
   time-travel. Per-load stamps (`snapshot_version`) are excluded from change-detection

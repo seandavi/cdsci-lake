@@ -27,6 +27,7 @@ from __future__ import annotations
 import gzip
 import json
 import xml.etree.ElementTree as ET
+from datetime import date
 from pathlib import Path
 
 import duckdb
@@ -285,3 +286,101 @@ def _bronze(con, file, fetch, to_ndjson, stem, settings) -> Path:
     ndjson = raw_dir(_RAW, settings) / f"{stem}.ndjson.gz"
     to_ndjson(xml, ndjson)
     return materialize_raw(con, ndjson)
+
+
+# --- Phase 1b: the literature edge (article ↔ MeSH), derived from omicidx PubMed ---
+
+_PUBMED = "lake.omicidx.pubmed_article"
+
+
+def _today_version() -> str:
+    """Default snapshot label (the pull month) — the edge tracks an omicidx snapshot."""
+    return date.today().strftime("%Y-%m")
+
+
+def _article_heading_sql(source_table: str, version: str, limit: int | None) -> str:
+    """Explode ``mesh_terms`` (``D…:Name [/ Q…:qual]*; …``) → (pmid, descriptor, qualifier).
+
+    A heading with no qualifier emits one row with ``qualifier_ui = ''`` (a sentinel,
+    never NULL, so the MERGE key stays matchable and re-runs are idempotent); a
+    heading with N qualifiers emits N rows. The major/minor-topic flag is not present
+    in the flattened ``mesh_terms`` (ADR-0010 known gap). ``limit`` caps source rows.
+    """
+    limit_sql = f" LIMIT {int(limit)}" if limit else ""
+    return rf"""
+        WITH src AS (
+            SELECT TRY_CAST(pmid AS BIGINT) AS pmid, mesh_terms
+            FROM {source_table}
+            WHERE mesh_terms IS NOT NULL AND mesh_terms <> ''{limit_sql}
+        ),
+        headings AS (
+            SELECT pmid, trim(h) AS heading
+            FROM src, unnest(string_split(mesh_terms, ';')) AS t(h)
+            WHERE trim(h) <> ''
+        ),
+        parsed AS (
+            SELECT pmid,
+                   regexp_extract(heading, '^(D\d+)', 1)  AS descriptor_ui,
+                   regexp_extract_all(heading, '(Q\d+)')  AS quals
+            FROM headings
+        ),
+        valid AS (SELECT * FROM parsed WHERE pmid IS NOT NULL AND descriptor_ui <> '')
+        SELECT pmid, descriptor_ui, '' AS qualifier_ui,
+               CAST('{version}' AS VARCHAR) AS snapshot_version
+        FROM valid WHERE len(quals) = 0
+        UNION
+        SELECT pmid, descriptor_ui, unnest(quals) AS qualifier_ui,
+               CAST('{version}' AS VARCHAR) AS snapshot_version
+        FROM valid WHERE len(quals) > 0
+    """
+
+
+def curate_article_headings(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    schema: str = "mesh",
+    version: str = "0",
+    source_table: str = _PUBMED,
+    limit: int | None = None,
+) -> int:
+    """Upsert ``mesh.article_heading`` (pmid ↔ descriptor ↔ qualifier) from PubMed MeSH.
+
+    Reads the in-lake ``omicidx.pubmed_article.mesh_terms`` (which carries the
+    ``D…``/``Q…`` UIs) and explodes it; ``descriptor_ui`` joins ``mesh.tree`` for
+    hierarchy rollups and ``pmid`` joins ``icite``/``reporter.publink``. This is a
+    **large** table (one row per article × heading × qualifier — hundreds of M);
+    the MERGE re-reads the target, so a full rebuild is heavy by design.
+    """
+    n = upsert(
+        con,
+        f"{LAKE}.{schema}.article_heading",
+        _article_heading_sql(source_table, version, limit),
+        ["pmid", "descriptor_ui", "qualifier_ui"],
+        exclude_change_cols=["snapshot_version"],
+    )
+    _log.info("mesh.article_heading <- {:,} rows", n)
+    return n
+
+
+def ingest_headings(
+    *,
+    schema: str = "mesh",
+    version: str | None = None,
+    source_table: str = _PUBMED,
+    limit: int | None = None,
+    settings: Settings | None = None,
+) -> dict:
+    """Build ``mesh.article_heading`` from omicidx PubMed (Phase 1b). No download."""
+    s = settings or get_settings()
+    version = version or _today_version()
+    con = lake_connect(s)
+    try:
+        with ops.run(
+            con, source="mesh", target=f"{LAKE}.{schema}.article_heading", version=version
+        ) as r:
+            r.rows = curate_article_headings(
+                con, schema=schema, version=version, source_table=source_table, limit=limit
+            )
+    finally:
+        con.close()
+    return {**r.summary(), "table": f"{LAKE}.{schema}.article_heading"}

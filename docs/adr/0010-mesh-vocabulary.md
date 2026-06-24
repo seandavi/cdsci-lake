@@ -72,9 +72,18 @@ annual cadence; `us-public-domain` / NLM). Two phases.
 
 ### Out of scope / later
 
-Supplementary Concept Records, PharmacologicalActions, see-also cross-refs (Phase 2),
-and a `mesh ↔ openalex_topic` crosswalk (optional, if a unified subject layer is
-wanted). MeSH and OpenAlex topics stay distinct vocabularies.
+Supplementary Concept Records, PharmacologicalActions, see-also cross-refs (Phase 2).
+
+**No `mesh ↔ openalex_topic` crosswalk** — researched, and **no canonical mapping
+exists**: an OpenAlex Topic exposes only an OpenAlex id + a single Wikipedia URL (no
+MeSH/UMLS/Wikidata), UMLS does not include OpenAlex topics, and the only published
+alignment is a *derived, approximate* third-party paper. Per "build it only if
+canonical", we do not. A derived bridge (topic → Wikipedia → Wikidata P486 → MeSH)
+is possible but lossy and must be labelled non-canonical if ever built. Note the
+real authoritative literature↔MeSH bridge is **PMID → MeSH** — which Phase 1b
+provides — and that OpenAlex's *work-level* `mesh` field carries `is_major_topic`
+(the flag omicidx's flattening drops), an alternative source for the Phase 2
+major-topic upgrade should `openalex.works` ever keep `mesh`.
 
 ## Consequences
 
