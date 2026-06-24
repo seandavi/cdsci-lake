@@ -120,6 +120,13 @@ class Settings(BaseSettings):
     # (accession, PMCID, EXTID, SOURCE). Loaded into one tidy table keyed by the
     # database (= file stem). The directory index is scraped for the file list.
     europepmc_textmined_url: str = "https://europepmc.org/pub/databases/pmc/TextMinedTerms/"
+    # Retraction Watch — the Crossref-hosted CSV (CC0), updated weekday-daily. A
+    # single rolling ~65 MB file (~70k rows); keyed Record ID, multi-value fields
+    # semicolon-separated. The rolling file has no upstream version, so we tag the
+    # snapshot by pull date and keep the downloaded CSV as the bronze copy.
+    retractionwatch_url: str = (
+        "https://gitlab.com/crossref/retraction-watch-data/-/raw/main/retraction_watch.csv"
+    )
 
     @property
     def scp_releases_api(self) -> str:

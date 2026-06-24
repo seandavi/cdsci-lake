@@ -77,6 +77,8 @@ SOURCES: tuple[Source, ...] = (
            "annual", "census-cartographic", "us-public-domain"),
     Source("europepmc", "europepmc", "Europe PMC text-mined annotations (PMCID↔term)",
            "monthly", "europepmc-bulk", "europepmc-terms"),
+    Source("retractionwatch", "retractionwatch", "Retraction Watch retraction/correction notices",
+           "weekday-daily", "crossref-gitlab-csv", "cc0", watermark_strategy="full"),
 )
 
 
