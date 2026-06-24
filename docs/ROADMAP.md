@@ -7,10 +7,14 @@ rationale for *what's next*, not how it was built.
 
 ## Platform (near-term)
 
-- **`lake_ops` metadata model** (ADR-0001 §6) — source / version / run / watermark /
-  contract tables in the Postgres catalog; wire every ingestor to record runs +
-  snapshot ids. Unblocks watermark-driven incrementals (e.g. OpenAlex
-  `updated_date > last_pull`).
+- **`lake_ops` metadata model** (ADR-0001 §6 → **ADR-0006** accepted, design
+  `docs/design/lake_ops.md`) — source / run / watermark / contract tables as
+  catalog-adjacent native state (a second `ops` attachment, not DuckLake data);
+  wire every ingestor to record runs via `ops.run(...)`. Unblocks watermark-driven
+  incrementals (e.g. OpenAlex `updated_date > last_pull`). *Module + bootstrap
+  done; 5/7 ingestors (icite, reporter, ctgov, scp, census_geo) + europepmc go
+  through `ops.run`. Remaining: convert `pmc`/`openalex` after their loads finish;
+  add watermarks; `dataset_contract`.*
 - **Scoped roles** — replace the admin bootstrap credential with `lake_writer`
   (ingest) and `lake_reader` (consumers) Postgres roles + scoped R2 tokens.
 - **Versioned consumer views + `dataset_contract` registry** — per-source stable
@@ -24,7 +28,8 @@ rationale for *what's next*, not how it was built.
   need an XML stream-parse path. Not implemented.
 - **Consumer migration** — point `cancer_center` enrichment at `lake.icite.metadata`
   (RCR) instead of per-project caches.
-- **Repo remote** — push this repo to GitHub (local history only today).
+- ~~**Repo remote**~~ — **done**: private GitHub repo `seandavi/cdsci-lake`, `main`
+  pushed.
 
 ## OpenAlex follow-ups (ADR-0005)
 

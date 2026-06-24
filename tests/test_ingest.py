@@ -75,6 +75,25 @@ def test_icite_curate_limit(lake_settings: Settings):
         con.close()
 
 
+def test_icite_ingest_records_ops_run(lake_settings: Settings):
+    """End-to-end ingest(--file) goes through ops.run and records a success row."""
+    from cdsci.lake import ops
+
+    summary = icite.ingest(file=str(FIXTURES / "icite_sample.csv"), settings=lake_settings)
+    assert summary["status"] == "success" and summary["run_id"]
+    assert summary["changed"] is True
+    assert summary["rows"] == 3
+
+    con = lake_connect(lake_settings)
+    try:
+        last = ops.last_run(con, "icite")
+        assert last["status"] == "success"
+        assert last["target"] == summary["table"]
+        assert last["snapshot_after"] == summary["snapshot"]
+    finally:
+        con.close()
+
+
 def test_upsert_time_travel_semantics(lake_settings: Settings):
     """MERGE upsert: new rows insert, changed rows update, a no-op adds no snapshot."""
     con = lake_connect(lake_settings)

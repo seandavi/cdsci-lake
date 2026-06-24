@@ -115,6 +115,11 @@ class Settings(BaseSettings):
     openalex_batch_files: int = Field(default=50, ge=1)
     openalex_max_files: int | None = None
     openalex_max_object_bytes: int = 67_108_864  # 64 MiB — hyperauthorship records
+    # Europe PMC text-mined annotations — a directory of per-database CSVs (one
+    # file per annotated resource: uniprot, chebi, nct, …), all the same shape
+    # (accession, PMCID, EXTID, SOURCE). Loaded into one tidy table keyed by the
+    # database (= file stem). The directory index is scraped for the file list.
+    europepmc_textmined_url: str = "https://europepmc.org/pub/databases/pmc/TextMinedTerms/"
 
     @property
     def scp_releases_api(self) -> str:

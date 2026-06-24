@@ -24,6 +24,7 @@ from pathlib import Path
 
 import duckdb
 
+from ... import ops
 from ...config import Settings, get_settings
 from ...connect import LAKE, csv_source, lake_connect, raw_dir, upsert
 from ...download import get_json
@@ -157,14 +158,14 @@ def ingest(
         else:
             ndjson = Path(file) if file else download_studies(s, max_pages=max_pages)[0]
             raw = materialize_raw(con, ndjson)
-        snap_before = con.execute(f"SELECT max(snapshot_id) FROM {LAKE}.snapshots()").fetchone()[0]
-        counts = curate(con, raw, schema=schema, limit=limit)
-        snap_after = con.execute(f"SELECT max(snapshot_id) FROM {LAKE}.snapshots()").fetchone()[0]
+        with ops.run(con, source="ctgov", target=f"{LAKE}.{schema}") as r:
+            counts = curate(con, raw, schema=schema, limit=limit)
+            r.rows = sum(counts.values())
     finally:
         con.close()
     return {
+        **r.summary(),
         "studies_table": f"{LAKE}.{schema}.studies",
         "references_table": f"{LAKE}.{schema}.references",
         **counts,
-        "changed": snap_after != snap_before,
     }

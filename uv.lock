@@ -38,7 +38,10 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
+    { name = "httpx" },
     { name = "pydantic-settings" },
+    { name = "tenacity" },
+    { name = "typer" },
 ]
 
 [package.optional-dependencies]
@@ -59,10 +62,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "duckdb", specifier = ">=1.5.3" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx", marker = "extra == 'ingest'", specifier = ">=0.28.1" },
     { name = "pydantic-settings", specifier = ">=2.14.1" },
     { name = "pytz", marker = "extra == 'ingest'", specifier = ">=2025.1" },
+    { name = "tenacity", specifier = ">=9.1.4" },
     { name = "tenacity", marker = "extra == 'ingest'", specifier = ">=9.1.4" },
+    { name = "typer", specifier = ">=0.26.7" },
     { name = "typer", marker = "extra == 'ingest'", specifier = ">=0.15.0" },
 ]
 provides-extras = ["ingest"]
