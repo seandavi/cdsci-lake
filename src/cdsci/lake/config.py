@@ -127,6 +127,18 @@ class Settings(BaseSettings):
     retractionwatch_url: str = (
         "https://gitlab.com/crossref/retraction-watch-data/-/raw/main/retraction_watch.csv"
     )
+    # Reliance on Science (Marx) — patent↔paper links, keyed by OpenAlex Work ID.
+    # **CC BY-NC 4.0**: internal non-commercial use only, NOT for redistribution;
+    # the license is carried forward in the lake_ops source registry. A pinned
+    # Zenodo record (v63, 2024 ed.) for reproducibility; `_pcs_oa.csv` = patent→
+    # paper citations, `_patent_paper_pairs.csv` = same-team matched pairs.
+    reliance_zenodo_record: str = "11461587"
+    reliance_files: list[str] = ["_pcs_oa.csv", "_patent_paper_pairs.csv"]
+
+    @property
+    def reliance_base_url(self) -> str:
+        """Zenodo file-download base for the pinned Reliance on Science record."""
+        return f"https://zenodo.org/records/{self.reliance_zenodo_record}/files"
 
     @property
     def scp_releases_api(self) -> str:
