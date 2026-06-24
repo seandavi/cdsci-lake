@@ -29,8 +29,10 @@ from ... import ops
 from ...config import Settings, get_settings
 from ...connect import LAKE, csv_source, lake_connect, raw_dir, upsert
 from ...download import download
+from ...log import logger
 
 _RAW = "reliance"  # raw-download subdir name
+_log = logger.bind(ctx="reliance")
 
 
 @dataclass(frozen=True)
@@ -147,6 +149,7 @@ def ingest(
             for name in names:
                 path = Path(file) if file else download_dataset(name, version, s)
                 counts[name] = curate(con, name, path, version, schema=schema, limit=limit)
+                _log.info("{} <- {:,} rows", name, counts[name])
             r.rows = sum(counts.values())
     finally:
         con.close()

@@ -33,10 +33,12 @@ from ... import ops
 from ...config import Settings, get_settings
 from ...connect import LAKE, csv_source, lake_connect, raw_dir, upsert
 from ...download import download
+from ...log import logger
 
 _TABLE = "europepmc.annotations"  # lake table (schema.table)
 _RAW = "europepmc"  # raw-download subdir name
 _TIMEOUT = httpx.Timeout(60.0, read=120.0)
+_log = logger.bind(ctx="europepmc")
 
 
 def _sql_str(value: str) -> str:
@@ -153,6 +155,7 @@ def ingest(
             for db, path in plan:
                 path = path or download_database(db, version, s)
                 counts[db] = curate(con, db, path, version, target=target, limit=limit)
+                _log.info("{} <- {:,} rows", db, counts[db])
             r.rows = sum(counts.values())
     finally:
         con.close()

@@ -18,6 +18,9 @@ from ... import ops
 from ...config import Settings, get_settings
 from ...connect import LAKE, lake_connect, raw_dir, upsert
 from ...download import download, unzip
+from ...log import logger
+
+_log = logger.bind(ctx="census_geo")
 
 
 @dataclass(frozen=True)
@@ -120,6 +123,7 @@ def ingest(
             for layer in layers or list(LAYERS):
                 shp = download_layer(layer, year, s)
                 counts[layer] = curate(con, layer, shp, schema=schema, year=year)
+                _log.info("{} <- {:,} rows", layer, counts[layer])
             r.rows = sum(counts.values())
     finally:
         con.close()

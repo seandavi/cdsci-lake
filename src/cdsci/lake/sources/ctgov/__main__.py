@@ -6,12 +6,18 @@ import typer
 
 from ...config import get_settings
 from ...download import get_json
+from ...log import configure
 from .ingest import ingest
 
 app = typer.Typer(
     help="Ingest ClinicalTrials.gov studies (full JSON) into lake.ctgov.{studies,references}.",
     add_completion=False,
 )
+
+
+@app.callback()
+def _main(log_level: str = typer.Option("INFO", "--log-level", help="loguru level.")) -> None:
+    configure(log_level)
 
 
 @app.command("count")

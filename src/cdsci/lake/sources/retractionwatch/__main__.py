@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from ...log import configure
 from .ingest import ingest
 
 app = typer.Typer(
@@ -13,8 +14,9 @@ app = typer.Typer(
 
 
 @app.callback()
-def main() -> None:
+def main(log_level: str = typer.Option("INFO", "--log-level", help="loguru level.")) -> None:
     """Retraction Watch ingestor (keeps the ``run`` subcommand explicit)."""
+    configure(log_level)
 
 
 @app.command("run")

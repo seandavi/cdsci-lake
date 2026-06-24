@@ -47,8 +47,10 @@ from ... import ops
 from ...config import Settings, get_settings
 from ...connect import LAKE, csv_source, lake_connect, raw_dir, upsert
 from ...download import download, get_json
+from ...log import logger
 
 _RAW = "scp"  # raw-download subdir name
+_log = logger.bind(ctx="scp")
 
 
 def _sql_str(value: str) -> str:
@@ -324,6 +326,7 @@ def ingest(
                     raise ValueError(f"Unknown domain {domain!r}; choose from {sorted(DOMAINS)}")
                 target = f"{LAKE}.{schema}.{DOMAINS[domain].table}"
                 counts[domain] = curate(con, domain, path, tag, target=target, limit=limit)
+                _log.info("{} <- {:,} rows", domain, counts[domain])
             r.rows = sum(counts.values())
     finally:
         con.close()
