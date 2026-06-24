@@ -119,6 +119,65 @@ def test_mesh_article_headings_explosion(lake_settings: Settings):
         con.close()
 
 
+def test_mesh_supplemental_records(lake_settings: Settings, tmp_path: Path):
+    """Phase 2 SCRs: record + heading-mapped-to bridge (with primary flag) + terms."""
+    nd = tmp_path / "supp.ndjson.gz"
+    assert mesh.supplemental_to_ndjson(FIXTURES / "mesh_supp_sample.xml", nd) == 2
+    con = lake_connect(lake_settings)
+    try:
+        raw = mesh.materialize_raw(con, nd)
+        counts = mesh.curate_supplemental(con, raw, version="2026")
+        assert counts == {
+            "supplemental": 2,
+            "supplemental_descriptor": 3,  # bevonium→2 descriptors, rofecoxib→1
+            "supplemental_term": 4,  # two terms each
+        }
+        # SCR record: class + registry number ('0' normalized to NULL).
+        cls, reg = con.execute(
+            "SELECT scr_class, registry_number FROM lake.mesh.supplemental "
+            "WHERE supplemental_ui = 'C000002'"
+        ).fetchone()
+        assert cls == "1" and reg == "34B0471E08"
+        assert con.execute(
+            "SELECT registry_number FROM lake.mesh.supplemental WHERE supplemental_ui = 'C000005'"
+        ).fetchone()[0] is None
+        # Heading-mapped-to: '*' marks the primary descriptor, UI stripped of the '*'.
+        prim = con.execute(
+            "SELECT descriptor_ui, is_primary FROM lake.mesh.supplemental_descriptor "
+            "WHERE supplemental_ui = 'C000005'"
+        ).fetchone()
+        assert prim == ("D052246", True)
+        assert con.execute(
+            "SELECT is_primary FROM lake.mesh.supplemental_descriptor "
+            "WHERE supplemental_ui = 'C000002' AND descriptor_ui = 'D010879'"
+        ).fetchone()[0] is False
+    finally:
+        con.close()
+
+
+def test_mesh_pharmacological_actions(lake_settings: Settings, tmp_path: Path):
+    """Phase 2 PAs: substance ↔ action-descriptor edge (descriptors and SCRs as substances)."""
+    nd = tmp_path / "pa.ndjson.gz"
+    assert mesh.pharmacological_actions_to_ndjson(FIXTURES / "mesh_pa_sample.xml", nd) == 2
+    con = lake_connect(lake_settings)
+    try:
+        raw = mesh.materialize_raw(con, nd)
+        # Aspirin: 2 actions; rofecoxib: 1 action → 3 edges.
+        assert mesh.curate_pharmacological_actions(con, raw, version="2026") == 3
+        got = {
+            tuple(r) for r in con.execute(
+                "SELECT substance_ui, action_ui FROM lake.mesh.pharmacological_action"
+            ).fetchall()
+        }
+        assert got == {
+            ("D001241", "D000894"),  # Aspirin → NSAID
+            ("D001241", "D058633"),  # Aspirin → Antipyretic
+            ("C000005", "D000894"),  # rofecoxib (SCR) → NSAID
+        }
+    finally:
+        con.close()
+
+
 def test_mesh_curate_idempotent(lake_settings: Settings, tmp_path: Path):
     """A re-curate of identical data is a no-op (adds no snapshot)."""
     desc_nd = tmp_path / "desc.ndjson.gz"

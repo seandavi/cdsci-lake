@@ -17,24 +17,42 @@ Phase 1b adds the literature edge ``mesh.article_heading`` — ``(pmid,
 descriptor_ui, qualifier_ui)`` exploded from ``omicidx.pubmed_article.mesh_terms``
 (which carries the ``D…``/``Q…`` UIs). ``descriptor_ui`` joins ``mesh.tree`` for
 hierarchy rollups; ``pmid`` joins ``icite``/``reporter.publink``.
+
+Phase 2 adds the drug/chemical layer: ``mesh.supplemental`` (SCRs — specific
+chemicals/substances, ``scr_class`` 1 chemical/2 disease/3 protocol/4 organism),
+``mesh.supplemental_descriptor`` (the heading-mapped-to bridge SCR→descriptor, with
+``is_primary``), ``mesh.supplemental_term`` (SCR synonyms), and
+``mesh.pharmacological_action`` (substance ↔ mechanism/effect descriptor).
 """
 
 from .ingest import (
     curate,
     curate_article_headings,
+    curate_pharmacological_actions,
+    curate_supplemental,
     descriptors_to_ndjson,
     ingest,
     ingest_headings,
+    ingest_pharmacological_actions,
+    ingest_supplemental,
     materialize_raw,
+    pharmacological_actions_to_ndjson,
     qualifiers_to_ndjson,
+    supplemental_to_ndjson,
 )
 
 __all__ = [
     "curate",
     "curate_article_headings",
+    "curate_pharmacological_actions",
+    "curate_supplemental",
     "descriptors_to_ndjson",
     "ingest",
     "ingest_headings",
+    "ingest_pharmacological_actions",
+    "ingest_supplemental",
     "materialize_raw",
+    "pharmacological_actions_to_ndjson",
     "qualifiers_to_ndjson",
+    "supplemental_to_ndjson",
 ]

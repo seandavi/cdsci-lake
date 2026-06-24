@@ -80,25 +80,34 @@ def _descriptor_record(elem: ET.Element) -> dict | None:
         q.findtext("QualifierReferredTo/QualifierUI")
         for q in elem.findall("AllowableQualifiersList/AllowableQualifier")
     ]
-    scope: str | None = None
-    terms: list[dict] = []
-    for concept in elem.findall("ConceptList/Concept"):
-        pref_concept = concept.get("PreferredConceptYN") == "Y"
-        if pref_concept and scope is None:
-            scope = _text(concept, "ScopeNote")
-        for term in concept.findall("TermList/Term"):
-            s = _text(term, "String")
-            if s:
-                is_pref = pref_concept and term.get("ConceptPreferredTermYN") == "Y"
-                terms.append({"term": s, "is_preferred": is_pref})
+    scope = next(
+        (_text(c, "ScopeNote") for c in elem.findall("ConceptList/Concept")
+         if c.get("PreferredConceptYN") == "Y"),
+        None,
+    )
     return {
         "descriptor_ui": ui,
         "name": name,
         "scope_note": scope,
         "tree_numbers": trees,
         "qualifiers": [q for q in quals if q],
-        "entry_terms": terms,
+        "entry_terms": _entry_terms(elem),
     }
+
+
+def _entry_terms(elem: ET.Element) -> list[dict]:
+    """All Concept/Term strings as ``{term, is_preferred}`` (preferred = the record name)."""
+    out: list[dict] = []
+    for concept in elem.findall("ConceptList/Concept"):
+        pref_concept = concept.get("PreferredConceptYN") == "Y"
+        for term in concept.findall("TermList/Term"):
+            s = _text(term, "String")
+            if s:
+                out.append({
+                    "term": s,
+                    "is_preferred": pref_concept and term.get("ConceptPreferredTermYN") == "Y",
+                })
+    return out
 
 
 def _qualifier_record(elem: ET.Element) -> dict | None:
@@ -384,3 +393,230 @@ def ingest_headings(
     finally:
         con.close()
     return {**r.summary(), "table": f"{LAKE}.{schema}.article_heading"}
+
+
+# --- Phase 2: Supplementary Concept Records (chemicals/substances) + Pharm Actions ---
+
+
+def download_supplemental(year: int, settings: Settings | None = None) -> Path:
+    """Download the gzipped SCR XML (``supp{year}.gz``, ~786 MB raw) to the raw layer."""
+    s = settings or get_settings()
+    return download(f"{s.mesh_xml_base}supp{year}.gz", raw_dir(_RAW, s) / f"supp{year}.xml.gz")
+
+
+def download_pharmacological_actions(year: int, settings: Settings | None = None) -> Path:
+    """Download the pharmacological-action XML (``pa{year}.xml``) to the raw layer."""
+    s = settings or get_settings()
+    return download(f"{s.mesh_xml_base}pa{year}.xml", raw_dir(_RAW, s) / f"pa{year}.xml")
+
+
+def _supplemental_record(elem: ET.Element) -> dict | None:
+    """SCR → ui, name, class, registry number, heading-mapped-to descriptors, terms."""
+    ui = _text(elem, "SupplementalRecordUI")
+    name = _text(elem, "SupplementalRecordName/String")
+    if not ui or not name:
+        return None
+    mapped: list[dict] = []
+    for hm in elem.findall("HeadingMappedToList/HeadingMappedTo"):
+        d = hm.findtext("DescriptorReferredTo/DescriptorUI")
+        if not d:
+            continue
+        q = hm.findtext("QualifierReferredTo/QualifierUI")
+        mapped.append({
+            "descriptor_ui": d.lstrip("*"),  # '*' marks the primary mapping
+            "qualifier_ui": (q.lstrip("*") if q else ""),
+            "is_primary": d.startswith("*"),
+        })
+    reg = next(
+        (c.findtext("RegistryNumberList/RegistryNumber")
+         for c in elem.findall("ConceptList/Concept") if c.get("PreferredConceptYN") == "Y"),
+        None,
+    )
+    return {
+        "supplemental_ui": ui,
+        "name": name,
+        "scr_class": elem.get("SCRClass"),
+        "registry_number": reg if reg not in ("0", "") else None,
+        "mapped_to": mapped,
+        "entry_terms": _entry_terms(elem),
+    }
+
+
+def _pharmacological_action_record(elem: ET.Element) -> dict | None:
+    """PharmacologicalAction → action descriptor UI + the substance (D/C) UIs it covers."""
+    action = elem.findtext("DescriptorReferredTo/DescriptorUI")
+    if not action:
+        return None
+    subs = [
+        s.text.strip()
+        for s in elem.findall("PharmacologicalActionSubstanceList/Substance/RecordUI")
+        if s.text
+    ]
+    return {"action_ui": action, "substances": subs}
+
+
+def supplemental_to_ndjson(xml_path: Path | str, ndjson_path: Path | str) -> int:
+    """Stream the SCR XML → NDJSON (one structured object per supplemental record)."""
+    n = _to_ndjson(Path(xml_path), Path(ndjson_path), "SupplementalRecord", _supplemental_record)
+    _log.info("parsed {:,} supplemental records → {}", n, Path(ndjson_path).name)
+    return n
+
+
+def pharmacological_actions_to_ndjson(xml_path: Path | str, ndjson_path: Path | str) -> int:
+    """Stream the pharmacological-action XML → NDJSON (one object per action)."""
+    n = _to_ndjson(
+        Path(xml_path), Path(ndjson_path), "PharmacologicalAction", _pharmacological_action_record
+    )
+    _log.info("parsed {:,} pharmacological actions → {}", n, Path(ndjson_path).name)
+    return n
+
+
+def _supplemental_sql(src: str, version: str, limit: int | None) -> str:
+    limit_sql = f" LIMIT {int(limit)}" if limit else ""
+    return f"""
+        SELECT supplemental_ui, name, scr_class, registry_number,
+               CAST('{version}' AS VARCHAR) AS snapshot_version
+        FROM read_parquet({src}){limit_sql}
+    """
+
+
+def _supplemental_descriptor_sql(src: str, version: str, limit: int | None) -> str:
+    """Explode the heading-mapped-to bridge (SCR → descriptor, with the primary flag)."""
+    limit_sql = f" LIMIT {int(limit)}" if limit else ""
+    return f"""
+        WITH d AS (SELECT supplemental_ui, mapped_to FROM read_parquet({src}){limit_sql}),
+             ex AS (SELECT supplemental_ui, unnest(mapped_to) AS m FROM d)
+        SELECT supplemental_ui, m.descriptor_ui AS descriptor_ui,
+               m.qualifier_ui AS qualifier_ui, bool_or(m.is_primary) AS is_primary,
+               CAST('{version}' AS VARCHAR) AS snapshot_version
+        FROM ex WHERE m.descriptor_ui IS NOT NULL
+        GROUP BY supplemental_ui, m.descriptor_ui, m.qualifier_ui
+    """
+
+
+def _supplemental_term_sql(src: str, version: str, limit: int | None) -> str:
+    limit_sql = f" LIMIT {int(limit)}" if limit else ""
+    return f"""
+        WITH d AS (SELECT supplemental_ui, entry_terms FROM read_parquet({src}){limit_sql}),
+             ex AS (SELECT supplemental_ui, unnest(entry_terms) AS et FROM d)
+        SELECT supplemental_ui, et.term AS term, bool_or(et.is_preferred) AS is_preferred,
+               CAST('{version}' AS VARCHAR) AS snapshot_version
+        FROM ex WHERE et.term IS NOT NULL
+        GROUP BY supplemental_ui, et.term
+    """
+
+
+def _pharmacological_action_sql(src: str, version: str) -> str:
+    return f"""
+        WITH d AS (SELECT action_ui, substances FROM read_parquet({src})),
+             ex AS (SELECT action_ui, unnest(substances) AS substance_ui FROM d)
+        SELECT DISTINCT substance_ui, action_ui,
+               CAST('{version}' AS VARCHAR) AS snapshot_version
+        FROM ex WHERE substance_ui IS NOT NULL
+    """
+
+
+def curate_supplemental(
+    con: duckdb.DuckDBPyConnection,
+    supplemental_parquet: Path | str,
+    *,
+    schema: str = "mesh",
+    version: str = "0",
+    limit: int | None = None,
+) -> dict[str, int]:
+    """Upsert ``mesh.supplemental`` + ``supplemental_descriptor`` + ``supplemental_term``.
+
+    SCRs are the specific chemicals/substances (~330k); each is **heading-mapped** to
+    one or more descriptors (the link into the tree), not placed in it. ``scr_class``:
+    1 chemical · 2 disease · 3 protocol · 4 organism.
+    """
+    s = csv_source(str(supplemental_parquet))
+    ex = ["snapshot_version"]
+    counts = {
+        "supplemental": upsert(
+            con, f"{LAKE}.{schema}.supplemental", _supplemental_sql(s, version, limit),
+            "supplemental_ui", exclude_change_cols=ex,
+        ),
+        "supplemental_descriptor": upsert(
+            con, f"{LAKE}.{schema}.supplemental_descriptor",
+            _supplemental_descriptor_sql(s, version, limit),
+            ["supplemental_ui", "descriptor_ui", "qualifier_ui"], exclude_change_cols=ex,
+        ),
+        "supplemental_term": upsert(
+            con, f"{LAKE}.{schema}.supplemental_term", _supplemental_term_sql(s, version, limit),
+            ["supplemental_ui", "term"], exclude_change_cols=ex,
+        ),
+    }
+    for table, n in counts.items():
+        _log.info("mesh.{} <- {:,} rows", table, n)
+    return counts
+
+
+def curate_pharmacological_actions(
+    con: duckdb.DuckDBPyConnection,
+    pa_parquet: Path | str,
+    *,
+    schema: str = "mesh",
+    version: str = "0",
+) -> int:
+    """Upsert ``mesh.pharmacological_action`` (substance ↔ action descriptor).
+
+    The curated cross-reference of what each drug/substance *does* — query literature
+    by mechanism/effect class (``action_ui`` is a D27 descriptor; ``substance_ui`` is a
+    descriptor or SCR).
+    """
+    n = upsert(
+        con, f"{LAKE}.{schema}.pharmacological_action",
+        _pharmacological_action_sql(csv_source(str(pa_parquet)), version),
+        ["substance_ui", "action_ui"], exclude_change_cols=["snapshot_version"],
+    )
+    _log.info("mesh.pharmacological_action <- {:,} rows", n)
+    return n
+
+
+def ingest_supplemental(
+    *,
+    year: int | None = None,
+    file: str | None = None,
+    schema: str = "mesh",
+    limit: int | None = None,
+    settings: Settings | None = None,
+) -> dict:
+    """Load the Supplementary Concept Records (Phase 2). ``file`` skips the download."""
+    s = settings or get_settings()
+    year = year or s.mesh_year
+    version = str(year)
+    con = lake_connect(s)
+    try:
+        raw = _bronze(con, file, lambda: download_supplemental(year, s),
+                      supplemental_to_ndjson, f"supp{year}", s)
+        with ops.run(con, source="mesh", target=f"{LAKE}.{schema}", version=version) as r:
+            counts = curate_supplemental(con, raw, schema=schema, version=version, limit=limit)
+            r.rows = sum(counts.values())
+    finally:
+        con.close()
+    return {**r.summary(), "schema": f"{LAKE}.{schema}", **counts}
+
+
+def ingest_pharmacological_actions(
+    *,
+    year: int | None = None,
+    file: str | None = None,
+    schema: str = "mesh",
+    settings: Settings | None = None,
+) -> dict:
+    """Load the pharmacological-action cross-reference (Phase 2). ``file`` skips download."""
+    s = settings or get_settings()
+    year = year or s.mesh_year
+    version = str(year)
+    con = lake_connect(s)
+    try:
+        raw = _bronze(con, file, lambda: download_pharmacological_actions(year, s),
+                      pharmacological_actions_to_ndjson, f"pa{year}", s)
+        with ops.run(
+            con, source="mesh", target=f"{LAKE}.{schema}.pharmacological_action", version=version
+        ) as r:
+            r.rows = curate_pharmacological_actions(con, raw, schema=schema, version=version)
+    finally:
+        con.close()
+    return {**r.summary(), "table": f"{LAKE}.{schema}.pharmacological_action"}

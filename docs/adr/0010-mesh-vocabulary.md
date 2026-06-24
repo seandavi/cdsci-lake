@@ -70,9 +70,20 @@ annual cadence; `us-public-domain` / NLM). Two phases.
   **upstream in omicidx** rather than re-parsed here. Tracked as a Phase 2 upgrade;
   Phase 1b ships without it.
 
-### Out of scope / later
+### Phase 2 — the drug/chemical layer (built)
 
-Supplementary Concept Records, PharmacologicalActions, see-also cross-refs (Phase 2).
+- `mesh.supplemental` — Supplementary Concept Records (~330k specific
+  chemicals/substances; `scr_class` 1 chemical/2 disease/3 protocol/4 organism;
+  `registry_number` = UNII/CAS), from `supp{year}.gz` (~786 MB, daily upstream).
+- `mesh.supplemental_descriptor` — the **heading-mapped-to** bridge: an SCR is mapped
+  to descriptor(s) (the link *into* the tree, since SCRs have no tree numbers), with
+  `is_primary` from the `*` prefix.
+- `mesh.supplemental_term` — SCR synonyms.
+- `mesh.pharmacological_action` — `(substance_ui, action_ui)`, what each
+  drug/substance *does* (query literature by mechanism/effect), from `pa{year}.xml`.
+
+Still later: see-also cross-refs; a PubMed `ChemicalList` → SCR article edge (the
+chemical analogue of `article_heading`).
 
 **No `mesh ↔ openalex_topic` crosswalk** — researched, and **no canonical mapping
 exists**: an OpenAlex Topic exposes only an OpenAlex id + a single Wikipedia URL (no
