@@ -84,8 +84,12 @@ cdsci-lake` and `lake_connect(read_only=True)`.
   `omicidx.pubmed_article.mesh_terms` (carries the `D…`/`Q…` UIs; `''` sentinel for
   no-qualifier; major-topic flag is the known gap). `descriptor_ui` joins
   `mesh.tree` for rollups, `pmid` joins `icite`/`publink`. **No `mesh↔openalex_topic`
-  crosswalk** — researched, none is canonical (ADR-0010). See ADR-0010. To load:
-  `python -m cdsci.lake.sources.mesh run` (vocab) then `… mesh headings` (the edge).
+  crosswalk** — researched, none is canonical (ADR-0010). **Phase 2 (drug/chemical
+  layer) is also built:** `mesh.supplemental` (SCRs — chemicals/substances),
+  `mesh.supplemental_descriptor` (SCR→descriptor heading-mapped-to bridge),
+  `mesh.supplemental_term`, and `mesh.pharmacological_action` (substance↔mechanism).
+  See ADR-0010. To load: `mesh run` (vocab), `mesh headings` (literature edge),
+  `mesh supplemental` (SCRs, ~786 MB), `mesh actions` (pharm actions).
 - **MERGE-upsert** (`cdsci.lake.upsert`, ADR-0003) — keyed, change-detecting (updates
   only on real diffs), idempotent (no-op re-run adds no snapshot) → meaningful
   time-travel. Per-load stamps (`snapshot_version`) are excluded from change-detection
