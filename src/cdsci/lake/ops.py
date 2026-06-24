@@ -28,6 +28,7 @@ import socket
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,6 +39,16 @@ from .log import logger
 
 OPS = "ops"  # the ATTACH alias for the ledger database
 OPS_SCHEMA = "lake_ops"
+
+# The run currently executing on this context, so :func:`cdsci.lake.connect.upsert`
+# can self-attribute its snapshot (ADR-0009) without every curate threading the
+# Run through. Set for the duration of a :func:`run` block.
+_ACTIVE_RUN: ContextVar[Run | None] = ContextVar("active_run", default=None)
+
+
+def active_run() -> Run | None:
+    """The :class:`Run` for the enclosing :func:`run` block, or None outside one."""
+    return _ACTIVE_RUN.get()
 
 
 def _t(table: str) -> str:
@@ -155,6 +166,7 @@ class Run:
     rows: int | None = None
     snapshot_after: int | None = None
     status: str | None = None
+    _txn_depth: int = 0  # re-entrancy guard for nested attribute() blocks
 
     @property
     def changed(self) -> bool:
@@ -188,7 +200,20 @@ class Run:
         Each block is its own transaction, so do **not** wrap an unbounded write in
         one block expecting it to stay small — keep the per-block write bounded
         (the PMC passages shards are sized for exactly this).
+
+        **Re-entrant:** a nested ``attribute`` (e.g. PMC ``curate`` wrapping a
+        ``_load`` that itself calls the now-self-attributing :func:`upsert`) joins
+        the outer transaction — the outermost block owns the BEGIN/COMMIT and the
+        commit message; inner blocks just run. So one snapshot, no nested BEGIN.
         """
+        if self._txn_depth > 0:
+            self._txn_depth += 1
+            try:
+                yield
+            finally:
+                self._txn_depth -= 1
+            return
+
         extra = json.dumps({
             "writer": "cdsci", "source": self.source, "target": self.target,
             "version": self.version, "run_id": self.run_id, "op": op,
@@ -198,6 +223,7 @@ class Run:
             f"CALL {LAKE}.set_commit_message(?, ?, extra_info => ?);",
             [f"cdsci:{self.source}", message or f"{self.source}: {op}", extra],
         )
+        self._txn_depth = 1
         try:
             yield
         except BaseException:
@@ -205,6 +231,8 @@ class Run:
             raise
         else:
             self.con.execute("COMMIT;")
+        finally:
+            self._txn_depth = 0
 
 
 def _max_snapshot(con: duckdb.DuckDBPyConnection) -> int | None:
@@ -247,34 +275,38 @@ def run(
         target, version, before, rid,
     )
     r = Run(con, rid, source, target, version, before)
+    token = _ACTIVE_RUN.set(r)
     try:
-        yield r
-    except Exception as exc:  # noqa: BLE001 — record then re-raise
-        after = _max_snapshot(con)
-        con.execute(
-            f"UPDATE {_t('run')} SET status='error', snapshot_after=?, rows_after=?, "
-            "finished_at=current_timestamp, error=? WHERE run_id=?",
-            [after, r.rows, str(exc)[:2000], rid],
-        )
-        r.snapshot_after, r.status = after, "error"
-        bound.error(
-            "ERROR after {} rows (snapshot {}→{}, run_id={}): {}",
-            r.rows, before, after, rid, exc,
-        )
-        raise
-    else:
-        after = _max_snapshot(con)
-        status = "idempotent" if after == before else "success"
-        con.execute(
-            f"UPDATE {_t('run')} SET status=?, snapshot_after=?, rows_after=?, "
-            "finished_at=current_timestamp WHERE run_id=?",
-            [status, after, r.rows, rid],
-        )
-        r.snapshot_after, r.status = after, status
-        bound.success(
-            "{} → {} (rows={}, snapshot {}→{}, run_id={})",
-            status, target, r.rows, before, after, rid,
-        )
+        try:
+            yield r
+        except Exception as exc:  # noqa: BLE001 — record then re-raise
+            after = _max_snapshot(con)
+            con.execute(
+                f"UPDATE {_t('run')} SET status='error', snapshot_after=?, rows_after=?, "
+                "finished_at=current_timestamp, error=? WHERE run_id=?",
+                [after, r.rows, str(exc)[:2000], rid],
+            )
+            r.snapshot_after, r.status = after, "error"
+            bound.error(
+                "ERROR after {} rows (snapshot {}→{}, run_id={}): {}",
+                r.rows, before, after, rid, exc,
+            )
+            raise
+        else:
+            after = _max_snapshot(con)
+            status = "idempotent" if after == before else "success"
+            con.execute(
+                f"UPDATE {_t('run')} SET status=?, snapshot_after=?, rows_after=?, "
+                "finished_at=current_timestamp WHERE run_id=?",
+                [status, after, r.rows, rid],
+            )
+            r.snapshot_after, r.status = after, status
+            bound.success(
+                "{} → {} (rows={}, snapshot {}→{}, run_id={})",
+                status, target, r.rows, before, after, rid,
+            )
+    finally:
+        _ACTIVE_RUN.reset(token)
 
 
 def last_run(

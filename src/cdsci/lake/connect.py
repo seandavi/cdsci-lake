@@ -14,6 +14,7 @@ lock-in risk of a young format low.
 from __future__ import annotations
 
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -242,29 +243,42 @@ def upsert(
     would mark every row "changed" each load and force a full rewrite; with it,
     only rows whose *real* data moved are rewritten, and the stamp then records
     the snapshot in which a row last actually changed.
+
+    When called inside an :func:`cdsci.lake.ops.run` block, the MERGE is wrapped
+    in that run's :meth:`~cdsci.lake.ops.Run.attribute` so the snapshot it produces
+    is self-describing (author/source/run_id, ADR-0009). An idempotent MERGE makes
+    no snapshot even when wrapped, so the no-op-is-free contract holds; outside a
+    run (e.g. a direct test call) the write is unattributed.
     """
+    from . import ops  # local import avoids a connect<->ops circular dependency
+
     parts = target.split(".")
     if len(parts) != 3:
         raise ValueError(f"target must be catalog.schema.table, got {target!r}")
-    catalog, schema, _ = parts
+    catalog, schema, table = parts
     keys = [key] if isinstance(key, str) else list(key)
     ignore = set(exclude_change_cols or [])
 
-    con.execute(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema};")
-    con.execute(f"CREATE OR REPLACE TEMP TABLE _cri_stage AS {source_sql};")
-    con.execute(f"CREATE TABLE IF NOT EXISTS {target} AS SELECT * FROM _cri_stage WHERE false;")
+    run = ops.active_run()
+    attribution = run.attribute(table) if run is not None else nullcontext()
+    with attribution:
+        con.execute(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema};")
+        con.execute(f"CREATE OR REPLACE TEMP TABLE _cri_stage AS {source_sql};")
+        con.execute(
+            f"CREATE TABLE IF NOT EXISTS {target} AS SELECT * FROM _cri_stage WHERE false;"
+        )
 
-    cols = [c[0] for c in con.execute("DESCRIBE _cri_stage").fetchall()]
-    compare = [c for c in cols if c not in keys and c not in ignore]
-    on = " AND ".join(f"t.{k} = s.{k}" for k in keys)
-    matched = ""
-    if compare:
-        changed = " OR ".join(f"t.{c} IS DISTINCT FROM s.{c}" for c in compare)
-        matched = f"WHEN MATCHED AND ({changed}) THEN UPDATE SET * "
-    con.execute(
-        f"MERGE INTO {target} AS t USING _cri_stage AS s ON {on} "
-        f"{matched}WHEN NOT MATCHED THEN INSERT *;"
-    )
+        cols = [c[0] for c in con.execute("DESCRIBE _cri_stage").fetchall()]
+        compare = [c for c in cols if c not in keys and c not in ignore]
+        on = " AND ".join(f"t.{k} = s.{k}" for k in keys)
+        matched = ""
+        if compare:
+            changed = " OR ".join(f"t.{c} IS DISTINCT FROM s.{c}" for c in compare)
+            matched = f"WHEN MATCHED AND ({changed}) THEN UPDATE SET * "
+        con.execute(
+            f"MERGE INTO {target} AS t USING _cri_stage AS s ON {on} "
+            f"{matched}WHEN NOT MATCHED THEN INSERT *;"
+        )
     return con.execute(f"SELECT count(*) FROM {target}").fetchone()[0]
 
 

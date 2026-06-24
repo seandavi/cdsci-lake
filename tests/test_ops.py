@@ -7,6 +7,7 @@ registry, the :func:`ops.run` context manager (success / idempotent / error),
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -76,6 +77,16 @@ def test_run_records_success_then_idempotent(lake_settings: Settings):
             "changed": True, "snapshot": r.snapshot_after, "run_id": r.run_id,
             "status": "success",
         }
+
+        # The snapshot upsert produced is self-describing (ADR-0009): authored by
+        # the source, op = the table name, and bound back to this run_id.
+        author, extra = con.execute(
+            "SELECT author, commit_extra_info FROM lake.snapshots() WHERE snapshot_id = ?",
+            [r.snapshot_after],
+        ).fetchone()
+        assert author == "cdsci:icite"
+        meta = json.loads(extra)
+        assert meta["source"] == "icite" and meta["op"] == "t" and meta["run_id"] == r.run_id
 
         with ops.run(con, source="icite", target="lake.main.t", version="2026-06") as r2:
             r2.rows = upsert(con, "lake.main.t", src, key="id")  # same data
