@@ -79,6 +79,10 @@ SOURCES: tuple[Source, ...] = (
            "monthly", "europepmc-bulk", "europepmc-terms"),
     Source("retractionwatch", "retractionwatch", "Retraction Watch retraction/correction notices",
            "weekday-daily", "crossref-gitlab-csv", "cc0", watermark_strategy="full"),
+    # CC BY-NC 4.0: internal non-commercial use only, do NOT redistribute. The
+    # license string is the machine-readable carry-forward for consumers.
+    Source("reliance", "reliance", "Reliance on Science (Marx): patent↔paper links [NC]",
+           "annual", "zenodo", "cc-by-nc-4.0"),
 )
 
 
