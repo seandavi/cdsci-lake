@@ -191,16 +191,18 @@ with ops.run(con, source="openalex", target=target) as r:
 1. **Done.** `cdsci.lake.ops` + the bootstrap (attach `ops`, create schema/tables,
    seed `source`) wired into `lake_connect()` write mode; offline tests on the
    local sibling-file backend.
-2. **Done (5 of 7).** `icite`, `reporter`, `ctgov`, `scp`, `census_geo` and the
-   new `europepmc` source go through `ops.run(...)`; the hand-rolled before/after
-   is gone. Behaviour-preserving — `summary()` is a superset of the old dict, and
-   each ingest spreads in its source-specific keys. **`pmc` and `openalex` are
-   deferred** — they were mid-bulk-load when this landed; convert once their loads
-   finish (their `ingest()` didn't bracket snapshots before, so nothing regresses).
-   Multi-table ingestors (`ctgov`, `scp`, `census_geo`) currently record **one**
-   run per invocation with `target` = the schema namespace and the summed row
-   count, rather than one row per table — adequate for now; revisit if per-table
-   granularity is needed.
+2. **Done (all 7 + europepmc).** Every ingestor records via `ops.run(...)`; the
+   hand-rolled before/after is gone. `icite`/`reporter`/`ctgov`/`scp`/`census_geo`/
+   `europepmc` were converted first; `pmc` and `openalex` followed (their CLIs —
+   pmc's per-range `ingest()`, openalex's `entities` loop and `ingest_works` — each
+   record one run per invocation). Behaviour-preserving: `summary()` is a superset
+   of the old dict and each ingest spreads in its source-specific keys.
+   Multi-table ingestors (`ctgov`, `scp`, `census_geo`, `pmc`) record **one** run
+   per invocation with `target` = the schema namespace and the summed row count,
+   rather than one row per table — adequate for now; revisit if per-table
+   granularity is needed. (pmc/openalex were not prod-validated post-conversion —
+   their bulk loads were still running; the `ops.run` path itself is proven live
+   via icite/europepmc.)
 3. Add watermark use where it pays first: **OpenAlex** (`updated_date`) and
    whatever daily-sync source lands first (Retraction Watch — roadmap). ctgov/PMC
    can adopt cursors opportunistically; full re-read stays correct meanwhile.
