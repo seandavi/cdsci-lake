@@ -43,6 +43,7 @@ from pathlib import Path
 
 import duckdb
 
+from ... import ops
 from ...config import Settings, get_settings
 from ...connect import LAKE, csv_source, lake_connect, raw_dir, upsert
 from ...download import download, get_json
@@ -316,20 +317,14 @@ def ingest(
 
     con = lake_connect(s)
     try:
-        snap_before = con.execute(f"SELECT max(snapshot_id) FROM {LAKE}.snapshots()").fetchone()[0]
         counts: dict[str, int] = {}
-        for domain, path in paths.items():
-            if domain not in DOMAINS:
-                raise ValueError(f"Unknown domain {domain!r}; choose from {sorted(DOMAINS)}")
-            target = f"{LAKE}.{schema}.{DOMAINS[domain].table}"
-            counts[domain] = curate(con, domain, path, tag, target=target, limit=limit)
-        snap_after = con.execute(f"SELECT max(snapshot_id) FROM {LAKE}.snapshots()").fetchone()[0]
+        with ops.run(con, source="scp", target=f"{LAKE}.{schema}", version=tag) as r:
+            for domain, path in paths.items():
+                if domain not in DOMAINS:
+                    raise ValueError(f"Unknown domain {domain!r}; choose from {sorted(DOMAINS)}")
+                target = f"{LAKE}.{schema}.{DOMAINS[domain].table}"
+                counts[domain] = curate(con, domain, path, tag, target=target, limit=limit)
+            r.rows = sum(counts.values())
     finally:
         con.close()
-    return {
-        "schema": schema,
-        "tag": tag,
-        "counts": counts,
-        "snapshot": snap_after,
-        "changed": snap_after != snap_before,
-    }
+    return {**r.summary(), "schema": schema, "tag": tag, "counts": counts}

@@ -75,6 +75,8 @@ SOURCES: tuple[Source, ...] = (
            "monthly", "s3-snapshot", "cc0", watermark_strategy="updated_date"),
     Source("census_geo", "ref", "US Census cartographic FIPS + boundaries (ref.geo_*)",
            "annual", "census-cartographic", "us-public-domain"),
+    Source("europepmc", "europepmc", "Europe PMC text-mined annotations (PMCID↔term)",
+           "monthly", "europepmc-bulk", "europepmc-terms"),
 )
 
 

@@ -28,6 +28,7 @@ from pathlib import Path
 
 import duckdb
 
+from ... import ops
 from ...config import Settings, get_settings
 from ...connect import LAKE, csv_source, lake_connect, raw_dir, upsert
 from ...download import download, post_json, unzip
@@ -242,15 +243,8 @@ def ingest(
     target = f"{LAKE}.{schema}.{g.table}"
     con = lake_connect(s)
     try:
-        snap_before = con.execute(f"SELECT max(snapshot_id) FROM {LAKE}.snapshots()").fetchone()[0]
-        rows = curate(con, group, paths, target=target, limit=limit)
-        snap_after = con.execute(f"SELECT max(snapshot_id) FROM {LAKE}.snapshots()").fetchone()[0]
+        with ops.run(con, source="reporter", target=target) as r:
+            r.rows = curate(con, group, paths, target=target, limit=limit)
     finally:
         con.close()
-    return {
-        "table": target,
-        "group": group,
-        "rows": rows,
-        "snapshot": snap_after,
-        "changed": snap_after != snap_before,
-    }
+    return {**r.summary(), "group": group}

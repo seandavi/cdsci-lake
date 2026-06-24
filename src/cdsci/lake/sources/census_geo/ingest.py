@@ -14,6 +14,7 @@ from pathlib import Path
 
 import duckdb
 
+from ... import ops
 from ...config import Settings, get_settings
 from ...connect import LAKE, lake_connect, raw_dir, upsert
 from ...download import download, unzip
@@ -115,9 +116,11 @@ def ingest(
     con = lake_connect(s)
     counts: dict[str, int] = {}
     try:
-        for layer in layers or list(LAYERS):
-            shp = download_layer(layer, year, s)
-            counts[layer] = curate(con, layer, shp, schema=schema, year=year)
+        with ops.run(con, source="census_geo", target=f"{LAKE}.{schema}", version=str(year)) as r:
+            for layer in layers or list(LAYERS):
+                shp = download_layer(layer, year, s)
+                counts[layer] = curate(con, layer, shp, schema=schema, year=year)
+            r.rows = sum(counts.values())
     finally:
         con.close()
-    return {"schema": schema, "year": year, "counts": counts}
+    return {**r.summary(), "schema": schema, "year": year, "counts": counts}
