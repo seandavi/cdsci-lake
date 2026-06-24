@@ -44,6 +44,12 @@ cdsci-lake` and `lake_connect(read_only=True)`.
   `text` + `section_type`/`passage_type`/`offset`/`infons`). API for incrementals.
   Loaded for corpus-wide mining (accession/software/CFDE FTS) — see ADR-0002 +
   `docs/design/pmc.md`. (Full ~210 GB load in progress.)
+- **Europe PMC annotations** (`europepmc`) — text-mined entity mentions from the
+  Europe PMC TextMinedTerms bulk (~54 same-shape per-database CSVs: uniprot, chebi,
+  nct, gen, refsnp, …) collapsed into one tidy `europepmc.annotations` table, key
+  `(database, accession, pmcid)`. `pmcid` joins `pmc.documents`; `pmid` (MED EXTID)
+  bridges `icite`/`publink`. **Loaded: 10.3M rows, 54 databases, 1.59M PMCIDs**
+  (snapshot 2026-06-23). See `docs/design/europepmc.md`. Records runs via `ops.run`.
 - **Census geo / `ref` schema** (`census_geo`) — canonical US FIPS + boundaries from
   Census cartographic shapefiles via DuckDB `spatial` (`ST_Read`, no parser). MERGE
   on `fips`: `ref.geo_state` (fips↔abbrev↔name + WKB geom) and `ref.geo_county`
@@ -94,6 +100,12 @@ go straight to the source schemas. Promoted (full history):
 | `lake.pmc.passages`      | _(loading, full corpus)_ | 1 row/BioC passage: text + section/type/offset (exploded) |
 | `lake.ref.geo_state`     | 56 | FIPS↔abbrev↔name + WKB geometry (cb 2023) |
 | `lake.ref.geo_county`    | 3,235 | 5-digit FIPS + WKB geometry (cb 2023) |
+| `lake.europepmc.annotations` | 10,288,483 | Europe PMC text-mined terms, 54 databases, key (database, accession, pmcid); 1.59M PMCIDs (snapshot 2026-06-23) |
+
+`lake_ops` (the operational ledger, ADR-0006) is live in the Postgres catalog: a
+second `ops` attachment (write-mode connects only) with `lake_ops.source` /
+`run` / `watermark` / `dataset_contract`. 5/7 ingestors + europepmc record runs
+via `ops.run`; pmc/openalex convert after their bulk loads finish.
 
 **Trial↔grant↔literature triangle verified:** 70,376 trials link to 92,470 NIH
 grants via 145,811 shared publications (`ctgov.references` ⋈ `reporter.publink`);
