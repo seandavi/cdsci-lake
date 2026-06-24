@@ -43,7 +43,14 @@ cdsci-lake` and `lake_connect(read_only=True)`.
   `pmc.passages` (key `(pmcid, passage_index)`; exploded BioC passages with
   `text` + `section_type`/`passage_type`/`offset`/`infons`). API for incrementals.
   Loaded for corpus-wide mining (accession/software/CFDE FTS) — see ADR-0002 +
-  `docs/design/pmc.md`. (Full ~210 GB load in progress.)
+  `docs/design/pmc.md`. Ingest is instrumented with **loguru** (per-range
+  download/stream/curate progress + the `ops.run` lifecycle) and an opt-in
+  `--passage-batches N` spill-reducer (shards the passages explosion). A first
+  full load (8.36M docs / 974M passages, ~360 GB on R2) hit a disk-exhaustion IO
+  failure mid-run; that schema was **purged** (drop + version-scoped snapshot
+  expiry, see maintenance below) and is being **re-loaded**. DuckDB spill now
+  targets the 15 TB `/data` volume via `CU_OPENALEX_DUCKDB_TEMP_DIRECTORY`
+  (`.env`), not the 60 GB `/home` catalog disk.
 - **Europe PMC annotations** (`europepmc`) — text-mined entity mentions from the
   Europe PMC TextMinedTerms bulk (~54 same-shape per-database CSVs: uniprot, chebi,
   nct, gen, refsnp, …) collapsed into one tidy `europepmc.annotations` table, key
@@ -71,9 +78,15 @@ cdsci-lake` and `lake_connect(read_only=True)`.
   time-travel. Per-load stamps (`snapshot_version`) are excluded from change-detection
   via `exclude_change_cols`, so a monthly load rewrites only changed rows (not the
   whole table) and the stamp records each row's last-changed snapshot.
-- **DuckLake maintenance** (`cdsci.lake.maintenance`) — expire snapshots → cleanup
-  unused files (+ compact / vacuum), `dry_run` default; loud warning that expiry is
-  catalog-global.
+- **DuckLake maintenance** (`cdsci.lake.maintenance` + `python -m
+  cdsci.lake.maintenance_cli`) — expire snapshots → cleanup unused files (+ compact /
+  vacuum), `dry_run` default, loguru-logged; loud warning that `older_than` expiry is
+  catalog-global. **`purge_schema(schema)`** retires one schema surgically: it drops
+  the schema, then expires *only* the snapshots whose every change was that schema
+  (`schema_snapshot_ids`, via explicit `versions =>`), so no other publisher loses
+  time-travel. Note: files a schema shared a time window with (interleaved loads from
+  other sources) stay referenced until those neighbor snapshots also expire — full
+  R2 reclamation of such files waits for a routine global `older_than` pass.
 - **Docs**: ADR-0001 (platform charter), ADR-0002 (PMC full corpus), ADR-0003 (lake
   write semantics); designs `reporter-icite-mapping.md`, `scp.md`, `pmc.md`.
   **Tests**: 12 offline pass; ruff clean.
@@ -96,16 +109,17 @@ go straight to the source schemas. Promoted (full history):
 | `lake.scp.mortality`     | 1,034,042 | county+state cancer mortality (2026-06-01) |
 | `lake.scp.risk`          | 83,429 | behavioral-risk / screening prevalence (2026-06-01) |
 | `lake.scp.demographics`  | 3,310,984 | WIDE socio-economic table, ~44 cols (2026-06-01) |
-| `lake.pmc.documents`     | _(loading, full corpus)_ | 1 row/article: pmid/doi/license/title crosswalk (~6–12M) |
-| `lake.pmc.passages`      | _(loading, full corpus)_ | 1 row/BioC passage: text + section/type/offset (exploded) |
+| `lake.pmc.documents`     | _(re-loading)_ | 1 row/article: pmid/doi/license/title crosswalk (~8.4M); prior load purged after an IO failure |
+| `lake.pmc.passages`      | _(re-loading)_ | 1 row/BioC passage: text + section/type/offset (exploded; ~974M); re-loading with loguru + `/data` spill |
 | `lake.ref.geo_state`     | 56 | FIPS↔abbrev↔name + WKB geometry (cb 2023) |
 | `lake.ref.geo_county`    | 3,235 | 5-digit FIPS + WKB geometry (cb 2023) |
 | `lake.europepmc.annotations` | 10,288,483 | Europe PMC text-mined terms, 54 databases, key (database, accession, pmcid); 1.59M PMCIDs (snapshot 2026-06-23) |
 
 `lake_ops` (the operational ledger, ADR-0006) is live in the Postgres catalog: a
 second `ops` attachment (write-mode connects only) with `lake_ops.source` /
-`run` / `watermark` / `dataset_contract`. 5/7 ingestors + europepmc record runs
-via `ops.run`; pmc/openalex convert after their bulk loads finish.
+`run` / `watermark` / `dataset_contract`. Ingestors record runs via `ops.run`
+(pmc included — its reload brackets the load in a run row, loguru-logged); only
+openalex still converts after its bulk load finishes.
 
 **Trial↔grant↔literature triangle verified:** 70,376 trials link to 92,470 NIH
 grants via 145,811 shared publications (`ctgov.references` ⋈ `reporter.publink`);

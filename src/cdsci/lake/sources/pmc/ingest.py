@@ -36,11 +36,14 @@ from ... import ops
 from ...config import Settings, get_settings
 from ...connect import LAKE, csv_source, lake_connect, raw_dir, upsert
 from ...download import download
+from ...log import logger
 
 _DOCUMENTS = "documents"
 _PASSAGES = "passages"
 _DOC = "$.documents[0]"
 _P0 = f"{_DOC}.passages[0]"
+
+_log = logger.bind(ctx="pmc")
 
 
 def list_ranges(settings: Settings | None = None) -> list[str]:
@@ -48,13 +51,18 @@ def list_ranges(settings: Settings | None = None) -> list[str]:
     s = settings or get_settings()
     html = httpx.get(s.biocpmc_ftp, timeout=60, follow_redirects=True).text
     pattern = rf"PMC\d+XXXXX_{re.escape(s.biocpmc_variant)}\.tar\.gz"
-    return sorted(set(re.findall(pattern, html)))
+    found = sorted(set(re.findall(pattern, html)))
+    _log.info("discovered {} json-unicode range tarballs on the BioC-PMC FTP", len(found))
+    return found
 
 
 def download_range(filename: str, settings: Settings | None = None) -> Path:
     """Download one range tarball to the raw layer (resumable)."""
     s = settings or get_settings()
-    return download(s.biocpmc_ftp + filename, raw_dir("pmc", s) / filename)
+    _log.info("downloading range {}", filename)
+    path = download(s.biocpmc_ftp + filename, raw_dir("pmc", s) / filename)
+    _log.info("downloaded {} ({:.1f} GB)", filename, path.stat().st_size / 1024**3)
+    return path
 
 
 def tar_to_ndjson(tar_path: Path, ndjson_path: Path) -> int:
@@ -64,6 +72,7 @@ def tar_to_ndjson(tar_path: Path, ndjson_path: Path) -> int:
     ``.ndjson.gz`` directly.
     """
     n = 0
+    skipped = 0
     opener = gzip.open if str(ndjson_path).endswith(".gz") else open
     with tarfile.open(tar_path, "r:gz") as tf, opener(ndjson_path, "wt") as out:
         for member in tf:
@@ -75,9 +84,11 @@ def tar_to_ndjson(tar_path: Path, ndjson_path: Path) -> int:
             try:
                 obj = json.loads(fh.read())
             except (ValueError, UnicodeDecodeError):
+                skipped += 1
                 continue  # skip a malformed file rather than abort the range
             out.write(json.dumps(obj, separators=(",", ":")) + "\n")
             n += 1
+    _log.info("streamed {} → {} articles ({} malformed skipped)", tar_path.name, n, skipped)
     return n
 
 
@@ -100,6 +111,7 @@ def materialize_raw(con: duckdb.DuckDBPyConnection, ndjson: Path | str) -> Path:
         ) TO '{raw}' (FORMAT parquet);
         """
     )
+    _log.info("materialized bronze {} ({:.1f} GB)", raw.name, raw.stat().st_size / 1024**3)
     return raw
 
 
@@ -123,20 +135,32 @@ def _documents_sql(src: str, snapshot: str, limit: int | None) -> str:
     """
 
 
-def _passages_sql(src: str, snapshot: str, limit: int | None) -> str:
+def _passages_sql(
+    src: str, snapshot: str, limit: int | None, *, batch: tuple[int, int] | None = None
+) -> str:
     """One row per BioC passage, exploded from the nested ``record`` array.
 
     ``passages`` is cast to a list of JSON values, then zipped against its index
     range so each passage becomes ``(pmcid, passage_index)`` — the composite key.
     The full passage ``infons`` is kept as JSON so nothing passage-level is lost.
+
+    ``batch=(i, n)`` restricts the **bronze read** to the ``i``-th of ``n`` pmcid
+    shards (``hash(pmcid) % n = i``). Filtering before the unnest is what bounds
+    peak memory: only 1/n of the range's documents are exploded per pass, so the
+    passages spill stays a fraction of the whole-range explosion.
     """
+    where = []
+    if batch is not None:
+        i, n = batch
+        where.append(f"(hash(pmcid) % {int(n)}) = {int(i)}")
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     limit_sql = f" LIMIT {int(limit)}" if limit else ""
     return f"""
         WITH docs AS (
             SELECT
                 pmcid,
                 CAST(json_extract(record, '{_DOC}.passages') AS JSON[]) AS passages
-            FROM read_parquet({src}){limit_sql}
+            FROM read_parquet({src}){where_sql}{limit_sql}
         ),
         exploded AS (
             SELECT
@@ -192,6 +216,7 @@ def curate(
     snapshot: str = "bulk",
     limit: int | None = None,
     mode: str = "merge",
+    passage_batches: int = 1,
 ) -> dict:
     """Load ``pmc.documents`` + ``pmc.passages`` from one bronze Parquet.
 
@@ -199,6 +224,11 @@ def curate(
     is one row per article (key ``pmcid``); ``passages`` explodes the nested BioC
     passages into one row each (key ``(pmcid, passage_index)``). Returns the row
     counts keyed by table. See :func:`_load` for ``mode`` semantics.
+
+    ``passage_batches`` > 1 (append mode only) splits the passages explosion into
+    that many pmcid shards, each its own INSERT — a spill-reduction lever for the
+    bulk load (peak memory ≈ whole-range / passage_batches). Default 1 is the
+    original single-INSERT behavior; each shard is a separate snapshot.
     """
     src = csv_source(str(raw_parquet))
     documents = _load(
@@ -208,13 +238,24 @@ def curate(
         ["pmcid"],
         mode=mode,
     )
-    passages = _load(
-        con,
-        f"{LAKE}.{schema}.{_PASSAGES}",
-        _passages_sql(src, snapshot, limit),
-        ["pmcid", "passage_index"],
-        mode=mode,
-    )
+    _log.info("documents: {:,} rows ({} mode)", documents, mode)
+
+    target = f"{LAKE}.{schema}.{_PASSAGES}"
+    if mode == "append" and passage_batches > 1:
+        passages = 0
+        for i in range(passage_batches):
+            n = _load(
+                con, target,
+                _passages_sql(src, snapshot, limit, batch=(i, passage_batches)),
+                ["pmcid", "passage_index"], mode=mode,
+            )
+            passages += n
+            _log.info("passages shard {}/{}: {:,} rows (cumulative {:,})",
+                      i + 1, passage_batches, n, passages)
+    else:
+        passages = _load(con, target, _passages_sql(src, snapshot, limit),
+                         ["pmcid", "passage_index"], mode=mode)
+        _log.info("passages: {:,} rows ({} mode)", passages, mode)
     return {"documents": documents, "passages": passages}
 
 
@@ -227,6 +268,7 @@ def ingest(
     limit: int | None = None,
     mode: str = "merge",
     keep_raw: bool = False,
+    passage_batches: int = 1,
     settings: Settings | None = None,
 ) -> dict:
     """Load BioC-PMC into ``pmc.documents`` + ``pmc.passages``, one range at a time.
@@ -249,21 +291,34 @@ def ingest(
     try:
         with ops.run(con, source="pmc", target=f"{LAKE}.{schema}", version=snapshot) as r:
             if file:
+                _log.info("loading single file {} (mode={}, schema={})", file, mode, schema)
                 raw = Path(file) if str(file).endswith(".parquet") else materialize_raw(con, file)
-                counts = curate(con, raw, schema=schema, snapshot=snapshot, limit=limit, mode=mode)
+                counts = curate(con, raw, schema=schema, snapshot=snapshot, limit=limit,
+                                mode=mode, passage_batches=passage_batches)
                 summary["documents"] += counts["documents"]
                 summary["passages"] += counts["passages"]
                 summary["ranges"].append(Path(file).name)
             else:
-                for filename in ranges if ranges is not None else list_ranges(s):
+                todo = ranges if ranges is not None else list_ranges(s)
+                _log.info("loading {} range(s) into {}.{} (mode={}, passage_batches={})",
+                          len(todo), LAKE, schema, mode, passage_batches)
+                for idx, filename in enumerate(todo, 1):
+                    _log.info("=== range {}/{}: {} ===", idx, len(todo), filename)
                     tar = download_range(filename, s)
                     ndjson = raw_dir("pmc", s) / (filename.replace(".tar.gz", ".ndjson.gz"))
                     n_files = tar_to_ndjson(tar, ndjson)
                     raw = materialize_raw(con, ndjson)
-                    counts = curate(con, raw, schema=schema, snapshot=snapshot, limit=limit, mode=mode)
+                    counts = curate(con, raw, schema=schema, snapshot=snapshot, limit=limit,
+                                    mode=mode, passage_batches=passage_batches)
                     summary["documents"] += counts["documents"]
                     summary["passages"] += counts["passages"]
                     summary["ranges"].append({"file": filename, "articles": n_files, **counts})
+                    _log.success(
+                        "range {}/{} done: {} → documents={:,} passages={:,} "
+                        "(running totals documents={:,} passages={:,})",
+                        idx, len(todo), filename, counts["documents"], counts["passages"],
+                        summary["documents"], summary["passages"],
+                    )
                     if not keep_raw:
                         # The silver tables on R2 are the faithful copy, so the local
                         # tarball / NDJSON / bronze Parquet are all transient — delete

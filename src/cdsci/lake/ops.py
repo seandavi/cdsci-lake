@@ -34,6 +34,7 @@ from typing import Any
 import duckdb
 
 from .connect import LAKE
+from .log import logger
 
 OPS = "ops"  # the ATTACH alias for the ledger database
 OPS_SCHEMA = "lake_ops"
@@ -207,6 +208,11 @@ def run(
         "VALUES (?, ?, ?, ?, 'running', ?, current_timestamp, ?)",
         [rid, source, target, version, before, host],
     )
+    bound = logger.bind(ctx=f"run:{source}")
+    bound.info(
+        "start → {} (version={}, snapshot_before={}, run_id={})",
+        target, version, before, rid,
+    )
     r = Run(con, rid, source, target, version, before)
     try:
         yield r
@@ -218,6 +224,10 @@ def run(
             [after, r.rows, str(exc)[:2000], rid],
         )
         r.snapshot_after, r.status = after, "error"
+        bound.error(
+            "ERROR after {} rows (snapshot {}→{}, run_id={}): {}",
+            r.rows, before, after, rid, exc,
+        )
         raise
     else:
         after = _max_snapshot(con)
@@ -228,6 +238,10 @@ def run(
             [status, after, r.rows, rid],
         )
         r.snapshot_after, r.status = after, status
+        bound.success(
+            "{} → {} (rows={}, snapshot {}→{}, run_id={})",
+            status, target, r.rows, before, after, rid,
+        )
 
 
 def last_run(

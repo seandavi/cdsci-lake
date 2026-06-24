@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # --- DuckDB resource limits (bound work; spill to disk) ---
     duckdb_memory_limit: str | None = None  # None → ~70% RAM (see lake._auto_memory_limit)
     duckdb_threads: int = Field(default=4, ge=1)
+    # Where DuckDB spills when memory_limit is exceeded. Big explosions (the PMC
+    # passages unnest is the worst) can spill 100+ GB, so point this at a large
+    # volume — exhausting the catalog disk is what aborts a multi-hour load with an
+    # IO error. None → ``<storage_root>/lake/duckdb_tmp`` (dev default).
+    duckdb_temp_directory: str | None = None
 
     # --- Lake backend selection ---
     # "local"    → single-file DuckDB catalog + Parquet under the storage seam

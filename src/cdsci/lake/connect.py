@@ -119,7 +119,11 @@ def lake_connect(
 
 def _apply_limits(con: duckdb.DuckDBPyConnection, s: Settings) -> None:
     """Bound memory/threads and spill to a local temp dir rather than OOM."""
-    tmp_dir = _local_root(s) / "lake" / "duckdb_tmp"
+    tmp_dir = (
+        Path(s.duckdb_temp_directory)
+        if s.duckdb_temp_directory
+        else _local_root(s) / "lake" / "duckdb_tmp"
+    )
     tmp_dir.mkdir(parents=True, exist_ok=True)
     con.execute(f"SET memory_limit = '{s.duckdb_memory_limit or _auto_memory_limit()}';")
     con.execute(f"SET threads = {s.duckdb_threads};")
