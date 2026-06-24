@@ -15,12 +15,18 @@ import typer
 from ... import ops
 from ...config import get_settings
 from ...connect import LAKE, lake_connect
+from ...log import configure
 from .ingest import ENTITIES, ingest_entity, ingest_works, part_urls
 
 app = typer.Typer(
     help="Load the OpenAlex snapshot (works + reference entities) into the lake.",
     add_completion=False,
 )
+
+
+@app.callback()
+def _main(log_level: str = typer.Option("INFO", "--log-level", help="loguru level.")) -> None:
+    configure(log_level)
 
 
 @app.command("parts")

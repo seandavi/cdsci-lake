@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import typer
 
+from ...log import configure
 from .ingest import GROUPS, available_years, ingest
 
 app = typer.Typer(
     help="Ingest NIH RePORTER ExPORTER groups (projects/abstracts/publications/publink).",
     add_completion=False,
 )
+
+
+@app.callback()
+def _main(log_level: str = typer.Option("INFO", "--log-level", help="loguru level.")) -> None:
+    configure(log_level)
 
 
 @app.command("groups")

@@ -34,6 +34,9 @@ import duckdb
 from ... import ops
 from ...config import Settings, get_settings
 from ...connect import LAKE, lake_connect, upsert
+from ...log import logger
+
+_log = logger.bind(ctx="openalex")
 
 
 def _today_version() -> str:
@@ -434,9 +437,9 @@ def ingest_works(
                     con, chunk, schema=schema, version=version, mode=mode,
                     domains=s.openalex_domains, max_obj=s.openalex_max_object_bytes,
                 )
-                print(f"  works batch {n}/{len(batches)} ({len(chunk)} parts): "
-                      f"works={totals['works']:,} refs={totals['references']:,} "
-                      f"authorships={totals['authorships']:,}")
+                _log.info("works batch {}/{} ({} parts): works={:,} refs={:,} authorships={:,}",
+                          n, len(batches), len(chunk), totals["works"],
+                          totals["references"], totals["authorships"])
             r.rows = totals["works"]
     finally:
         if owns:
@@ -497,7 +500,7 @@ def run(
                 entity, schema=schema, version=version, mode=mode,
                 max_files=max_files, settings=s, con=con,
             )
-            print(f"  {entity}: {counts[entity]:,}")
+            _log.info("entity {}: {:,} rows", entity, counts[entity])
         if works:
             w = ingest_works(
                 schema=schema, version=version, mode=mode,

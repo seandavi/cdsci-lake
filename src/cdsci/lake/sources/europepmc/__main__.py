@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import typer
 
+from ...log import configure
 from .ingest import ingest, list_databases
 
 app = typer.Typer(
     help="Ingest Europe PMC text-mined annotations into lake.europepmc.annotations.",
     add_completion=False,
 )
+
+
+@app.callback()
+def _main(log_level: str = typer.Option("INFO", "--log-level", help="loguru level.")) -> None:
+    configure(log_level)
 
 
 @app.command("databases")

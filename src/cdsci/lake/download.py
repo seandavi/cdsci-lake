@@ -14,7 +14,10 @@ from pathlib import Path
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from .log import logger
+
 _TIMEOUT = httpx.Timeout(60.0, read=300.0)
+_log = logger.bind(ctx="download")
 
 
 @retry(
@@ -59,10 +62,15 @@ def download(
     exists it is returned untouched — re-running an ingest does not re-download.
     """
     if dest.exists():
+        _log.debug("cached, skipping download: {}", dest.name)
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_suffix(dest.suffix + ".part")
     existing = part.stat().st_size if (resume and part.exists()) else 0
+    _log.info(
+        "downloading {} → {}{}",
+        url, dest.name, f" (resuming from {existing / 1e6:.1f} MB)" if existing else "",
+    )
 
     @retry(
         retry=retry_if_exception_type(httpx.HTTPError),
@@ -89,10 +97,12 @@ def download(
     try:
         _fetch(existing)
     except _RangeIgnored:
+        _log.debug("server ignored Range for {} — restarting from 0", dest.name)
         part.unlink(missing_ok=True)
         _fetch(0)
 
     part.rename(dest)
+    _log.info("downloaded {} ({:.1f} MB)", dest.name, dest.stat().st_size / 1e6)
     return dest
 
 
@@ -113,6 +123,7 @@ def unzip(archive: Path, dest_dir: Path) -> list[Path]:
                     while chunk := src.read(1 << 20):
                         dst.write(chunk)
             out.append(target)
+    _log.info("extracted {} file(s) from {} → {}", len(out), archive.name, dest_dir)
     return out
 
 
