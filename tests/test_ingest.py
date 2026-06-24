@@ -343,6 +343,37 @@ def test_pmc_curate(lake_settings: Settings, tmp_path):
         con.close()
 
 
+def test_pmc_ingest_attributes_snapshots(lake_settings: Settings, tmp_path: Path):
+    """PMC append: each write is a self-describing snapshot (ADR-0007) bound by run_id."""
+    import shutil
+
+    from cdsci.lake.sources import pmc
+
+    # stage into tmp so the bronze parquet lands there, not in the fixtures dir.
+    nd = tmp_path / "pmc_sample.ndjson"
+    shutil.copy(FIXTURES / "pmc_sample.ndjson", nd)
+    summary = pmc.ingest(
+        file=str(nd),
+        mode="append", passage_batches=2, snapshot="attr-test",
+        settings=lake_settings,
+    )
+    con = lake_connect(lake_settings, read_only=True)
+    try:
+        rows = con.execute(
+            "SELECT author, commit_message, commit_extra_info FROM lake.snapshots() "
+            "WHERE author IS NOT NULL ORDER BY snapshot_id"
+        ).fetchall()
+        # 1 documents write + 2 passage shards = 3 attributed snapshots.
+        ops = [json.loads(r[2])["op"] for r in rows]
+        assert ops == ["documents", "passages.shard1/2", "passages.shard2/2"]
+        # every snapshot self-attributes to this source and binds to the ops run.
+        assert all(r[0] == "cdsci:pmc" for r in rows)
+        assert all(json.loads(r[2])["run_id"] == summary["run_id"] for r in rows)
+        assert all(json.loads(r[2])["source"] == "pmc" for r in rows)
+    finally:
+        con.close()
+
+
 def test_census_geo_upsert_wkb(lake_settings: Settings):
     """ref.geo_state: geometry stored as WKB round-trips; tag-only change is idempotent."""
     con = lake_connect(lake_settings)

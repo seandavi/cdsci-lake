@@ -173,6 +173,39 @@ class Run:
             "status": self.status,
         }
 
+    @contextmanager
+    def attribute(self, op: str, *, message: str | None = None) -> Iterator[None]:
+        """Wrap the enclosed write(s) in one **self-describing** DuckLake snapshot.
+
+        Opens a transaction, stamps the snapshot it will produce with
+        ``author='cdsci:<source>'``, a ``commit_message``, and a JSON
+        ``commit_extra_info`` (``{writer, source, target, version, run_id, op}``)
+        via ``set_commit_message``, runs the block, and commits. So the catalog
+        itself attributes the snapshot — no ledger join, no table-id resolution
+        (ADR-0007). One snapshot per block; the block rolls back on error.
+
+        ``op`` is the sub-step label (e.g. ``"documents"``, ``"passages.shard2"``).
+        Each block is its own transaction, so do **not** wrap an unbounded write in
+        one block expecting it to stay small — keep the per-block write bounded
+        (the PMC passages shards are sized for exactly this).
+        """
+        extra = json.dumps({
+            "writer": "cdsci", "source": self.source, "target": self.target,
+            "version": self.version, "run_id": self.run_id, "op": op,
+        })
+        self.con.execute("BEGIN;")
+        self.con.execute(
+            f"CALL {LAKE}.set_commit_message(?, ?, extra_info => ?);",
+            [f"cdsci:{self.source}", message or f"{self.source}: {op}", extra],
+        )
+        try:
+            yield
+        except BaseException:
+            self.con.execute("ROLLBACK;")
+            raise
+        else:
+            self.con.execute("COMMIT;")
+
 
 def _max_snapshot(con: duckdb.DuckDBPyConnection) -> int | None:
     """Current max DuckLake snapshot id, or None on an empty lake."""
