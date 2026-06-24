@@ -12,6 +12,11 @@ app = typer.Typer(
 )
 
 
+@app.callback()
+def main() -> None:
+    """Retraction Watch ingestor (keeps the ``run`` subcommand explicit)."""
+
+
 @app.command("run")
 def run(
     file: str | None = typer.Option(
