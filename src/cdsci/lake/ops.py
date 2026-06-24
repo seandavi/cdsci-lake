@@ -89,6 +89,8 @@ SOURCES: tuple[Source, ...] = (
            "annual", "census-cartographic", "us-public-domain"),
     Source("europepmc", "europepmc", "Europe PMC text-mined annotations (PMCID↔term)",
            "monthly", "europepmc-bulk", "europepmc-terms"),
+    Source("mesh", "mesh", "NLM MeSH controlled vocabulary: descriptors + tree + qualifiers",
+           "annual", "nlm-xml", "us-public-domain"),
     Source("retractionwatch", "retractionwatch", "Retraction Watch retraction/correction notices",
            "weekday-daily", "crossref-gitlab-csv", "cc0", watermark_strategy="full"),
     # CC BY-NC 4.0: internal non-commercial use only, do NOT redistribute. The
