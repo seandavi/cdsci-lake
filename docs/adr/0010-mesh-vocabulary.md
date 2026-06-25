@@ -81,9 +81,13 @@ annual cadence; `us-public-domain` / NLM). Two phases.
 - `mesh.supplemental_term` — SCR synonyms.
 - `mesh.pharmacological_action` — `(substance_ui, action_ui)`, what each
   drug/substance *does* (query literature by mechanism/effect), from `pa{year}.xml`.
+- `mesh.article_chemical` — `(pmid, substance_ui)` from
+  `omicidx.pubmed_article.chemical_list` (UIs are `D…` descriptor-chemicals or `C…`
+  SCRs). The chemical analogue of `article_heading`; completes **article → substance
+  → `pharmacological_action` → mechanism** and article → substance →
+  `supplemental_descriptor` → descriptor → tree.
 
-Still later: see-also cross-refs; a PubMed `ChemicalList` → SCR article edge (the
-chemical analogue of `article_heading`).
+Still later: see-also cross-refs; the major-topic flag.
 
 **No `mesh ↔ openalex_topic` crosswalk** — researched, and **no canonical mapping
 exists**: an OpenAlex Topic exposes only an OpenAlex id + a single Wikipedia URL (no
