@@ -7,6 +7,7 @@ import typer
 from ...log import configure
 from .ingest import (
     ingest,
+    ingest_chemicals,
     ingest_headings,
     ingest_pharmacological_actions,
     ingest_supplemental,
@@ -61,6 +62,23 @@ def headings(
 ) -> None:
     """Build mesh.article_heading (pmid↔descriptor↔qualifier) from omicidx PubMed MeSH."""
     s = ingest_headings(version=version, source_table=source_table, schema=schema, limit=limit)
+    delta = "changed" if s["changed"] else "no change (idempotent)"
+    typer.echo(f"{s['table']} <- {s['rows']:,} rows — {delta}")
+
+
+@app.command("chemicals")
+def chemicals(
+    version: str | None = typer.Option(
+        None, "--version", help="Snapshot label (default: YYYY-MM)."
+    ),
+    source_table: str = typer.Option(
+        "lake.omicidx.pubmed_article", "--source-table", help="In-lake PubMed source."
+    ),
+    schema: str = typer.Option("mesh", "--schema", help="Target lake schema."),
+    limit: int | None = typer.Option(None, "--limit", help="Cap source articles (smoke test)."),
+) -> None:
+    """Build mesh.article_chemical (pmid↔substance) from omicidx PubMed ChemicalList."""
+    s = ingest_chemicals(version=version, source_table=source_table, schema=schema, limit=limit)
     delta = "changed" if s["changed"] else "no change (idempotent)"
     typer.echo(f"{s['table']} <- {s['rows']:,} rows — {delta}")
 

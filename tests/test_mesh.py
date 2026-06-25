@@ -119,6 +119,39 @@ def test_mesh_article_headings_explosion(lake_settings: Settings):
         con.close()
 
 
+def test_mesh_article_chemicals_explosion(lake_settings: Settings):
+    """Literature edge: explode omicidx chemical_list → (pmid, substance_ui)."""
+    con = lake_connect(lake_settings)
+    try:
+        con.execute("CREATE SCHEMA lake.omicidx;")
+        con.execute(
+            "CREATE TABLE lake.omicidx.pubmed_article AS SELECT * FROM (VALUES "
+            "('1', 'D011494:Protein Kinases; D000098984:Fluorescent Cmpd; C000005:rofecoxib'), "
+            "('2', 'D017382:Reactive Oxygen Species'), "
+            "('3', NULL)) t(pmid, chemical_list);"
+        )
+        n = mesh.curate_article_chemicals(con, version="2026-06")
+        assert n == 4  # pmid1: 3 substances ; pmid2: 1 ; pmid3 skipped
+        got = {
+            tuple(r) for r in con.execute(
+                "SELECT pmid, substance_ui FROM lake.mesh.article_chemical"
+            ).fetchall()
+        }
+        assert got == {
+            (1, "D011494"),
+            (1, "D000098984"),  # long (9-digit) descriptor UI
+            (1, "C000005"),  # an SCR substance
+            (2, "D017382"),
+        }
+        # pmid is BIGINT; idempotent re-run adds no snapshot.
+        before = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+        mesh.curate_article_chemicals(con, version="2026-06")
+        after = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+        assert after == before
+    finally:
+        con.close()
+
+
 def test_mesh_supplemental_records(lake_settings: Settings, tmp_path: Path):
     """Phase 2 SCRs: record + heading-mapped-to bridge (with primary flag) + terms."""
     nd = tmp_path / "supp.ndjson.gz"

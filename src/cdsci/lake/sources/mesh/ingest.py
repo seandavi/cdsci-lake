@@ -620,3 +620,84 @@ def ingest_pharmacological_actions(
     finally:
         con.close()
     return {**r.summary(), "table": f"{LAKE}.{schema}.pharmacological_action"}
+
+
+# --- Literature edge: PubMed ChemicalList → substance (descriptor or SCR) ---
+
+
+def _article_chemical_sql(source_table: str, version: str, limit: int | None) -> str:
+    """Explode ``chemical_list`` (``UI:Name; …``) → (pmid, substance_ui).
+
+    ``substance_ui`` is a ``D…`` descriptor-chemical or a ``C…`` SCR — it joins
+    ``mesh.descriptor``/``mesh.supplemental`` for the substance and, crucially,
+    ``mesh.pharmacological_action`` to reach the drug's mechanism/effect classes.
+    No qualifiers in this field, so the key ``(pmid, substance_ui)`` needs no
+    sentinel. ``limit`` caps source rows.
+    """
+    limit_sql = f" LIMIT {int(limit)}" if limit else ""
+    return rf"""
+        WITH src AS (
+            SELECT TRY_CAST(pmid AS BIGINT) AS pmid, chemical_list
+            FROM {source_table}
+            WHERE chemical_list IS NOT NULL AND chemical_list <> ''{limit_sql}
+        ),
+        items AS (
+            SELECT pmid, trim(c) AS item
+            FROM src, unnest(string_split(chemical_list, ';')) AS t(c)
+            WHERE trim(c) <> ''
+        )
+        SELECT DISTINCT pmid, regexp_extract(item, '^([CD]\d+)', 1) AS substance_ui,
+               CAST('{version}' AS VARCHAR) AS snapshot_version
+        FROM items
+        WHERE pmid IS NOT NULL AND regexp_extract(item, '^([CD]\d+)', 1) <> ''
+    """
+
+
+def curate_article_chemicals(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    schema: str = "mesh",
+    version: str = "0",
+    source_table: str = _PUBMED,
+    limit: int | None = None,
+) -> int:
+    """Upsert ``mesh.article_chemical`` (pmid ↔ substance) from PubMed's ChemicalList.
+
+    The chemical analogue of :func:`curate_article_headings`: completes
+    article → substance → ``pharmacological_action`` → mechanism, and article →
+    substance → ``supplemental_descriptor`` → descriptor → tree. Large (one row per
+    article × chemical); the MERGE re-reads the target, so a full rebuild is heavy.
+    """
+    n = upsert(
+        con,
+        f"{LAKE}.{schema}.article_chemical",
+        _article_chemical_sql(source_table, version, limit),
+        ["pmid", "substance_ui"],
+        exclude_change_cols=["snapshot_version"],
+    )
+    _log.info("mesh.article_chemical <- {:,} rows", n)
+    return n
+
+
+def ingest_chemicals(
+    *,
+    schema: str = "mesh",
+    version: str | None = None,
+    source_table: str = _PUBMED,
+    limit: int | None = None,
+    settings: Settings | None = None,
+) -> dict:
+    """Build ``mesh.article_chemical`` from omicidx PubMed ChemicalList. No download."""
+    s = settings or get_settings()
+    version = version or _today_version()
+    con = lake_connect(s)
+    try:
+        with ops.run(
+            con, source="mesh", target=f"{LAKE}.{schema}.article_chemical", version=version
+        ) as r:
+            r.rows = curate_article_chemicals(
+                con, schema=schema, version=version, source_table=source_table, limit=limit
+            )
+    finally:
+        con.close()
+    return {**r.summary(), "table": f"{LAKE}.{schema}.article_chemical"}
