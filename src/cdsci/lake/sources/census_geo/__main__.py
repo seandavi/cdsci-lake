@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import typer
 
+from ...log import configure
 from .ingest import LAYERS, ingest
 
 app = typer.Typer(
     help="Load US Census cartographic boundaries into ref.geo_state / ref.geo_county.",
     add_completion=False,
 )
+
+
+@app.callback()
+def _main(log_level: str = typer.Option("INFO", "--log-level", help="loguru level.")) -> None:
+    configure(log_level)
 
 
 @app.command("layers")

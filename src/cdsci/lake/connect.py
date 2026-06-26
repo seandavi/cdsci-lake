@@ -14,6 +14,7 @@ lock-in risk of a young format low.
 from __future__ import annotations
 
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -109,12 +110,21 @@ def lake_connect(
         _attach_local(con, s, read_only=read_only)
     else:
         raise ValueError(f"Unknown lake_backend: {s.lake_backend!r}")
+
+    # The operational ledger is a writer concern (ADR-0006): attach it only when
+    # the lake is writable, never for read-only consumers.
+    if not read_only:
+        _attach_ops(con, s)
     return con
 
 
 def _apply_limits(con: duckdb.DuckDBPyConnection, s: Settings) -> None:
     """Bound memory/threads and spill to a local temp dir rather than OOM."""
-    tmp_dir = _local_root(s) / "lake" / "duckdb_tmp"
+    tmp_dir = (
+        Path(s.duckdb_temp_directory)
+        if s.duckdb_temp_directory
+        else _local_root(s) / "lake" / "duckdb_tmp"
+    )
     tmp_dir.mkdir(parents=True, exist_ok=True)
     con.execute(f"SET memory_limit = '{s.duckdb_memory_limit or _auto_memory_limit()}';")
     con.execute(f"SET threads = {s.duckdb_threads};")
@@ -171,6 +181,36 @@ def _attach_postgres(con: duckdb.DuckDBPyConnection, s: Settings, *, read_only: 
     )
 
 
+def ops_db_path(settings: Settings | None = None) -> Path:
+    """Local filesystem path to the operational-ledger DuckDB file (``ops``).
+
+    A sibling of the catalog file — deliberately a *separate* DuckDB file, not the
+    ``.ducklake`` catalog, so the ledger isn't a read-write double-attach of the
+    catalog (ADR-0006).
+    """
+    s = settings or get_settings()
+    return catalog_path(s).parent / "ops.duckdb"
+
+
+def _attach_ops(con: duckdb.DuckDBPyConnection, s: Settings) -> None:
+    """Attach the operational ledger as ``ops`` and ensure its schema (ADR-0006).
+
+    Postgres backend: the same ``lake`` Postgres DB, reached through the ``postgres``
+    extension (already loaded, ``PGPASSWORD`` already set by ``_attach_postgres``),
+    in its own ``lake_ops`` schema. Local backend: a sibling ``ops.duckdb`` file.
+    """
+    from . import ops  # local import avoids a connect<->ops circular dependency
+
+    if s.lake_backend == "postgres":
+        con.execute(
+            f"ATTACH 'dbname={s.lake_pg_dbname} host={s.lake_pg_host} "
+            f"port={s.lake_pg_port} user={s.lake_pg_user}' AS {ops.OPS} (TYPE postgres);"
+        )
+    else:
+        con.execute(f"ATTACH '{ops_db_path(s)}' AS {ops.OPS};")
+    ops.bootstrap(con)
+
+
 def csv_source(paths: list[Path] | str) -> str:
     """Render a ``read_csv`` source argument from a glob string or list of paths."""
     if isinstance(paths, str):
@@ -203,29 +243,42 @@ def upsert(
     would mark every row "changed" each load and force a full rewrite; with it,
     only rows whose *real* data moved are rewritten, and the stamp then records
     the snapshot in which a row last actually changed.
+
+    When called inside an :func:`cdsci.lake.ops.run` block, the MERGE is wrapped
+    in that run's :meth:`~cdsci.lake.ops.Run.attribute` so the snapshot it produces
+    is self-describing (author/source/run_id, ADR-0009). An idempotent MERGE makes
+    no snapshot even when wrapped, so the no-op-is-free contract holds; outside a
+    run (e.g. a direct test call) the write is unattributed.
     """
+    from . import ops  # local import avoids a connect<->ops circular dependency
+
     parts = target.split(".")
     if len(parts) != 3:
         raise ValueError(f"target must be catalog.schema.table, got {target!r}")
-    catalog, schema, _ = parts
+    catalog, schema, table = parts
     keys = [key] if isinstance(key, str) else list(key)
     ignore = set(exclude_change_cols or [])
 
-    con.execute(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema};")
-    con.execute(f"CREATE OR REPLACE TEMP TABLE _cri_stage AS {source_sql};")
-    con.execute(f"CREATE TABLE IF NOT EXISTS {target} AS SELECT * FROM _cri_stage WHERE false;")
+    run = ops.active_run()
+    attribution = run.attribute(table) if run is not None else nullcontext()
+    with attribution:
+        con.execute(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema};")
+        con.execute(f"CREATE OR REPLACE TEMP TABLE _cri_stage AS {source_sql};")
+        con.execute(
+            f"CREATE TABLE IF NOT EXISTS {target} AS SELECT * FROM _cri_stage WHERE false;"
+        )
 
-    cols = [c[0] for c in con.execute("DESCRIBE _cri_stage").fetchall()]
-    compare = [c for c in cols if c not in keys and c not in ignore]
-    on = " AND ".join(f"t.{k} = s.{k}" for k in keys)
-    matched = ""
-    if compare:
-        changed = " OR ".join(f"t.{c} IS DISTINCT FROM s.{c}" for c in compare)
-        matched = f"WHEN MATCHED AND ({changed}) THEN UPDATE SET * "
-    con.execute(
-        f"MERGE INTO {target} AS t USING _cri_stage AS s ON {on} "
-        f"{matched}WHEN NOT MATCHED THEN INSERT *;"
-    )
+        cols = [c[0] for c in con.execute("DESCRIBE _cri_stage").fetchall()]
+        compare = [c for c in cols if c not in keys and c not in ignore]
+        on = " AND ".join(f"t.{k} = s.{k}" for k in keys)
+        matched = ""
+        if compare:
+            changed = " OR ".join(f"t.{c} IS DISTINCT FROM s.{c}" for c in compare)
+            matched = f"WHEN MATCHED AND ({changed}) THEN UPDATE SET * "
+        con.execute(
+            f"MERGE INTO {target} AS t USING _cri_stage AS s ON {on} "
+            f"{matched}WHEN NOT MATCHED THEN INSERT *;"
+        )
     return con.execute(f"SELECT count(*) FROM {target}").fetchone()[0]
 
 

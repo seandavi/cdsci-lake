@@ -18,6 +18,7 @@ Two surfaces, split by install extra:
 to our cohort* — entity resolution never enters a source or the lake.
 """
 
+from . import ops
 from .config import Settings, get_settings
 from .connect import (
     LAKE,
@@ -25,6 +26,7 @@ from .connect import (
     csv_source,
     data_path,
     lake_connect,
+    ops_db_path,
     raw_dir,
     snapshots,
     table_exists,
@@ -43,4 +45,6 @@ __all__ = [
     "raw_dir",
     "catalog_path",
     "data_path",
+    "ops",
+    "ops_db_path",
 ]

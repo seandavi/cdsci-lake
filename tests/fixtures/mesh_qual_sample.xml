@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<QualifierRecordSet>
+  <QualifierRecord>
+    <QualifierUI>Q000008</QualifierUI>
+    <QualifierName><String>administration &amp; dosage</String></QualifierName>
+    <Abbreviation>AD</Abbreviation>
+  </QualifierRecord>
+  <QualifierRecord>
+    <QualifierUI>Q000235</QualifierUI>
+    <QualifierName><String>genetics</String></QualifierName>
+    <Abbreviation>GE</Abbreviation>
+  </QualifierRecord>
+</QualifierRecordSet>

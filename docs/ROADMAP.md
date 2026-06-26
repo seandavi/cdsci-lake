@@ -7,10 +7,14 @@ rationale for *what's next*, not how it was built.
 
 ## Platform (near-term)
 
-- **`lake_ops` metadata model** (ADR-0001 §6) — source / version / run / watermark /
-  contract tables in the Postgres catalog; wire every ingestor to record runs +
-  snapshot ids. Unblocks watermark-driven incrementals (e.g. OpenAlex
-  `updated_date > last_pull`).
+- **`lake_ops` metadata model** (ADR-0001 §6 → **ADR-0006** accepted, design
+  `docs/design/lake_ops.md`) — source / run / watermark / contract tables as
+  catalog-adjacent native state (a second `ops` attachment, not DuckLake data);
+  wire every ingestor to record runs via `ops.run(...)`. Unblocks watermark-driven
+  incrementals (e.g. OpenAlex `updated_date > last_pull`). *Module + bootstrap
+  done; **all 7 ingestors + europepmc** record runs via `ops.run`. Remaining: add
+  watermark cursors (OpenAlex `updated_date` first); `dataset_contract` (with the
+  versioned-views work).*
 - **Scoped roles** — replace the admin bootstrap credential with `lake_writer`
   (ingest) and `lake_reader` (consumers) Postgres roles + scoped R2 tokens.
 - **Versioned consumer views + `dataset_contract` registry** — per-source stable
@@ -24,7 +28,8 @@ rationale for *what's next*, not how it was built.
   need an XML stream-parse path. Not implemented.
 - **Consumer migration** — point `cancer_center` enrichment at `lake.icite.metadata`
   (RCR) instead of per-project caches.
-- **Repo remote** — push this repo to GitHub (local history only today).
+- ~~**Repo remote**~~ — **done**: private GitHub repo `seandavi/cdsci-lake`, `main`
+  pushed.
 
 ## OpenAlex follow-ups (ADR-0005)
 
@@ -42,16 +47,19 @@ All four below join cleanly off the OpenAlex hub we now have.
 
 | source | cadence | distribution | join key | license | size | ingest plan |
 |--------|---------|--------------|----------|---------|------|-------------|
-| **Reliance on Science** (patents↔papers) | versioned, ~annual (Jun–Jul); latest 2024 ed. (Zenodo rec 11461587) | Zenodo concept DOI `10.5281/zenodo.3236339`, `_pcs_oa.csv` (CSV) | **OpenAlex Work ID** (+DOI/PMID crosswalks) | **CC BY-NC 4.0** — non-commercial; flag for review | ~2.5 GB core / ~25 GB full; ~16M cites | poll concept DOI ~quarterly; infrequent recurring loader |
-| **Retraction Watch** (integrity) | **weekday-daily** | Crossref GitLab `crossref/retraction-watch-data`, single `retraction_watch.csv` (semicolon multi-value) | DOI (`OriginalPaperDOI`); PMID secondary — **needs DOI→OA crosswalk** | effectively CC0 | ~65 MB, ~70.6k rows | **recurring daily sync** (weekday); full-file diff on `Record ID`; split multi-value fields |
+| **Reliance on Science** (patents↔papers) ✅ **LANDED** | versioned, ~annual; pinned 2024 ed. (Zenodo rec 11461587) | Zenodo `_pcs_oa.csv` + `_patent_paper_pairs.csv` | **OpenAlex Work ID** | **CC BY-NC 4.0** — non-commercial, **do NOT redistribute** (license carried in `ops.source`) | ~2.5 GB | **DONE** → `reliance.patent_citations` + `reliance.patent_paper_pairs`; see `docs/design/reliance.md`, `docs/data-licenses.md` |
+| **Retraction Watch** (integrity) ✅ **LANDED** | **weekday-daily** | Crossref GitLab `crossref/retraction-watch-data`, single `retraction_watch.csv` (semicolon multi-value) | DOI (`OriginalPaperDOI`); PMID secondary — **needs DOI→OA crosswalk** | effectively CC0 | ~65 MB, ~70.6k rows | **DONE** → `lake.retractionwatch.retractions` (key `record_id`, multi-value→arrays, `ops.run`); see `docs/design/retractionwatch.md`. Daily scheduler still TODO |
 | **SciSciNet v2** (sci-of-science: disruption, etc.) | **static per version**; v2 ~spring 2025, no v3 | GCS `gs://sciscinet-neo/v2/` (Parquet); HF small tables; BigQuery (form-gated) | **OpenAlex Work ID** (v2 PaperID) | BSD-3-Clause-Clear (verify) | ~210 GB core (+1.7 TB embeddings, optional) | one-time pinned-snapshot loader; use OA directly for freshness, SciSciNet only for derived measures |
 | **PreprintToPaper** (bioRxiv/medRxiv→published) | **static**, occasional versions; v2.0.0 (2025-12-19) | Zenodo `10.5281/zenodo.17992421`, `PreprintToPaper.csv` (CSV) | DOI pairs — **no OA ids/PMIDs**, needs DOI→OA crosswalk | CC-BY-4.0 | ~617 MB, ~145.5k rows | one-shot static reference table |
 
 Notes:
-- **Only Reliance on Science is non-open** (CC BY-NC) — review before republishing in
-  the shared lake. The other three are CC0 / CC-BY / BSD.
+- **Only Reliance on Science is non-open** (CC BY-NC) — *landed* for **internal
+  non-commercial** use (state university); **never redistribute** it or derived
+  extracts. License carried forward in `ops.source` + `docs/data-licenses.md`.
+  The other candidates are CC0 / CC-BY / BSD.
 - **Retraction Watch is the one true recurring sync** here — small and daily; a good
   first customer for whatever scheduler we adopt (cron / pg_cron + LISTEN/NOTIFY).
+  *(Source landed; the daily-schedule automation is the remaining piece.)*
 - Reliance on Science + SciSciNet v2 join on the OpenAlex Work ID **for free**;
   Retraction Watch + PreprintToPaper are DOI-only and motivate `ref.id_crosswalk`.
 - Use-case fit: **Reliance on Science** (papers→patents = translational benchmarking)

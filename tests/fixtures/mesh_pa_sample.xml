@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PharmacologicalActionSet>
+  <PharmacologicalAction>
+    <DescriptorReferredTo>
+      <DescriptorUI>D000894</DescriptorUI>
+      <DescriptorName><String>Anti-Inflammatory Agents, Non-Steroidal</String></DescriptorName>
+    </DescriptorReferredTo>
+    <PharmacologicalActionSubstanceList>
+      <Substance>
+        <RecordUI>D001241</RecordUI>
+        <RecordName><String>Aspirin</String></RecordName>
+      </Substance>
+      <Substance>
+        <RecordUI>C000005</RecordUI>
+        <RecordName><String>rofecoxib</String></RecordName>
+      </Substance>
+    </PharmacologicalActionSubstanceList>
+  </PharmacologicalAction>
+  <PharmacologicalAction>
+    <DescriptorReferredTo>
+      <DescriptorUI>D058633</DescriptorUI>
+      <DescriptorName><String>Antipyretics</String></DescriptorName>
+    </DescriptorReferredTo>
+    <PharmacologicalActionSubstanceList>
+      <Substance>
+        <RecordUI>D001241</RecordUI>
+        <RecordName><String>Aspirin</String></RecordName>
+      </Substance>
+    </PharmacologicalActionSubstanceList>
+  </PharmacologicalAction>
+</PharmacologicalActionSet>

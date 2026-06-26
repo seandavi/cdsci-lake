@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # --- DuckDB resource limits (bound work; spill to disk) ---
     duckdb_memory_limit: str | None = None  # None → ~70% RAM (see lake._auto_memory_limit)
     duckdb_threads: int = Field(default=4, ge=1)
+    # Where DuckDB spills when memory_limit is exceeded. Big explosions (the PMC
+    # passages unnest is the worst) can spill 100+ GB, so point this at a large
+    # volume — exhausting the catalog disk is what aborts a multi-hour load with an
+    # IO error. None → ``<storage_root>/lake/duckdb_tmp`` (dev default).
+    duckdb_temp_directory: str | None = None
 
     # --- Lake backend selection ---
     # "local"    → single-file DuckDB catalog + Parquet under the storage seam
@@ -123,6 +128,36 @@ class Settings(BaseSettings):
     # sqlite extension; snapshot_version = the object's S3 Last-Modified date.
     # Verified 2026-06-26 (332 ontologies available).
     semsql_base_url: str = "https://s3.amazonaws.com/bbop-sqlite"
+    # Europe PMC text-mined annotations — a directory of per-database CSVs (one
+    # file per annotated resource: uniprot, chebi, nct, …), all the same shape
+    # (accession, PMCID, EXTID, SOURCE). Loaded into one tidy table keyed by the
+    # database (= file stem). The directory index is scraped for the file list.
+    europepmc_textmined_url: str = "https://europepmc.org/pub/databases/pmc/TextMinedTerms/"
+    # Retraction Watch — the Crossref-hosted CSV (CC0), updated weekday-daily. A
+    # single rolling ~65 MB file (~70k rows); keyed Record ID, multi-value fields
+    # semicolon-separated. The rolling file has no upstream version, so we tag the
+    # snapshot by pull date and keep the downloaded CSV as the bronze copy.
+    retractionwatch_url: str = (
+        "https://gitlab.com/crossref/retraction-watch-data/-/raw/main/retraction_watch.csv"
+    )
+    # NLM MeSH (Medical Subject Headings) — descriptor + qualifier XML, released
+    # annually (ADR-0010). ``desc{year}.gz`` is the controlled vocabulary + tree
+    # hierarchy; ``qual{year}.xml`` the ~80 subheadings. Supplementary Concept
+    # Records (``supp``) are deferred. ``mesh_year`` selects the annual edition.
+    mesh_xml_base: str = "https://nlmpubs.nlm.nih.gov/projects/mesh/MESH_FILES/xmlmesh/"
+    mesh_year: int = 2026
+    # Reliance on Science (Marx) — patent↔paper links, keyed by OpenAlex Work ID.
+    # **CC BY-NC 4.0**: internal non-commercial use only, NOT for redistribution;
+    # the license is carried forward in the lake_ops source registry. A pinned
+    # Zenodo record (v63, 2024 ed.) for reproducibility; `_pcs_oa.csv` = patent→
+    # paper citations, `_patent_paper_pairs.csv` = same-team matched pairs.
+    reliance_zenodo_record: str = "11461587"
+    reliance_files: list[str] = ["_pcs_oa.csv", "_patent_paper_pairs.csv"]
+
+    @property
+    def reliance_base_url(self) -> str:
+        """Zenodo file-download base for the pinned Reliance on Science record."""
+        return f"https://zenodo.org/records/{self.reliance_zenodo_record}/files"
 
     @property
     def scp_releases_api(self) -> str:

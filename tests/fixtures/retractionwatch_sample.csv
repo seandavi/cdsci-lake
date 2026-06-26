@@ -1,0 +1,4 @@
+Record ID,Title,Subject,Institution,Journal,Publisher,Country,Author,URLS,ArticleType,RetractionDate,RetractionDOI,RetractionPubMedID,OriginalPaperDate,OriginalPaperDOI,OriginalPaperPubMedID,RetractionNature,Reason,Paywalled,Notes
+100,"Test Title A","Biochemistry;Oncology;","Inst A;Inst B;",J Test,Pub X,"USA;China;","Doe, J;Roe, R;","http://a;http://b;",Research Article,3/20/2026 0:00,10.1/RET,111,1/2/2020 0:00,10.1/ABC,222,Retraction,"Plagiarism;Error in Data;",No,Some note
+101,Title B,,,J2,Pub Y,,,,Correction,6/15/2026 0:00,,0,,https://doi.org/10.2/XyZ,0,Correction,,Yes,
+badid,Bad,,,,,,,,,,,,,,,,,,

@@ -12,14 +12,21 @@ from __future__ import annotations
 
 import typer
 
+from ... import ops
 from ...config import get_settings
-from ...connect import lake_connect
+from ...connect import LAKE, lake_connect
+from ...log import configure
 from .ingest import ENTITIES, ingest_entity, ingest_works, part_urls
 
 app = typer.Typer(
     help="Load the OpenAlex snapshot (works + reference entities) into the lake.",
     add_completion=False,
 )
+
+
+@app.callback()
+def _main(log_level: str = typer.Option("INFO", "--log-level", help="loguru level.")) -> None:
+    configure(log_level)
 
 
 @app.command("parts")
@@ -56,12 +63,16 @@ def entities(
     s = get_settings()
     con = lake_connect(s)
     try:
-        for name in entity or list(ENTITIES):
-            n = ingest_entity(
-                name, schema=schema, version=version, mode=mode,
-                max_files=max_files, settings=s, con=con,
-            )
-            typer.echo(f"{name}: {n:,}")
+        with ops.run(con, source="openalex", target=f"{LAKE}.{schema}", version=version) as r:
+            total = 0
+            for name in entity or list(ENTITIES):
+                n = ingest_entity(
+                    name, schema=schema, version=version, mode=mode,
+                    max_files=max_files, settings=s, con=con,
+                )
+                total += n
+                typer.echo(f"{name}: {n:,}")
+            r.rows = total
     finally:
         con.close()
 

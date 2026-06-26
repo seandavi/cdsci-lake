@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import typer
 
+from ...log import configure
 from .ingest import ingest, resolve_latest
 
 app = typer.Typer(
     help="Ingest the monthly iCite bulk snapshot into lake.icite.metadata.",
     add_completion=False,
 )
+
+
+@app.callback()
+def _main(log_level: str = typer.Option("INFO", "--log-level", help="loguru level.")) -> None:
+    configure(log_level)
 
 
 @app.command("latest")

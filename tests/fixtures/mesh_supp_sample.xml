@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SupplementalRecordSet LanguageCode="eng">
+  <SupplementalRecord SCRClass="1">
+    <SupplementalRecordUI>C000002</SupplementalRecordUI>
+    <SupplementalRecordName><String>bevonium</String></SupplementalRecordName>
+    <HeadingMappedToList>
+      <HeadingMappedTo>
+        <DescriptorReferredTo>
+          <DescriptorUI>*D001561</DescriptorUI>
+          <DescriptorName><String>Benzilates</String></DescriptorName>
+        </DescriptorReferredTo>
+      </HeadingMappedTo>
+      <HeadingMappedTo>
+        <DescriptorReferredTo>
+          <DescriptorUI>D010879</DescriptorUI>
+          <DescriptorName><String>Piperidines</String></DescriptorName>
+        </DescriptorReferredTo>
+      </HeadingMappedTo>
+    </HeadingMappedToList>
+    <ConceptList>
+      <Concept PreferredConceptYN="Y">
+        <RegistryNumberList>
+          <RegistryNumber>34B0471E08</RegistryNumber>
+        </RegistryNumberList>
+        <TermList>
+          <Term ConceptPreferredTermYN="Y"><String>bevonium</String></Term>
+          <Term ConceptPreferredTermYN="N"><String>bevonium methyl sulfate</String></Term>
+        </TermList>
+      </Concept>
+    </ConceptList>
+  </SupplementalRecord>
+  <SupplementalRecord SCRClass="1">
+    <SupplementalRecordUI>C000005</SupplementalRecordUI>
+    <SupplementalRecordName><String>rofecoxib</String></SupplementalRecordName>
+    <HeadingMappedToList>
+      <HeadingMappedTo>
+        <DescriptorReferredTo>
+          <DescriptorUI>*D052246</DescriptorUI>
+          <DescriptorName><String>Cyclooxygenase 2 Inhibitors</String></DescriptorName>
+        </DescriptorReferredTo>
+      </HeadingMappedTo>
+    </HeadingMappedToList>
+    <ConceptList>
+      <Concept PreferredConceptYN="Y">
+        <RegistryNumberList>
+          <RegistryNumber>0</RegistryNumber>
+        </RegistryNumberList>
+        <TermList>
+          <Term ConceptPreferredTermYN="Y"><String>rofecoxib</String></Term>
+          <Term ConceptPreferredTermYN="N"><String>Vioxx</String></Term>
+        </TermList>
+      </Concept>
+    </ConceptList>
+  </SupplementalRecord>
+</SupplementalRecordSet>

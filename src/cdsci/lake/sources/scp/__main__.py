@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import typer
 
+from ...log import configure
 from .ingest import DOMAINS, ingest, resolve_latest
 
 app = typer.Typer(
     help="Ingest State Cancer Profiles (GitHub releases) into lake.scp.{incidence,mortality,risk,demographics}.",
     add_completion=False,
 )
+
+
+@app.callback()
+def _main(log_level: str = typer.Option("INFO", "--log-level", help="loguru level.")) -> None:
+    configure(log_level)
 
 
 @app.command("latest")

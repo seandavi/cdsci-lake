@@ -75,6 +75,25 @@ def test_icite_curate_limit(lake_settings: Settings):
         con.close()
 
 
+def test_icite_ingest_records_ops_run(lake_settings: Settings):
+    """End-to-end ingest(--file) goes through ops.run and records a success row."""
+    from cdsci.lake import ops
+
+    summary = icite.ingest(file=str(FIXTURES / "icite_sample.csv"), settings=lake_settings)
+    assert summary["status"] == "success" and summary["run_id"]
+    assert summary["changed"] is True
+    assert summary["rows"] == 3
+
+    con = lake_connect(lake_settings)
+    try:
+        last = ops.last_run(con, "icite")
+        assert last["status"] == "success"
+        assert last["target"] == summary["table"]
+        assert last["snapshot_after"] == summary["snapshot"]
+    finally:
+        con.close()
+
+
 def test_upsert_time_travel_semantics(lake_settings: Settings):
     """MERGE upsert: new rows insert, changed rows update, a no-op adds no snapshot."""
     con = lake_connect(lake_settings)
@@ -320,6 +339,37 @@ def test_pmc_curate(lake_settings: Settings, tmp_path):
         }
         assert con.execute("SELECT count(*) FROM lake.pmcx.documents").fetchone()[0] == 2
         assert con.execute("SELECT count(*) FROM lake.pmcx.passages").fetchone()[0] == 203
+    finally:
+        con.close()
+
+
+def test_pmc_ingest_attributes_snapshots(lake_settings: Settings, tmp_path: Path):
+    """PMC append: each write is a self-describing snapshot (ADR-0007) bound by run_id."""
+    import shutil
+
+    from cdsci.lake.sources import pmc
+
+    # stage into tmp so the bronze parquet lands there, not in the fixtures dir.
+    nd = tmp_path / "pmc_sample.ndjson"
+    shutil.copy(FIXTURES / "pmc_sample.ndjson", nd)
+    summary = pmc.ingest(
+        file=str(nd),
+        mode="append", passage_batches=2, snapshot="attr-test",
+        settings=lake_settings,
+    )
+    con = lake_connect(lake_settings, read_only=True)
+    try:
+        rows = con.execute(
+            "SELECT author, commit_message, commit_extra_info FROM lake.snapshots() "
+            "WHERE author IS NOT NULL ORDER BY snapshot_id"
+        ).fetchall()
+        # 1 documents write + 2 passage shards = 3 attributed snapshots.
+        ops = [json.loads(r[2])["op"] for r in rows]
+        assert ops == ["documents", "passages.shard1/2", "passages.shard2/2"]
+        # every snapshot self-attributes to this source and binds to the ops run.
+        assert all(r[0] == "cdsci:pmc" for r in rows)
+        assert all(json.loads(r[2])["run_id"] == summary["run_id"] for r in rows)
+        assert all(json.loads(r[2])["source"] == "pmc" for r in rows)
     finally:
         con.close()
 

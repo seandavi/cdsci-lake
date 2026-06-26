@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DescriptorRecordSet>
+  <DescriptorRecord DescriptorClass="1">
+    <DescriptorUI>D000001</DescriptorUI>
+    <DescriptorName><String>Calcimycin</String></DescriptorName>
+    <AllowableQualifiersList>
+      <AllowableQualifier>
+        <QualifierReferredTo>
+          <QualifierUI>Q000008</QualifierUI>
+          <QualifierName><String>administration &amp; dosage</String></QualifierName>
+        </QualifierReferredTo>
+      </AllowableQualifier>
+    </AllowableQualifiersList>
+    <TreeNumberList>
+      <TreeNumber>D03.633.100.221.173</TreeNumber>
+    </TreeNumberList>
+    <ConceptList>
+      <Concept PreferredConceptYN="Y">
+        <ScopeNote>An ionophorous, polyether antibiotic from Streptomyces chartreusensis.</ScopeNote>
+        <TermList>
+          <Term ConceptPreferredTermYN="Y"><String>Calcimycin</String></Term>
+          <Term ConceptPreferredTermYN="N"><String>A-23187</String></Term>
+        </TermList>
+      </Concept>
+    </ConceptList>
+  </DescriptorRecord>
+  <DescriptorRecord DescriptorClass="1">
+    <DescriptorUI>D009369</DescriptorUI>
+    <DescriptorName><String>Neoplasms</String></DescriptorName>
+    <AllowableQualifiersList>
+      <AllowableQualifier>
+        <QualifierReferredTo>
+          <QualifierUI>Q000235</QualifierUI>
+          <QualifierName><String>genetics</String></QualifierName>
+        </QualifierReferredTo>
+      </AllowableQualifier>
+    </AllowableQualifiersList>
+    <TreeNumberList>
+      <TreeNumber>C04</TreeNumber>
+      <TreeNumber>C04.557</TreeNumber>
+    </TreeNumberList>
+    <ConceptList>
+      <Concept PreferredConceptYN="Y">
+        <ScopeNote>New abnormal growth of tissue. Malignant neoplasms show degrees of anaplasia.</ScopeNote>
+        <TermList>
+          <Term ConceptPreferredTermYN="Y"><String>Neoplasms</String></Term>
+          <Term ConceptPreferredTermYN="N"><String>Tumors</String></Term>
+        </TermList>
+      </Concept>
+    </ConceptList>
+  </DescriptorRecord>
+</DescriptorRecordSet>
