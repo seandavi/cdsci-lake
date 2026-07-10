@@ -42,6 +42,30 @@ def test_connect_creates_tables_but_does_not_seed(lake_settings: Settings):
         con.close()
 
 
+def test_bootstrap_migrates_pre_writer_source_table(lake_settings: Settings):
+    """bootstrap adds+backfills `writer` on a pre-PR `source` table (ADR-0011 §1 review)."""
+    con = lake_connect(lake_settings)
+    try:
+        # Simulate the old schema: drop writer, seed a legacy row without it.
+        con.execute("ALTER TABLE ops.lake_ops.source DROP COLUMN writer")
+        con.execute(
+            "INSERT INTO ops.lake_ops.source (name, lake_schema, registered_at) "
+            "VALUES ('icite', 'icite', current_timestamp)"
+        )
+        ops.bootstrap(con)  # must ADD COLUMN IF NOT EXISTS + backfill
+
+        assert con.execute(
+            "SELECT writer FROM ops.lake_ops.source WHERE name = 'icite'"
+        ).fetchone()[0] == "cdsci"
+        # register_sources now works against the migrated table.
+        ops.register_sources(con, writer="cdsci", sources=ops.SOURCES)
+        assert con.execute(
+            "SELECT count(*) FROM ops.lake_ops.source"
+        ).fetchone()[0] == len(ops.SOURCES)
+    finally:
+        con.close()
+
+
 def test_register_sources_populates_writer_and_is_idempotent(lake_settings: Settings):
     """Explicit register_sources seeds the writer column; a re-register refreshes, not dupes."""
     con = lake_connect(lake_settings)
@@ -181,6 +205,46 @@ def test_run_foreign_producer_source(lake_settings: Settings):
         # "sra" isn't in SOURCES → no self-registration, so no cdsci rows leaked in.
         names = {n for (n,) in con.execute("SELECT name FROM ops.lake_ops.source").fetchall()}
         assert names == {"sra"}
+    finally:
+        con.close()
+
+
+def test_extra_cannot_override_canonical_keys(lake_settings: Settings):
+    """A colliding `extra` key can't clobber a canonical key; other extras still flow."""
+    con = lake_connect(lake_settings)
+    try:
+        src = "SELECT * FROM (VALUES (1,'a')) v(id,val)"
+        with ops.run(
+            con, source="icite", target="lake.main.t4", version="v1",
+            extra={"writer": "nope", "prefect_run_id": "x"},
+        ) as r:
+            r.rows = upsert(con, "lake.main.t4", src, key="id")
+        (extra,) = con.execute(
+            "SELECT commit_extra_info FROM lake.snapshots() WHERE snapshot_id = ?",
+            [r.snapshot_after],
+        ).fetchone()
+        meta = json.loads(extra)
+        assert meta["writer"] == "cdsci"  # canonical wins over extra's "nope"
+        assert meta["prefect_run_id"] == "x"  # non-colliding extra still flows
+    finally:
+        con.close()
+
+
+def test_writer_for_raises_on_ambiguous_registration(lake_settings: Settings):
+    """One name under two writers → run() fails loud rather than picking nondeterministically."""
+    con = lake_connect(lake_settings)
+    try:
+        ops.register_sources(
+            con, writer="cdsci",
+            sources=(ops.Source("shared", "a", "d", "daily", "x", "y"),),
+        )
+        ops.register_sources(
+            con, writer="omicidx",
+            sources=(ops.Source("shared", "b", "d", "daily", "x", "y"),),
+        )
+        with pytest.raises(ValueError, match="multiple writers"):
+            with ops.run(con, source="shared", target="lake.x.y"):
+                pass
     finally:
         con.close()
 

@@ -105,7 +105,9 @@ def lake_connect(
     # persistent `pg_main` secret in the default `~/.duckdb/stored_secrets` causing
     # ATTACH failures: "Ambiguity detected for secret name 'pg_main'" (temp +
     # persistent) and "Unknown secret storage found: 'local_file'".
-    secret_dir = os.path.join(tempfile.gettempdir(), "cdsci-lake-duckdb-secrets")
+    secret_dir = os.path.join(
+        tempfile.gettempdir(), f"cdsci-lake-duckdb-secrets-{os.getuid()}"
+    )
     os.makedirs(secret_dir, exist_ok=True)
     con = duckdb.connect(config={"secret_directory": secret_dir})
     con.execute("INSTALL httpfs; LOAD httpfs;")

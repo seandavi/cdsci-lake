@@ -124,6 +124,11 @@ def bootstrap(con: duckdb.DuckDBPyConnection) -> None:
             writer TEXT, registered_at TIMESTAMPTZ
         );"""
     )
+    # Migrate a pre-PR `source` table (created before the writer column, so the
+    # CREATE IF NOT EXISTS above is a no-op on it) — else register_sources INSERTs
+    # into a missing column and crashes on the first real run (ADR-0011 §4).
+    con.execute(f"ALTER TABLE {_t('source')} ADD COLUMN IF NOT EXISTS writer TEXT;")
+    con.execute(f"UPDATE {_t('source')} SET writer = 'cdsci' WHERE writer IS NULL;")
     con.execute(
         f"""CREATE TABLE IF NOT EXISTS {_t("run")} (
             run_id TEXT, source TEXT, target TEXT, version TEXT, status TEXT,
@@ -239,13 +244,13 @@ class Run:
                 self._txn_depth -= 1
             return
 
-        info: dict[str, Any] = {
+        canonical = {
             "writer": self.writer, "source": self.source, "target": self.target,
             "version": self.version, "run_id": self.run_id, "op": op,
         }
-        if self.extra:  # per-producer keys (e.g. omicidx's prefect_run_id)
-            info.update(self.extra)
-        extra = json.dumps(info)
+        # Per-producer keys (e.g. omicidx's prefect_run_id) merge in, but the
+        # canonical keys are authoritative — a colliding extra key can't override.
+        extra = json.dumps({**(self.extra or {}), **canonical})
         self.con.execute("BEGIN;")
         self.con.execute(
             f"CALL {LAKE}.set_commit_message(?, ?, extra_info => ?);",
@@ -285,7 +290,8 @@ def _self_register(con: duckdb.DuckDBPyConnection, source: str) -> None:
     if src is None:
         return
     exists = con.execute(
-        f"SELECT 1 FROM {_t('source')} WHERE name = ? LIMIT 1", [source]
+        f"SELECT 1 FROM {_t('source')} WHERE name = ? AND writer = ? LIMIT 1",
+        [source, src.writer],
     ).fetchone()
     if exists is None:
         register_sources(con, writer=src.writer, sources=(src,))
@@ -299,11 +305,19 @@ def _writer_for(con: duckdb.DuckDBPyConnection, source: str) -> str:
     seeds) falls back to its own name with a warning — attribution degrades to
     ``<source>:<source>`` but never crashes a load.
     """
-    row = con.execute(
-        f"SELECT writer FROM {_t('source')} WHERE name = ? LIMIT 1", [source]
-    ).fetchone()
-    if row and row[0]:
-        return row[0]
+    writers = [
+        w for (w,) in con.execute(
+            f"SELECT DISTINCT writer FROM {_t('source')} WHERE name = ?", [source]
+        ).fetchall() if w
+    ]
+    if len(writers) == 1:
+        return writers[0]
+    if len(writers) > 1:
+        raise ValueError(
+            f"source {source!r} is registered under multiple writers "
+            f"{sorted(writers)}; attribution is ambiguous — a producer sharing a "
+            "source name must register/disambiguate explicitly"
+        )
     logger.warning(
         "source {!r} not registered in lake_ops.source; defaulting writer to the "
         "source name (call ops.register_sources at your load entrypoint)", source,

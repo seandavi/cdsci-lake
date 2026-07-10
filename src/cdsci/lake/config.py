@@ -10,6 +10,7 @@ and adds lake- and source-specific settings. This module has **no dependency on
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -65,7 +66,7 @@ class Settings(BaseSettings):
     # Postgres password from Google Secret Manager (this repo's gcloud context);
     # "env" reads them from the env-backed fields below (omicidx's Prefect workers,
     # which have no gcloud). Two real backends = a real seam.
-    cred_source: str = "gsm"
+    cred_source: Literal["gsm", "env"] = "gsm"
     # Env-backed credentials (used only when cred_source="env"); GSM path ignores
     # these and reads the *_secret names below instead.
     r2_account_id: str | None = None
