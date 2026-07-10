@@ -242,9 +242,10 @@ def test_writer_for_raises_on_ambiguous_registration(lake_settings: Settings):
             con, writer="omicidx",
             sources=(ops.Source("shared", "b", "d", "daily", "x", "y"),),
         )
-        with pytest.raises(ValueError, match="multiple writers"):
-            with ops.run(con, source="shared", target="lake.x.y"):
-                pass
+        with pytest.raises(ValueError, match="multiple writers"), ops.run(
+            con, source="shared", target="lake.x.y"
+        ):
+            pass
     finally:
         con.close()
 
