@@ -1,27 +1,32 @@
 [project]
 name = "cdsci-lake"
-version = "0.1.0"
+version = "0.2.1"
 description = "Shared DuckLake platform: read client + bulk source ingestors for the cdsci research-data lake"
 readme = "README.md"
 authors = [{ name = "Sean Davis", email = "seandavi@gmail.com" }]
-requires-python = ">=3.13"
-# Base install = the READ CLIENT. Consumers attach the lake and query; that's all
-# they need. Credentials come from Google Secret Manager via the `gcloud` CLI.
+# 3.11 is the floor a read-client consumer must satisfy (omicidx runs 3.12); the
+# code uses no 3.12+/3.13+ syntax. Keeping this low lets peer producers whose
+# workspaces declare >=3.11 resolve the read client.
+requires-python = ">=3.11"
+# Base install = the READ CLIENT (+ the write path: lake_connect/upsert/ops).
+# Consumers attach the lake and query; that's all they need. Credentials come from
+# Google Secret Manager via the `gcloud` CLI. NO CLI deps here — `typer` is used
+# only by the ingest/maintenance CLIs and lives in `[ingest]`, so a consumer (e.g.
+# omicidx, whose prefect pins typer<0.25) isn't forced onto a conflicting typer.
 dependencies = [
     "duckdb>=1.5.3",
     "httpx>=0.28.1",
     "loguru>=0.7.3",
     "pydantic-settings>=2.14.1",
     "tenacity>=9.1.4",
-    "typer>=0.26.7",
 ]
 
 [project.optional-dependencies]
-# Platform-side only: the bulk source ingestors and their HTTP/CLI deps.
+# Platform-side only: the bulk source ingestors + the ingest/maintenance CLIs.
 ingest = [
     "httpx>=0.28.1",
     "tenacity>=9.1.4",
-    "typer>=0.15.0",
+    "typer>=0.26.7",
     "pytz>=2025.1",  # DuckDB needs it to return tz-timestamps (maintenance result sets)
 ]
 
