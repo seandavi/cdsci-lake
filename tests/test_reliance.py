@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from cdsci.lake import Settings, lake_connect, table_exists
+from cdsci.lake import Settings, lake_connect, ops, table_exists
 from cdsci.lake.sources import reliance
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -26,6 +26,9 @@ def lake_settings(tmp_path: Path) -> Settings:
 def test_reliance_citations_and_pairs(lake_settings: Settings):
     con = lake_connect(lake_settings)
     try:
+        # curate() is called directly here (not via ops.run), so register the
+        # source explicitly — the substrate no longer seeds on connect (ADR-0011 §4).
+        ops.register_sources(con, writer="cdsci", sources=ops.SOURCES)
         # citations: 5 fixture rows → 3 distinct keys (one dup collapses, blank drops).
         n = reliance.curate(con, "citations", FIXTURES / "reliance_pcs_oa.csv", "test")
         assert n == 3
