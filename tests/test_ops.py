@@ -20,13 +20,11 @@ def lake_settings(tmp_path: Path) -> Settings:
     return Settings(storage_base_uri=f"file://{tmp_path}")
 
 
-def test_bootstrap_seeds_registry(lake_settings: Settings):
-    """A write-mode connect attaches ops, creates tables, and seeds the registry."""
+def test_connect_creates_tables_but_does_not_seed(lake_settings: Settings):
+    """bootstrap is schema-only; the substrate never force-seeds on connect (ADR-0011 §4)."""
     con = lake_connect(lake_settings)
     try:
-        names = {r[0] for r in con.execute("SELECT name FROM ops.lake_ops.source").fetchall()}
-        assert names == {s.name for s in ops.SOURCES}
-        # All four ledger tables exist.
+        # All four ledger tables exist...
         tables = {
             r[0]
             for r in con.execute(
@@ -35,17 +33,28 @@ def test_bootstrap_seeds_registry(lake_settings: Settings):
             ).fetchall()
         }
         assert {"source", "run", "watermark", "dataset_contract"} <= tables
+        # ...but the registry is empty — no producer's sources are force-registered.
+        assert con.execute("SELECT count(*) FROM ops.lake_ops.source").fetchone()[0] == 0
+
+        ops.bootstrap(con)  # a second bootstrap is still schema-only — must not seed
+        assert con.execute("SELECT count(*) FROM ops.lake_ops.source").fetchone()[0] == 0
     finally:
         con.close()
 
 
-def test_bootstrap_idempotent_no_duplicate_sources(lake_settings: Settings):
-    """Re-connecting refreshes (not duplicates) the registry rows."""
-    lake_connect(lake_settings).close()
+def test_register_sources_populates_writer_and_is_idempotent(lake_settings: Settings):
+    """Explicit register_sources seeds the writer column; a re-register refreshes, not dupes."""
     con = lake_connect(lake_settings)
     try:
-        n = con.execute("SELECT count(*) FROM ops.lake_ops.source").fetchone()[0]
-        assert n == len(ops.SOURCES)
+        ops.register_sources(con, writer="cdsci", sources=ops.SOURCES)
+        rows = con.execute("SELECT name, writer FROM ops.lake_ops.source").fetchall()
+        assert {name for name, _ in rows} == {s.name for s in ops.SOURCES}
+        assert {writer for _, writer in rows} == {"cdsci"}
+
+        ops.register_sources(con, writer="cdsci", sources=ops.SOURCES)
+        assert con.execute(
+            "SELECT count(*) FROM ops.lake_ops.source"
+        ).fetchone()[0] == len(ops.SOURCES)
     finally:
         con.close()
 
@@ -67,9 +76,17 @@ def test_run_records_success_then_idempotent(lake_settings: Settings):
     """A real upsert → status 'success'; an identical re-run → 'idempotent'."""
     con = lake_connect(lake_settings)
     try:
+        # icite is NOT pre-registered (connect no longer seeds) — the run must
+        # self-register the built-in source so attribution is cdsci:icite.
+        assert con.execute(
+            "SELECT count(*) FROM ops.lake_ops.source WHERE name='icite'"
+        ).fetchone()[0] == 0
         src = "SELECT * FROM (VALUES (1,'a'),(2,'b')) v(id,val)"
         with ops.run(con, source="icite", target="lake.main.t", version="2026-05") as r:
             r.rows = upsert(con, "lake.main.t", src, key="id")
+        assert con.execute(
+            "SELECT writer FROM ops.lake_ops.source WHERE name='icite'"
+        ).fetchone()[0] == "cdsci"
         assert r.status == "success"
         assert r.changed is True
         assert r.summary() == {
@@ -116,6 +133,64 @@ def test_run_records_error_and_reraises(lake_settings: Settings):
         assert row["status"] == "error"
         assert "boom" in row["error"]
         assert row["finished_at"] is not None
+    finally:
+        con.close()
+
+
+def test_run_derives_writer_and_merges_extra(lake_settings: Settings):
+    """run() derives writer from the registry and merges extra= into commit_extra_info."""
+    con = lake_connect(lake_settings)
+    try:
+        src = "SELECT * FROM (VALUES (1,'a')) v(id,val)"
+        with ops.run(
+            con, source="icite", target="lake.main.t2", version="v1",
+            extra={"prefect_run_id": "abc-123"},
+        ) as r:
+            assert r.writer == "cdsci"  # self-registered built-in, then derived
+            r.rows = upsert(con, "lake.main.t2", src, key="id")
+
+        author, extra = con.execute(
+            "SELECT author, commit_extra_info FROM lake.snapshots() WHERE snapshot_id = ?",
+            [r.snapshot_after],
+        ).fetchone()
+        assert author == "cdsci:icite"
+        meta = json.loads(extra)
+        assert meta["writer"] == "cdsci"
+        # Per-producer key flows through on top of the canonical keys.
+        assert meta["prefect_run_id"] == "abc-123"
+    finally:
+        con.close()
+
+
+def test_run_foreign_producer_source(lake_settings: Settings):
+    """A foreign producer registers its own source; run() attributes it, touches no cdsci rows."""
+    con = lake_connect(lake_settings)
+    try:
+        ops.register_sources(
+            con, writer="omicidx",
+            sources=(ops.Source("sra", "omicidx", "SRA", "daily", "ncbi", "us-public-domain"),),
+        )
+        src = "SELECT * FROM (VALUES (1,'a')) v(id,val)"
+        with ops.run(con, source="sra", target="lake.omicidx.sra", version="v1") as r:
+            assert r.writer == "omicidx"
+            r.rows = upsert(con, "lake.omicidx.sra", src, key="id")
+        author = con.execute(
+            "SELECT author FROM lake.snapshots() WHERE snapshot_id = ?", [r.snapshot_after]
+        ).fetchone()[0]
+        assert author == "omicidx:sra"
+        # "sra" isn't in SOURCES → no self-registration, so no cdsci rows leaked in.
+        names = {n for (n,) in con.execute("SELECT name FROM ops.lake_ops.source").fetchall()}
+        assert names == {"sra"}
+    finally:
+        con.close()
+
+
+def test_run_unregistered_source_falls_back_to_source_name(lake_settings: Settings):
+    """A source neither in SOURCES nor registered → warns, writer defaults to its name."""
+    con = lake_connect(lake_settings)
+    try:
+        with ops.run(con, source="not_a_real_source", target="lake.x.y") as r:
+            assert r.writer == "not_a_real_source"
     finally:
         con.close()
 

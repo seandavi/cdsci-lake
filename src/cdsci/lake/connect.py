@@ -14,6 +14,7 @@ lock-in risk of a young format low.
 from __future__ import annotations
 
 import os
+import tempfile
 from contextlib import nullcontext
 from pathlib import Path
 from urllib.parse import urlparse
@@ -99,7 +100,14 @@ def lake_connect(
     never mutate the shared substrate).
     """
     s = settings or get_settings()
-    con = duckdb.connect()
+    # Isolate DuckDB's secret store to an app-owned dir (ADR-0011 §6). The flow only
+    # creates TEMPORARY secrets, so this stays empty — which sidesteps a stale
+    # persistent `pg_main` secret in the default `~/.duckdb/stored_secrets` causing
+    # ATTACH failures: "Ambiguity detected for secret name 'pg_main'" (temp +
+    # persistent) and "Unknown secret storage found: 'local_file'".
+    secret_dir = os.path.join(tempfile.gettempdir(), "cdsci-lake-duckdb-secrets")
+    os.makedirs(secret_dir, exist_ok=True)
+    con = duckdb.connect(config={"secret_directory": secret_dir})
     con.execute("INSTALL httpfs; LOAD httpfs;")
     con.execute("INSTALL ducklake; LOAD ducklake;")
     _apply_limits(con, s)
@@ -163,17 +171,34 @@ def _attach_postgres(con: duckdb.DuckDBPyConnection, s: Settings, *, read_only: 
     The data path is inherited from the catalog (not re-specified). Postgres auth
     goes through ``PGPASSWORD`` so the password never lands in the ATTACH string
     or DuckDB error text; the R2 credentials become a DuckDB ``r2`` secret.
+
+    Credentials come from GSM (default) or the env-backed settings when
+    ``cred_source == "env"`` (ADR-0011 §6 — omicidx's Prefect workers have no
+    gcloud). The GSM path is byte-for-byte unchanged.
     """
     con.execute("INSTALL postgres; LOAD postgres;")
+    if s.cred_source == "env":
+        r2_key, r2_secret, r2_account, pg_password = (
+            s.r2_access_key_id, s.r2_secret_access_key, s.r2_account_id, s.lake_pg_password,
+        )
+        missing = [
+            n for n, v in (
+                ("r2_access_key_id", r2_key), ("r2_secret_access_key", r2_secret),
+                ("r2_account_id", r2_account), ("lake_pg_password", pg_password),
+            ) if not v
+        ]
+        if missing:
+            raise ValueError(f"cred_source='env' but these settings are unset: {missing}")
+    else:
+        r2_key = get_secret(s.r2_access_key_secret, s.gsm_project)
+        r2_secret = get_secret(s.r2_secret_key_secret, s.gsm_project)
+        r2_account = get_secret(s.r2_account_id_secret, s.gsm_project)
+        pg_password = get_secret(s.lake_pg_password_secret, s.gsm_project)
     con.execute(
         "CREATE OR REPLACE SECRET r2_lake (TYPE r2, KEY_ID ?, SECRET ?, ACCOUNT_ID ?);",
-        [
-            get_secret(s.r2_access_key_secret, s.gsm_project),
-            get_secret(s.r2_secret_key_secret, s.gsm_project),
-            get_secret(s.r2_account_id_secret, s.gsm_project),
-        ],
+        [r2_key, r2_secret, r2_account],
     )
-    os.environ["PGPASSWORD"] = get_secret(s.lake_pg_password_secret, s.gsm_project)
+    os.environ["PGPASSWORD"] = pg_password
     opts = " (READ_ONLY)" if read_only else ""
     con.execute(
         f"ATTACH 'ducklake:postgres:dbname={s.lake_pg_dbname} host={s.lake_pg_host} "

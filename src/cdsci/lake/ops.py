@@ -70,6 +70,10 @@ class Source:
     distribution: str
     license: str
     watermark_strategy: str | None = None
+    # The producer that owns this source (ADR-0011 §4). The shared ledger is
+    # multi-producer, so each row records which writer registered it (`cdsci`,
+    # `omicidx`), making "show me all of <producer>'s sources/loads" one query.
+    writer: str = "cdsci"
 
 
 SOURCES: tuple[Source, ...] = (
@@ -104,17 +108,20 @@ SOURCES: tuple[Source, ...] = (
 
 
 def bootstrap(con: duckdb.DuckDBPyConnection) -> None:
-    """Create the ``lake_ops`` schema + tables (if absent) and refresh the registry.
+    """Create the ``lake_ops`` schema + tables (if absent). Schema only.
 
-    Idempotent and cheap: ``CREATE … IF NOT EXISTS`` plus a delete-then-insert of
-    :data:`SOURCES`. Assumes the ``ops`` database is already attached.
+    Idempotent and cheap: ``CREATE … IF NOT EXISTS``. Assumes the ``ops`` database
+    is already attached. Does **not** seed the source registry — each producer
+    registers its own sources via :func:`register_sources` at its load entrypoint
+    (ADR-0011 §4), so the shared ledger stays per-producer and the dependency arrow
+    stays correct (a producer's source list lives with the producer).
     """
     con.execute(f"CREATE SCHEMA IF NOT EXISTS {OPS}.{OPS_SCHEMA};")
     con.execute(
         f"""CREATE TABLE IF NOT EXISTS {_t("source")} (
             name TEXT, lake_schema TEXT, description TEXT, cadence TEXT,
             distribution TEXT, license TEXT, watermark_strategy TEXT,
-            registered_at TIMESTAMPTZ
+            writer TEXT, registered_at TIMESTAMPTZ
         );"""
     )
     con.execute(
@@ -135,20 +142,33 @@ def bootstrap(con: duckdb.DuckDBPyConnection) -> None:
             backing_table TEXT, status TEXT, published_at TIMESTAMPTZ
         );"""
     )
-    _seed_sources(con)
 
 
-def _seed_sources(con: duckdb.DuckDBPyConnection) -> None:
-    """Refresh the source registry to match :data:`SOURCES` (delete-then-insert)."""
-    for s in SOURCES:
-        con.execute(f"DELETE FROM {_t('source')} WHERE name = ?", [s.name])
+def register_sources(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    writer: str,
+    sources: tuple[Source, ...],
+) -> None:
+    """Register ``sources`` under producer ``writer`` (delete-then-insert; ADR-0011 §4).
+
+    Each producer calls this once at its load entrypoint with its own source list —
+    ``bootstrap`` no longer seeds, so the registry is per-producer. Idempotent and
+    self-healing: the delete-then-insert is scoped to ``(name, writer)`` so a
+    re-register refreshes a producer's rows without touching another producer's.
+    """
+    for s in sources:
+        con.execute(
+            f"DELETE FROM {_t('source')} WHERE name = ? AND writer = ?",
+            [s.name, writer],
+        )
         con.execute(
             f"INSERT INTO {_t('source')} "
             "(name, lake_schema, description, cadence, distribution, license, "
-            " watermark_strategy, registered_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, current_timestamp)",
+            " watermark_strategy, writer, registered_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)",
             [s.name, s.lake_schema, s.description, s.cadence, s.distribution,
-             s.license, s.watermark_strategy],
+             s.license, s.watermark_strategy, writer],
         )
 
 
@@ -165,9 +185,11 @@ class Run:
     target: str
     version: str | None
     snapshot_before: int | None
+    writer: str = "cdsci"  # producer id; derived from the registry in run()
     rows: int | None = None
     snapshot_after: int | None = None
     status: str | None = None
+    extra: dict | None = None  # per-producer commit_extra_info keys (ADR-0011 §5)
     _txn_depth: int = 0  # re-entrancy guard for nested attribute() blocks
 
     @property
@@ -192,8 +214,9 @@ class Run:
         """Wrap the enclosed write(s) in one **self-describing** DuckLake snapshot.
 
         Opens a transaction, stamps the snapshot it will produce with
-        ``author='cdsci:<source>'``, a ``commit_message``, and a JSON
-        ``commit_extra_info`` (``{writer, source, target, version, run_id, op}``)
+        ``author='<writer>:<source>'``, a ``commit_message``, and a JSON
+        ``commit_extra_info`` (canonical ``{writer, source, target, version,
+        run_id, op}`` plus any per-producer :attr:`extra` keys, ADR-0011 §5)
         via ``set_commit_message``, runs the block, and commits. So the catalog
         itself attributes the snapshot — no ledger join, no table-id resolution
         (ADR-0007). One snapshot per block; the block rolls back on error.
@@ -216,14 +239,17 @@ class Run:
                 self._txn_depth -= 1
             return
 
-        extra = json.dumps({
-            "writer": "cdsci", "source": self.source, "target": self.target,
+        info: dict[str, Any] = {
+            "writer": self.writer, "source": self.source, "target": self.target,
             "version": self.version, "run_id": self.run_id, "op": op,
-        })
+        }
+        if self.extra:  # per-producer keys (e.g. omicidx's prefect_run_id)
+            info.update(self.extra)
+        extra = json.dumps(info)
         self.con.execute("BEGIN;")
         self.con.execute(
             f"CALL {LAKE}.set_commit_message(?, ?, extra_info => ?);",
-            [f"cdsci:{self.source}", message or f"{self.source}: {op}", extra],
+            [f"{self.writer}:{self.source}", message or f"{self.source}: {op}", extra],
         )
         self._txn_depth = 1
         try:
@@ -242,6 +268,49 @@ def _max_snapshot(con: duckdb.DuckDBPyConnection) -> int | None:
     return con.execute(f"SELECT max(snapshot_id) FROM {LAKE}.snapshots()").fetchone()[0]
 
 
+_SOURCES_BY_NAME: dict[str, Source] = {s.name: s for s in SOURCES}
+
+
+def _self_register(con: duckdb.DuckDBPyConnection, source: str) -> None:
+    """Lazily register a **built-in** ``source`` on first run, if not already present.
+
+    Gives all cdsci ingestors correct attribution with no per-ingestor edits and
+    without the substrate force-seeding on connect: a source name in the built-in
+    :data:`SOURCES` self-registers (under its own ``writer``) the first time it
+    runs. A foreign producer's source (not in ``SOURCES``) is left untouched — it
+    registers itself explicitly via :func:`register_sources`. The write lands in the
+    ``ops`` attachment (never a lake snapshot), like the run-row INSERT beside it.
+    """
+    src = _SOURCES_BY_NAME.get(source)
+    if src is None:
+        return
+    exists = con.execute(
+        f"SELECT 1 FROM {_t('source')} WHERE name = ? LIMIT 1", [source]
+    ).fetchone()
+    if exists is None:
+        register_sources(con, writer=src.writer, sources=(src,))
+
+
+def _writer_for(con: duckdb.DuckDBPyConnection, source: str) -> str:
+    """The producer that registered ``source`` (ADR-0011 §5); the source name if unregistered.
+
+    ``run`` derives ``writer`` from the registry rather than taking it as a param, so
+    call sites stay stable. A source not yet registered (``bootstrap`` no longer
+    seeds) falls back to its own name with a warning — attribution degrades to
+    ``<source>:<source>`` but never crashes a load.
+    """
+    row = con.execute(
+        f"SELECT writer FROM {_t('source')} WHERE name = ? LIMIT 1", [source]
+    ).fetchone()
+    if row and row[0]:
+        return row[0]
+    logger.warning(
+        "source {!r} not registered in lake_ops.source; defaulting writer to the "
+        "source name (call ops.register_sources at your load entrypoint)", source,
+    )
+    return source
+
+
 @contextmanager
 def run(
     con: duckdb.DuckDBPyConnection,
@@ -250,6 +319,7 @@ def run(
     target: str,
     version: str | None = None,
     host: str | None = None,
+    extra: dict | None = None,
 ) -> Iterator[Run]:
     """Record one ``lake_ops.run`` row around a curate/upsert.
 
@@ -258,12 +328,18 @@ def run(
     ``snapshot_after`` and finalize status — ``error`` if the block raised, else
     ``idempotent`` when no snapshot was added, else ``success``.
 
+    ``writer`` is **derived** from the source registry (not a param, so existing
+    call sites don't change); ``extra`` is an optional per-producer dict merged into
+    the snapshot ``commit_extra_info`` on top of the canonical keys (ADR-0011 §5).
+
         with ops.run(con, source="icite", target=target, version=version) as r:
             r.rows = curate(con, paths, version, target=target, limit=limit)
         return r.summary()
     """
     rid = str(uuid.uuid4())
     host = host or socket.gethostname()
+    _self_register(con, source)  # built-in sources self-register on first run
+    writer = _writer_for(con, source)
     before = _max_snapshot(con)
     con.execute(
         f"INSERT INTO {_t('run')} "
@@ -276,7 +352,7 @@ def run(
         "start → {} (version={}, snapshot_before={}, run_id={})",
         target, version, before, rid,
     )
-    r = Run(con, rid, source, target, version, before)
+    r = Run(con, rid, source, target, version, before, writer=writer, extra=extra)
     token = _ACTIVE_RUN.set(r)
     try:
         try:

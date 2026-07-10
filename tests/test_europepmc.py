@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from cdsci.lake import Settings, lake_connect, table_exists
+from cdsci.lake import Settings, lake_connect, ops, table_exists
 from cdsci.lake.sources import europepmc
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -25,6 +25,9 @@ def lake_settings(tmp_path: Path) -> Settings:
 def test_europepmc_curate_one_tidy_table(lake_settings: Settings):
     con = lake_connect(lake_settings)
     try:
+        # curate() is called directly (not via ops.run), so register explicitly —
+        # the substrate no longer seeds on connect (ADR-0011 §4).
+        ops.register_sources(con, writer="cdsci", sources=ops.SOURCES)
         # 4 fixture rows, but the duplicate (MINT-1, PMC1) collapses → 3 distinct keys.
         n = europepmc.curate(con, "mint", FIXTURES / "europepmc_mint.csv", "test-2026-06")
         assert n == 3
@@ -48,7 +51,7 @@ def test_europepmc_curate_one_tidy_table(lake_settings: Settings):
             "SELECT count(*) FROM lake.europepmc.annotations"
         ).fetchone()[0] == 5  # 3 mint + 2 chebi
 
-        # The ops ledger registered europepmc on the write-mode connect.
+        # The ops ledger has europepmc registered (explicitly, above).
         n_src = con.execute(
             "SELECT count(*) FROM ops.lake_ops.source WHERE name = 'europepmc'"
         ).fetchone()[0]
