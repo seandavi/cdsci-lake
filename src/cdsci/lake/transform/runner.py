@@ -14,6 +14,7 @@ from .. import ops
 from ..connect import LAKE
 from ..log import logger
 from .graph import build_graph, topological_order
+from .lineage import model_lineage
 from .models import Model
 
 
@@ -43,7 +44,28 @@ def run_model(con: duckdb.DuckDBPyConnection, model: Model) -> int:
             con.execute(f"CREATE SCHEMA IF NOT EXISTS {LAKE}.{schema};")
             con.execute(f"CREATE OR REPLACE TABLE {target} AS ({model.sql});")
         r.rows = con.execute(f"SELECT count(*) FROM {target}").fetchone()[0]
+    _log_lineage(model)
     return r.rows
+
+
+def _log_lineage(model: Model) -> None:
+    """Log every best-effort lineage edge for ``model`` (ADR-0015 §2).
+
+    No ``lake_ops.lineage`` table exists yet (ADR-0014) to persist these into
+    — the log line *is* the record for now, so every edge is logged, not a
+    summary count. Lineage computation can't fail a run (see
+    :func:`cdsci.lake.transform.lineage.model_lineage`'s own try/except), so
+    this always runs after a successful write.
+    """
+    bound = logger.bind(ctx=f"transform:{model.target}")
+    edges = model_lineage(model)
+    for edge in edges:
+        bound.info(
+            "lineage: {}.{} <- {}.{}",
+            edge.target, edge.target_column, edge.source_table, edge.source_column,
+        )
+    if not edges:
+        bound.info("lineage: no resolvable edges")
 
 
 def run_all(con: duckdb.DuckDBPyConnection, models: dict[str, Model]) -> dict[str, int]:
