@@ -16,8 +16,8 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Sync dependencies (read client + ingest extra + dev tools)
-        run: uv sync --extra ingest
+      - name: Sync dependencies (all extras + dev tools)
+        run: uv sync --all-extras
 
       - name: Lint (ruff)
         run: uv run ruff check src/ tests/

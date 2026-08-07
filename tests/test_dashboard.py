@@ -1,6 +1,6 @@
 import os
 import sys
-import pytest
+
 from fastapi.testclient import TestClient
 
 # Ensure backend and src are in python path
