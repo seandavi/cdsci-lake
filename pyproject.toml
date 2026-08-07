@@ -33,6 +33,13 @@ dashboard = [
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0",
 ]
+# The transform + reverse-ETL layer (ADR-0015). sqlglot does dependency-graph +
+# lineage parsing only — DuckDB (base) stays the sole execution engine; typer is
+# the CLI, same floor as [ingest].
+transform = [
+    "sqlglot>=27",
+    "typer>=0.26.7",
+]
 
 [build-system]
 requires = ["uv_build>=0.8.11,<0.9.0"]
