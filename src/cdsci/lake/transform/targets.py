@@ -11,7 +11,6 @@ have yet (tracked separately, not in scope for ADR-0015's first pass).
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -39,7 +38,11 @@ class Target:
       source table's own name).
     * ``lake_table`` — ``{}``; a no-op, the model's own write already *is* the
       publish (named for symmetry — a model can list it as a target explicitly).
-    * ``iceberg`` — ``{"endpoint", "token_env", "catalog", "namespace", "table"}``.
+    * ``iceberg`` — ``{"endpoint", "token", "catalog", "namespace", "table"}``.
+      ``token`` is the already-resolved secret — resolving it from env/GSM is
+      the caller's job (matching ``Settings``' role elsewhere in this repo),
+      not this module's; keeps ``_publish_iceberg`` testable without mutating
+      process environment.
     """
 
     type: Literal["parquet", "duckdb", "lake_table", "iceberg"]
@@ -115,8 +118,9 @@ def _publish_iceberg(con: duckdb.DuckDBPyConnection, source_table: str, config: 
     live in production for ``bioc-on-ice`` (ADR-0015).
     """
     con.execute("INSTALL iceberg; LOAD iceberg;")
-    token = os.environ[config["token_env"]]
-    con.execute("CREATE OR REPLACE SECRET _publish_ice (TYPE ICEBERG, TOKEN ?);", [token])
+    con.execute(
+        "CREATE OR REPLACE SECRET _publish_ice (TYPE ICEBERG, TOKEN ?);", [config["token"]]
+    )
     con.execute(
         f"ATTACH '{config['catalog']}' AS _publish_ice_cat "
         f"(TYPE ICEBERG, ENDPOINT '{config['endpoint']}', SECRET _publish_ice);"

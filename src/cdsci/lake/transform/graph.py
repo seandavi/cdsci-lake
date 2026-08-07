@@ -17,7 +17,7 @@ from sqlglot import exp
 from .models import Model
 
 
-def model_dependencies(model: Model, known_targets: set[str]) -> set[str]:
+def _model_dependencies(model: Model, known_targets: set[str]) -> set[str]:
     """The subset of ``model``'s table references that are other known models.
 
     A reference's trailing two dotted parts (``schema.table``, ignoring any
@@ -38,7 +38,7 @@ def model_dependencies(model: Model, known_targets: set[str]) -> set[str]:
 def build_graph(models: dict[str, Model]) -> dict[str, set[str]]:
     """``{target: {targets it depends on}}`` for every model in ``models``."""
     known = set(models)
-    return {target: model_dependencies(m, known) for target, m in models.items()}
+    return {target: _model_dependencies(m, known) for target, m in models.items()}
 
 
 def topological_order(graph: dict[str, set[str]]) -> list[str]:
