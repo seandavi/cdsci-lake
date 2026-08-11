@@ -1,10 +1,11 @@
 """Offline tests for the UniProt ID-mapping source.
 
-Curate the tab-delimited, headerless idmapping_selected fixture into the tidy
+Curate the tab-delimited, headerless idmapping_selected fixture (the whole-of-
+UniProt shape — not organism-scoped, issue #32 follow-up) into the tidy
 ``uniprot.idmapping`` table: multi-valued GeneID explodes to one row per
 (accession, gene_id) pair, an accession with no GeneID drops, unused columns
-land raw, MERGE idempotency, and the CC BY 4.0 license carries forward in
-lake_ops. No network.
+land raw, MERGE idempotency, batch sharding, append mode, and the CC BY 4.0
+license carries forward in lake_ops. No network.
 """
 
 from __future__ import annotations
@@ -33,17 +34,15 @@ def test_uniprot_curate(lake_settings: Settings):
 
         # 3 fixture rows: P04637 (1 GeneID), P01308 (2 GeneIDs, explodes to 2
         # rows), Q9UNQ0 (no GeneID, drops entirely) -> 3 pairs.
-        n = uniprot.curate(
-            con, FIXTURES / "uniprot_idmapping_sample.tab", "HUMAN_9606", "test-2026-08-11"
-        )
+        n = uniprot.curate(con, FIXTURES / "uniprot_idmapping_sample.tab", "test-2026-08-11")
         assert n == 3
         assert table_exists(con, "idmapping")
 
         row = con.execute("""
-            SELECT gene_id, uniprotkb_id, refseq, ncbi_taxon, organism
+            SELECT gene_id, uniprotkb_id, refseq, ncbi_taxon
             FROM lake.uniprot.idmapping WHERE accession = 'P04637'
         """).fetchone()
-        assert row == (7157, "P53_HUMAN", "NM_000546.6", "9606", "HUMAN_9606")
+        assert row == (7157, "P53_HUMAN", "NM_000546.6", "9606")
 
         # Many-to-many: one accession, two exploded (accession, gene_id) rows.
         gene_ids = {
@@ -65,11 +64,36 @@ def test_uniprot_curate(lake_settings: Settings):
 
         # Idempotent re-run adds no snapshot.
         before = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
-        uniprot.curate(
-            con, FIXTURES / "uniprot_idmapping_sample.tab", "HUMAN_9606", "test-2026-08-11"
-        )
+        uniprot.curate(con, FIXTURES / "uniprot_idmapping_sample.tab", "test-2026-08-11")
         after = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
         assert before == after
+    finally:
+        con.close()
+
+
+def test_uniprot_curate_batched(lake_settings: Settings):
+    """``batch=(i, n)`` shards by ``hash(accession)`` — every shard together == unsharded."""
+    con = lake_connect(lake_settings)
+    try:
+        ops.register_sources(con, writer="cdsci", sources=ops.SOURCES)
+        path = FIXTURES / "uniprot_idmapping_sample.tab"
+        n_shards = 4
+        for i in range(n_shards):
+            uniprot.curate(con, path, "test-2026-08-11", batch=(i, n_shards))
+        assert con.execute("SELECT count(*) FROM lake.uniprot.idmapping").fetchone()[0] == 3
+    finally:
+        con.close()
+
+
+def test_uniprot_curate_append_mode(lake_settings: Settings):
+    """``mode='append'`` skips the MERGE and just INSERTs — used for the disjoint bulk load."""
+    con = lake_connect(lake_settings)
+    try:
+        ops.register_sources(con, writer="cdsci", sources=ops.SOURCES)
+        path = FIXTURES / "uniprot_idmapping_sample.tab"
+        n = uniprot.curate(con, path, "test-2026-08-11", mode="append")
+        assert n == 3
+        assert con.execute("SELECT count(*) FROM lake.uniprot.idmapping").fetchone()[0] == 3
     finally:
         con.close()
 
@@ -77,11 +101,10 @@ def test_uniprot_curate(lake_settings: Settings):
 def test_uniprot_ingest_end_to_end(lake_settings: Settings):
     """``ingest(file=...)`` self-connects, brackets in ops.run, returns a summary."""
     summary = uniprot.ingest(
-        organisms=["HUMAN_9606"],
         file=str(FIXTURES / "uniprot_idmapping_sample.tab"),
         version="test-2026-08-11",
+        batches=1,
         settings=lake_settings,
     )
     assert summary["rows"] == 3
     assert summary["status"] == "success"
-    assert summary["counts"] == {"HUMAN_9606": 3}
