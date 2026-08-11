@@ -116,7 +116,7 @@ SOURCES: tuple[Source, ...] = (
            "annual", "zenodo", "cc-by-nc-4.0"),
     Source("bioregistry", "ref", "Bioregistry: canonical identifier prefixes, patterns, synonyms",
            "weekly", "github-tsv", "cc0"),
-    Source("uniprot", "uniprot", "UniProt organism-scoped accession<->EntrezGene ID mapping",
+    Source("uniprot", "uniprot", "UniProt accession<->EntrezGene ID mapping (whole dump)",
            "~8-weekly", "uniprot-ftp", "cc-by-4.0"),
     Source("ontology", "ontology", "OBO semantic-sql builds: terms/synonyms/xrefs/edges",
            "on-release", "semsql-s3", "mixed"),
