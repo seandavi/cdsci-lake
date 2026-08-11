@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import typer
 
-from ..connect import lake_connect
+from ..config import get_settings
+from ..connect import LAKE, lake_connect
 from ..log import configure
+from ..secrets import get_secret
 from . import runner
 from .graph import build_graph, topological_order
 from .models import load_models
+from .targets import Target, publish
 
 app = typer.Typer(
     help="SQL-file transform + reverse-ETL models: run, inspect the dependency graph.",
@@ -80,6 +83,39 @@ def run_all_cmd(ctx: typer.Context) -> None:
         con.close()
     for target, rows in results.items():
         typer.echo(f"  {target}: {rows} rows")
+
+
+@app.command("publish")
+def publish_cmd(
+    target: str = typer.Argument(..., help="Lake table to publish, e.g. bugsigdb.signature_taxon."),
+    namespace: str = typer.Option(..., "--namespace", help="icegate namespace, e.g. annotation."),
+    table: str | None = typer.Option(None, "--table", help="Iceberg table name (default: target's own)."),
+) -> None:
+    """Publish a lake table to bioc-on-ice's Iceberg catalog through icegate.
+
+    The one reverse-ETL target this module has wired so far (cdsci-lake#31) —
+    icegate is already deployed for bioc-on-ice, this is config, not new infra.
+    ``namespace`` must be one icegate.yaml already grants the publish key
+    (bioc-on-ice repo) — there is no safe default to pick for you.
+    """
+    s = get_settings()
+    schema, table_name = target.split(".", 1)
+    icegate_target = Target(
+        type="iceberg",
+        config={
+            "endpoint": s.bioconice_icegate_endpoint,
+            "catalog": s.bioconice_icegate_catalog,
+            "token": get_secret(s.bioconice_icegate_token_secret, s.gsm_project),
+            "namespace": namespace,
+            "table": table or table_name,
+        },
+    )
+    con = lake_connect()
+    try:
+        publish(con, f"{LAKE}.{target}", icegate_target)
+    finally:
+        con.close()
+    typer.echo(f"  {target} -> icegate:{namespace}.{table or table_name}")
 
 
 if __name__ == "__main__":
