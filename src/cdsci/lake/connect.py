@@ -84,7 +84,10 @@ def raw_dir(source: str, settings: Settings | None = None) -> Path:
 
 
 def lake_connect(
-    settings: Settings | None = None, *, read_only: bool = False
+    settings: Settings | None = None,
+    *,
+    read_only: bool = False,
+    with_ops: bool = False,
 ) -> duckdb.DuckDBPyConnection:
     """Open an in-memory DuckDB that ``ATTACH``es the lake as ``lake``.
 
@@ -98,6 +101,12 @@ def lake_connect(
     ``httpfs`` + ``ducklake`` are always loaded; ``read_only=True`` attaches the
     lake read-only — the right mode for serving (a dashboard/API/project must
     never mutate the shared substrate).
+
+    The operational ledger (``ops``) is a writer concern and is attached
+    automatically on the write path. A read-only *ops consumer* — the ops
+    dashboard being the one case — passes ``with_ops=True`` to also attach the
+    ledger (read via :func:`cdsci.lake.ops.list_runs` etc.); the lake itself
+    stays read-only.
     """
     s = settings or get_settings()
     # Isolate DuckDB's secret store to an app-owned dir (ADR-0011 §6). The flow only
@@ -121,9 +130,9 @@ def lake_connect(
     else:
         raise ValueError(f"Unknown lake_backend: {s.lake_backend!r}")
 
-    # The operational ledger is a writer concern (ADR-0006): attach it only when
-    # the lake is writable, never for read-only consumers.
-    if not read_only:
+    # The operational ledger is a writer concern (ADR-0006): attach it on the
+    # write path, or when a read-only ops consumer explicitly opts in (with_ops).
+    if not read_only or with_ops:
         _attach_ops(con, s)
     return con
 
@@ -324,4 +333,19 @@ def snapshots(con: duckdb.DuckDBPyConnection) -> list[tuple]:
     return con.execute(
         f"SELECT snapshot_id, snapshot_time::VARCHAR AS snapshot_time, schema_version "
         f"FROM {LAKE}.snapshots() ORDER BY snapshot_id"
+    ).fetchall()
+
+
+def snapshot_log(con: duckdb.DuckDBPyConnection, limit: int = 50) -> list[tuple]:
+    """Recent snapshots with attribution — the read surface for an ops dashboard.
+
+    Rows: ``(snapshot_id, snapshot_time, author, commit_message, commit_extra_info,
+    changes)``, newest first. Richer than :func:`snapshots` (which is the bare
+    version log) because a dashboard resolves the writer/run behind each commit.
+    """
+    return con.execute(
+        f"SELECT snapshot_id, snapshot_time::VARCHAR, author, commit_message, "
+        f"commit_extra_info, changes FROM {LAKE}.snapshots() "
+        f"ORDER BY snapshot_id DESC LIMIT ?",
+        [limit],
     ).fetchall()

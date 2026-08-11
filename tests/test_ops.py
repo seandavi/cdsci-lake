@@ -282,3 +282,36 @@ def test_watermark_roundtrip(lake_settings: Settings):
         assert ops.get_watermark(con, "ctgov", "page_token") == {"token": "abc", "page": 7}
     finally:
         con.close()
+
+
+def test_dashboard_read_surface(lake_settings: Settings):
+    """The public read API a dashboard uses: list_sources/list_runs/get_run,
+    and a read-only consumer opting into ops via with_ops=True."""
+    con = lake_connect(lake_settings)
+    try:
+        ops.register_sources(con, writer="cdsci", sources=ops.SOURCES)
+        src = "SELECT * FROM (VALUES (1,'a'),(2,'b')) v(id,val)"
+        with ops.run(con, source="icite", target="lake.main.t", version="2026-05") as r:
+            r.rows = upsert(con, "lake.main.t", src, key="id")
+    finally:
+        con.close()
+
+    # Read-only consumer: lake is read-only but ops is attached for reads.
+    con = lake_connect(lake_settings, read_only=True, with_ops=True)
+    try:
+        attached = {row[0] for row in con.execute(
+            "SELECT database_name FROM duckdb_databases()").fetchall()}
+        assert {"lake", "ops"} <= attached
+
+        sources = ops.list_sources(con)
+        assert {s["name"] for s in sources} == {s.name for s in ops.SOURCES}
+        assert all(s["writer"] == "cdsci" for s in sources)
+
+        runs = ops.list_runs(con, limit=10)
+        assert len(runs) == 1
+        assert runs[0]["status"] == "success" and runs[0]["run_id"] == r.run_id
+
+        assert ops.get_run(con, r.run_id)["target"] == "lake.main.t"
+        assert ops.get_run(con, "no-such-run") is None
+    finally:
+        con.close()
