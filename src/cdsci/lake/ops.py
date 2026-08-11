@@ -97,10 +97,14 @@ SOURCES: tuple[Source, ...] = (
            "annual", "nlm-xml", "us-public-domain"),
     Source("retractionwatch", "retractionwatch", "Retraction Watch retraction/correction notices",
            "weekday-daily", "crossref-gitlab-csv", "cc0", watermark_strategy="full"),
+    Source("bugsigdb", "bugsigdb", "BugSigDB curated microbial signatures (per-study taxon "
+           "contrasts)", "on-release", "github-release", "cc-by-4.0"),
     # CC BY-NC 4.0: internal non-commercial use only, do NOT redistribute. The
     # license string is the machine-readable carry-forward for consumers.
     Source("reliance", "reliance", "Reliance on Science (Marx): patent↔paper links [NC]",
            "annual", "zenodo", "cc-by-nc-4.0"),
+    Source("bioregistry", "ref", "Bioregistry: canonical identifier prefixes, patterns, synonyms",
+           "weekly", "github-tsv", "cc0"),
 )
 
 
@@ -273,6 +277,84 @@ def _max_snapshot(con: duckdb.DuckDBPyConnection) -> int | None:
     return con.execute(f"SELECT max(snapshot_id) FROM {LAKE}.snapshots()").fetchone()[0]
 
 
+def _is_view(con: duckdb.DuckDBPyConnection, catalog: str, schema: str, name: str) -> bool:
+    """True if ``name`` is a view, not a table -- ``duckdb_views()``/``duckdb_tables()``
+    are disjoint catalogs, and ``COMMENT ON`` needs the right keyword for each
+    (DuckDB rejects ``COMMENT ON TABLE`` for a view and vice versa)."""
+    return (
+        con.execute(
+            "SELECT 1 FROM duckdb_views() "
+            "WHERE database_name = ? AND schema_name = ? AND view_name = ?",
+            [catalog, schema, name],
+        ).fetchone()
+        is not None
+    )
+
+
+def _escape(literal: str) -> str:
+    # COMMENT ON doesn't accept a bound parameter for the literal (verified:
+    # DuckDB's parser rejects `IS ?`) -- manually escape, same as csv_source().
+    return literal.replace("'", "''")
+
+
+def _ensure_table_comment(con: duckdb.DuckDBPyConnection, target: str, comment: str) -> None:
+    """``COMMENT ON TABLE``/``COMMENT ON VIEW`` (auto-detected), only when it would
+    actually change the stored comment.
+
+    ``COMMENT ON`` writes a DuckLake snapshot **unconditionally**, even when the
+    text is identical to what's already there (verified 2026-08-10) -- calling
+    it on every run would silently break ADR-0003's "an unchanged re-run adds no
+    snapshot" guarantee for every source, not just this one call site. Read the
+    current comment first; write only on first-set or an actual change (e.g. the
+    registered ``Source.description``/``license`` was edited).
+    """
+    catalog, schema, table = target.split(".", 2)
+    view = _is_view(con, catalog, schema, table)
+    entries = "duckdb_views()" if view else "duckdb_tables()"
+    name_col = "view_name" if view else "table_name"
+    current = con.execute(
+        f"SELECT comment FROM {entries} "
+        f"WHERE database_name = ? AND schema_name = ? AND {name_col} = ?",
+        [catalog, schema, table],
+    ).fetchone()
+    if current is not None and current[0] == comment:
+        return
+    kind = "VIEW" if view else "TABLE"
+    con.execute(f"COMMENT ON {kind} {target} IS '{_escape(comment)}';")
+
+
+def ensure_column_comments(
+    con: duckdb.DuckDBPyConnection, target: str, comments: dict[str, str]
+) -> None:
+    """``COMMENT ON COLUMN`` for each ``{column: comment}``, table-materialized targets only.
+
+    DuckDB flatly rejects column comments on a view ("Cannot comment on columns
+    for entry v - it is not a table", verified 2026-08-10) -- skip with a log
+    line rather than crash a run whose model just happens to be a view with
+    ``-- column:`` directives left over from before it became one.
+    """
+    if not comments:
+        return
+    catalog, schema, table = target.split(".", 2)
+    if _is_view(con, catalog, schema, table):
+        logger.warning(
+            "ops: {} column comments declared but {} is a view -- DuckDB doesn't "
+            "support COMMENT ON COLUMN for views, skipping", len(comments), target,
+        )
+        return
+    current = dict(
+        con.execute(
+            "SELECT column_name, comment FROM duckdb_columns() "
+            "WHERE database_name = ? AND schema_name = ? AND table_name = ?",
+            [catalog, schema, table],
+        ).fetchall()
+    )
+    for column, comment in comments.items():
+        if current.get(column) == comment:
+            continue
+        con.execute(f"COMMENT ON COLUMN {target}.{column} IS '{_escape(comment)}';")
+
+
 _SOURCES_BY_NAME: dict[str, Source] = {s.name: s for s in SOURCES}
 
 
@@ -393,6 +475,19 @@ def run(
                 [status, after, r.rows, rid],
             )
             r.snapshot_after, r.status = after, status
+            src = con.execute(
+                f"SELECT description, license FROM {_t('source')} "
+                "WHERE name = ? AND writer = ?",
+                [source, writer],
+            ).fetchone()
+            # Not every run's `target` is one table -- a multi-table source (pmc:
+            # documents + passages under nested `attribute()` blocks) passes its
+            # *schema* as the outer target, catalog.schema with no third part.
+            # Nothing to comment on at that granularity; skip rather than guess
+            # which of several tables the description/license would apply to.
+            if src is not None and target.count(".") == 2:
+                description, license_ = src
+                _ensure_table_comment(con, target, f"{description} License: {license_}.")
             bound.success(
                 "{} → {} (rows={}, snapshot {}→{}, run_id={})",
                 status, target, r.rows, before, after, rid,
@@ -421,6 +516,47 @@ def last_run(
     cols = ("run_id", "source", "target", "version", "status", "snapshot_before",
             "snapshot_after", "rows_after", "started_at", "finished_at", "error")
     return dict(zip(cols, row, strict=True))
+
+
+_RUN_COLS = (
+    "run_id", "source", "target", "version", "status", "snapshot_before",
+    "snapshot_after", "rows_after", "started_at", "finished_at", "error", "host",
+)
+_RUN_SELECT = (
+    "SELECT run_id, source, target, version, status, snapshot_before, "
+    "snapshot_after, rows_after, started_at::VARCHAR, finished_at::VARCHAR, error, host"
+)
+
+
+def list_runs(con: duckdb.DuckDBPyConnection, *, limit: int = 50) -> list[dict]:
+    """The most recent runs across all sources/producers (newest first).
+
+    The read surface an ops dashboard queries instead of touching the ledger
+    tables directly (a read-only consumer attaches via
+    ``lake_connect(..., read_only=True, with_ops=True)``).
+    """
+    rows = con.execute(
+        f"{_RUN_SELECT} FROM {_t('run')} ORDER BY started_at DESC LIMIT ?", [limit]
+    ).fetchall()
+    return [dict(zip(_RUN_COLS, r, strict=True)) for r in rows]
+
+
+def get_run(con: duckdb.DuckDBPyConnection, run_id: str) -> dict | None:
+    """One run row by ``run_id``, or None if unknown."""
+    row = con.execute(
+        f"{_RUN_SELECT} FROM {_t('run')} WHERE run_id = ?", [run_id]
+    ).fetchone()
+    return dict(zip(_RUN_COLS, row, strict=True)) if row else None
+
+
+def list_sources(con: duckdb.DuckDBPyConnection) -> list[dict]:
+    """The registered sources (name, schema, description, cadence, writer)."""
+    rows = con.execute(
+        f"SELECT name, lake_schema, description, cadence, writer "
+        f"FROM {_t('source')} ORDER BY name"
+    ).fetchall()
+    cols = ("name", "lake_schema", "description", "cadence", "writer")
+    return [dict(zip(cols, r, strict=True)) for r in rows]
 
 
 # --- Watermarks (incremental cursors; in-place) ---
