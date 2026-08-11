@@ -177,3 +177,25 @@ def test_publish_duckdb_and_lake_table_noop(lake_settings: Settings, tmp_path: P
         publish(con, "lake.a.t1", Target("lake_table"), date="2026-08-07")
     finally:
         con.close()
+
+
+def test_publish_date_optional_for_non_parquet_targets(lake_settings: Settings, tmp_path: Path):
+    """date is parquet-only — the CLI's iceberg publish path never supplies one."""
+    con = lake_connect(lake_settings)
+    try:
+        con.execute("CREATE SCHEMA lake.a; CREATE TABLE lake.a.t1 AS SELECT 1 AS x")
+        mart_path = tmp_path / "mart.duckdb"
+        publish(con, "lake.a.t1", Target("duckdb", {"path": str(mart_path)}))
+        publish(con, "lake.a.t1", Target("lake_table"))
+    finally:
+        con.close()
+
+
+def test_publish_parquet_requires_date(lake_settings: Settings):
+    con = lake_connect(lake_settings)
+    try:
+        con.execute("CREATE SCHEMA lake.a; CREATE TABLE lake.a.t1 AS SELECT 1 AS x")
+        with pytest.raises(ValueError, match="date is required"):
+            publish(con, "lake.a.t1", Target("parquet", {"path": "/tmp/{date}/t1.parquet"}))
+    finally:
+        con.close()

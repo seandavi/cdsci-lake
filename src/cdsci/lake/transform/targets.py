@@ -50,15 +50,18 @@ class Target:
 
 
 def publish(
-    con: duckdb.DuckDBPyConnection, source_table: str, target: Target, *, date: str
+    con: duckdb.DuckDBPyConnection, source_table: str, target: Target, *, date: str | None = None
 ) -> None:
     """Publish ``source_table`` (a catalog-qualified lake table) to ``target``.
 
-    ``date`` is a caller-supplied stamp (the ``parquet`` dated-copy pattern) —
-    passed in rather than computed here, so this function stays pure with
-    respect to wall-clock time.
+    ``date`` is a caller-supplied stamp for the ``parquet`` dated-copy pattern
+    only — passed in rather than computed here, so this function stays pure
+    with respect to wall-clock time. Required for ``parquet``, unused by every
+    other target type.
     """
     if target.type == "parquet":
+        if date is None:
+            raise ValueError("date is required for the 'parquet' target type")
         _publish_parquet(con, source_table, target.config, date)
     elif target.type in ("duckdb", "lake_table"):
         _publish_duckdb(con, source_table, target.config)
