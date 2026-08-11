@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import typer
 
+from .._cli import build_app
 from .ingest import RELATIONS, available_ontologies, ingest
 
-app = typer.Typer(
+app = build_app(
+    "ontology", ingest,
     help="Load semantic-sql OBO ontologies into the ontology schema (terms/synonyms/xrefs/edges).",
-    add_completion=False,
 )
 
 
@@ -25,20 +26,6 @@ def list_ontologies() -> None:
     onts = available_ontologies()
     typer.echo("\n".join(onts))
     typer.echo(f"\n{len(onts)} ontologies available.")
-
-
-@app.command("run")
-def run(
-    ontology: list[str] = typer.Option(
-        None, "--ontology", "-o", help="Ontology stem(s) to load; omit for ALL in the bucket."
-    ),
-    schema: str = typer.Option("ontology", "--schema", help="Target lake schema."),
-) -> None:
-    """Download + MERGE-upsert ontologies into the ontology schema."""
-    summary = ingest(ontologies=ontology or None, schema=schema)
-    typer.echo(f"ontology loaded: {summary['loaded']} ontologies into {summary['schema']}.*")
-    if summary["errors"]:
-        typer.echo(f"  {len(summary['errors'])} failed: {', '.join(summary['errors'])}")
 
 
 if __name__ == "__main__":

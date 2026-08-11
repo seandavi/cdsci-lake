@@ -34,12 +34,13 @@ import gzip
 import shutil
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import duckdb
 import httpx
 
+from ... import ops
 from ...config import Settings, get_settings
 from ...connect import LAKE, lake_connect, raw_dir, upsert
 from ...download import download
@@ -246,6 +247,11 @@ def curate(
     return counts
 
 
+def _today_version() -> str:
+    """Run-level label -- each table's own `snapshot_version` is the per-ontology release."""
+    return date.today().isoformat()
+
+
 def ingest(
     *,
     ontologies: list[str] | None = None,
@@ -255,20 +261,29 @@ def ingest(
     """Download + curate ontologies (default: every one in the bucket).
 
     One DB at a time so memory stays flat; a failure on a single ontology is
-    recorded and skipped rather than aborting the whole batch.
+    recorded and skipped rather than aborting the whole batch. The whole batch is
+    one ``ops.run`` (ADR-0006), like every other source -- previously this ran
+    outside the ledger entirely (issue #52), leaving no run row and no attributed
+    snapshot.
     """
     s = settings or get_settings()
     onts = ontologies or available_ontologies(s)
+    target = f"{LAKE}.{schema}"
     con = lake_connect(s)
     counts: dict[str, dict[str, int]] = {}
     errors: dict[str, str] = {}
     try:
-        for onto in onts:
-            try:
-                db, release = fetch_db(onto, s)
-                counts[onto] = curate(con, onto, db, release, schema=schema)
-            except (httpx.HTTPError, duckdb.Error, OSError) as exc:
-                errors[onto] = f"{type(exc).__name__}: {exc}"
+        with ops.run(con, source="ontology", target=target, version=_today_version()) as r:
+            for onto in onts:
+                try:
+                    db, release = fetch_db(onto, s)
+                    counts[onto] = curate(con, onto, db, release, schema=schema)
+                except (httpx.HTTPError, duckdb.Error, OSError) as exc:
+                    errors[onto] = f"{type(exc).__name__}: {exc}"
+            r.rows = sum(sum(c.values()) for c in counts.values())
     finally:
         con.close()
-    return {"schema": schema, "loaded": len(counts), "counts": counts, "errors": errors}
+    return {
+        **r.summary(), "schema": schema, "loaded": len(counts),
+        "counts": counts, "errors": errors,
+    }

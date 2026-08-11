@@ -4,18 +4,12 @@ from __future__ import annotations
 
 import typer
 
-from ...log import configure
+from .._cli import base_app
 from .ingest import GROUPS, available_years, ingest
 
-app = typer.Typer(
-    help="Ingest NIH RePORTER ExPORTER groups (projects/abstracts/publications/publink).",
-    add_completion=False,
+app = base_app(
+    help="Ingest NIH RePORTER ExPORTER groups (projects/abstracts/publications/publink)."
 )
-
-
-@app.callback()
-def _main(log_level: str = typer.Option("INFO", "--log-level", help="loguru level.")) -> None:
-    configure(log_level)
 
 
 @app.command("groups")
@@ -45,7 +39,13 @@ def run(
     ),
     limit: int | None = typer.Option(None, "--limit", help="Cap rows (smoke test)."),
 ) -> None:
-    """Download (unless --file) and MERGE-upsert an ExPORTER group into the lake."""
+    """Download (unless --file) and MERGE-upsert an ExPORTER group into the lake.
+
+    Hand-written (not generated): ``ingest()``'s ``files`` param is
+    ``list[str] | str | None`` for programmatic callers, a union typer/click
+    can't turn into one CLI option -- the CLI itself only ever needs the
+    repeatable-list shape.
+    """
     summary = ingest(
         group=group, years=year or None, files=file or None, schema=schema, limit=limit
     )

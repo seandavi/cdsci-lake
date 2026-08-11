@@ -8,13 +8,21 @@ that replaces a materialized ``entailed_edge``. No network.
 
 from __future__ import annotations
 
+import importlib
 import sqlite3
 from pathlib import Path
 
 import pytest
 
-from cdsci.lake import Settings, lake_connect, snapshots
+from cdsci.lake import Settings, lake_connect, ops, snapshots
+from cdsci.lake.sources import ontology
 from cdsci.lake.sources.ontology import curate
+
+# `ontology/__init__.py` re-exports the `ingest` *function* under the same name
+# as the `ingest` *module* it lives in, shadowing the module on attribute access
+# -- `importlib.import_module` (a sys.modules lookup) sidesteps that, so tests
+# can monkeypatch the module-level helpers `ingest()` actually calls.
+ontology_ingest_module = importlib.import_module("cdsci.lake.sources.ontology.ingest")
 
 # (subject, predicate, object, value) — literals in value, IRI objects in object,
 # mirroring the real semsql encoding verified against hancestro.db.
@@ -125,5 +133,45 @@ def test_ontology_curate_idempotent(semsql_db: Path, lake_settings: Settings):
         first = curate(con, "xo", semsql_db, "2026-06-26")
         again = curate(con, "xo", semsql_db, "2026-06-26")
         assert first == again
+    finally:
+        con.close()
+
+
+def test_ontology_is_registered_in_sources():
+    """The issue #52 fix: ontology must be a member of ops.SOURCES, or it structurally
+    can't get a CLI (cdsci.lake.sources._cli.build_app) or an attributed ledger row."""
+    assert "ontology" in {s.name for s in ops.SOURCES}
+
+
+def test_ontology_ingest_wraps_ops_run(
+    semsql_db: Path, lake_settings: Settings, monkeypatch: pytest.MonkeyPatch
+):
+    """``ingest()`` used to run entirely outside the ledger (issue #52) -- no run row,
+    no attributed snapshot. It must now behave like every other source: one
+    ``ops.run`` bracket around the batch, landing one ledger row."""
+    monkeypatch.setattr(
+        ontology_ingest_module, "available_ontologies", lambda s=None: ["xo"]
+    )
+    monkeypatch.setattr(
+        ontology_ingest_module, "fetch_db", lambda onto, s=None: (semsql_db, "2026-06-26")
+    )
+
+    summary = ontology.ingest(schema="ontology", settings=lake_settings)
+
+    assert summary["loaded"] == 1
+    assert summary["errors"] == {}
+    assert summary["status"] in ("success", "idempotent")
+    assert summary["rows"] == 4 + 2 + 2 + 2  # terms + synonyms + xrefs + edges
+
+    con = lake_connect(lake_settings)
+    try:
+        last = ops.last_run(con, "ontology")
+        assert last is not None
+        assert last["status"] == summary["status"]
+        assert last["source"] == "ontology"
+        # self-registered as a built-in cdsci source (ops._self_register).
+        assert con.execute(
+            "SELECT writer FROM ops.lake_ops.source WHERE name='ontology'"
+        ).fetchone()[0] == "cdsci"
     finally:
         con.close()

@@ -6,18 +6,13 @@ import typer
 
 from ...config import get_settings
 from ...download import get_json
-from ...log import configure
+from .._cli import build_app
 from .ingest import ingest
 
-app = typer.Typer(
+app = build_app(
+    "ctgov", ingest,
     help="Ingest ClinicalTrials.gov studies (full JSON) into lake.ctgov.{studies,references}.",
-    add_completion=False,
 )
-
-
-@app.callback()
-def _main(log_level: str = typer.Option("INFO", "--log-level", help="loguru level.")) -> None:
-    configure(log_level)
 
 
 @app.command("count")
@@ -26,28 +21,6 @@ def count() -> None:
     s = get_settings()
     data = get_json(s.ctgov_api, params={"pageSize": 1, "countTotal": "true", "format": "json"})
     typer.echo(f"ClinicalTrials.gov studies available: {data.get('totalCount'):,}")
-
-
-@app.command("run")
-def run(
-    file: str | None = typer.Option(
-        None, "--file", help="Local NDJSON extract or .parquet to load instead of downloading."
-    ),
-    schema: str = typer.Option(
-        "ctgov", "--schema", help="Target lake schema (e.g. _dev to stage before promoting)."
-    ),
-    max_pages: int | None = typer.Option(
-        None, "--max-pages", help="Cap API pages (~1000 studies each) for a partial run."
-    ),
-    limit: int | None = typer.Option(None, "--limit", help="Cap rows (smoke test)."),
-) -> None:
-    """Download → materialize bronze Parquet → upsert ctgov.studies + ctgov.references."""
-    s = ingest(file=file, schema=schema, max_pages=max_pages, limit=limit)
-    delta = "changed" if s["changed"] else "no change (idempotent)"
-    typer.echo(
-        f"{s['studies_table']} <- {s['studies']:,} studies; "
-        f"{s['references_table']} <- {s['references']:,} refs — {delta}"
-    )
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import socket
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -74,6 +74,17 @@ class Source:
     # multi-producer, so each row records which writer registered it (`cdsci`,
     # `omicidx`), making "show me all of <producer>'s sources/loads" one query.
     writer: str = "cdsci"
+    # The source's own entrypoint (issue #52): `ingest(**kwargs) -> dict`, self-
+    # connecting and self-bracketed in `run()`. Left unset here -- `SOURCES`
+    # below is imported by the base `cdsci.lake` package (the read-client
+    # surface, no ingest deps installed) and importing all 14 `sources/*/ingest`
+    # modules here would both violate that packaging boundary and cycle back
+    # into this module (each imports `from ... import ops`). Instead
+    # `sources/_cli.py` looks a source up by name and attaches its already
+    # locally-imported `ingest` via `dataclasses.replace` at CLI-build time --
+    # so a name absent from `SOURCES` still can't get a CLI, which is the
+    # structural fix this field exists for.
+    ingest: Callable[..., dict] | None = None
 
 
 SOURCES: tuple[Source, ...] = (
@@ -105,6 +116,8 @@ SOURCES: tuple[Source, ...] = (
            "annual", "zenodo", "cc-by-nc-4.0"),
     Source("bioregistry", "ref", "Bioregistry: canonical identifier prefixes, patterns, synonyms",
            "weekly", "github-tsv", "cc0"),
+    Source("ontology", "ontology", "OBO semantic-sql builds: terms/synonyms/xrefs/edges",
+           "on-release", "semsql-s3", "mixed"),
 )
 
 
