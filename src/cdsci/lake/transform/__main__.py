@@ -89,7 +89,9 @@ def run_all_cmd(ctx: typer.Context) -> None:
 def publish_cmd(
     target: str = typer.Argument(..., help="Lake table to publish, e.g. bugsigdb.signature_taxon."),
     namespace: str = typer.Option(..., "--namespace", help="icegate namespace, e.g. annotation."),
-    table: str | None = typer.Option(None, "--table", help="Iceberg table name (default: target's own)."),
+    table: str | None = typer.Option(
+        None, "--table", help="Iceberg table name (default: target's own)."
+    ),
 ) -> None:
     """Publish a lake table to bioc-on-ice's Iceberg catalog through icegate.
 
