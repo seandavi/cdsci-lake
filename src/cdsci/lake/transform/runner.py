@@ -18,14 +18,23 @@ from .lineage import model_lineage
 from .models import Model
 
 
+class ModelTestFailure(Exception):
+    """A model's ``.test.sql`` assertion returned rows (it must return zero)."""
+
+
 def run_model(con: duckdb.DuckDBPyConnection, model: Model) -> int:
-    """``CREATE OR REPLACE TABLE {LAKE}.{model.target} AS (model.sql)``; returns row count.
+    """``CREATE OR REPLACE {TABLE|VIEW} {LAKE}.{model.target} AS (model.sql)``; returns row count.
 
     Self-registers ``model.target`` as a ``lake_ops.source`` on every call
     (cheap delete-then-insert, ADR-0011 §4's "idempotent and self-healing"
     pattern) — a transform model isn't in the built-in ``SOURCES`` tuple, so
     without this every run would fall back to unattributed ``<source>:<source>``
     with a warning.
+
+    Any declared ``model.tests`` run after the write commits, still inside
+    ``ops.run``'s block — a failing test raises :class:`ModelTestFailure`,
+    which ``ops.run`` catches and records as a normal ``error`` run, same
+    treatment as a write that raised.
     """
     schema, table = model.target.split(".", 1)
     target = f"{LAKE}.{model.target}"
@@ -34,18 +43,34 @@ def run_model(con: duckdb.DuckDBPyConnection, model: Model) -> int:
         writer="cdsci",
         sources=(
             ops.Source(
-                model.target, schema, f"transform model: {model.target}",
-                "on-demand", "sql-transform", "internal",
+                model.target, schema, model.description,
+                "on-demand", "sql-transform", model.license,
             ),
         ),
     )
+    kind = "VIEW" if model.materialized == "view" else "TABLE"
     with ops.run(con, source=model.target, target=target) as r:
         with r.attribute(table):
             con.execute(f"CREATE SCHEMA IF NOT EXISTS {LAKE}.{schema};")
-            con.execute(f"CREATE OR REPLACE TABLE {target} AS ({model.sql});")
+            con.execute(f"CREATE OR REPLACE {kind} {target} AS ({model.sql});")
         r.rows = con.execute(f"SELECT count(*) FROM {target}").fetchone()[0]
+        ops.ensure_column_comments(con, target, model.column_comments)
+        _run_tests(con, model, target)
     _log_lineage(model)
     return r.rows
+
+
+def _run_tests(con: duckdb.DuckDBPyConnection, model: Model, target: str) -> None:
+    """Run every ``model.tests`` query; each must return zero rows to pass."""
+    for name, query in model.tests.items():
+        rows = con.execute(query).fetchall()
+        if rows:
+            sample = rows[:5]
+            raise ModelTestFailure(
+                f"{model.target}: test {name!r} failed -- {len(rows)} row(s) violate it "
+                f"(showing up to 5): {sample}"
+            )
+        logger.bind(ctx=f"transform:{model.target}").info("test {!r}: pass", name)
 
 
 def _log_lineage(model: Model) -> None:

@@ -1,3 +1,5 @@
+-- description: PMID<->DOI<->PMCID<->grant<->NCT crosswalk, one row per PMID, merged across icite/pmc/openalex/reporter/ctgov.
+-- license: mixed -- icite (us-public-domain), pmc (mixed-oa, per-article), openalex (cc0), reporter (us-public-domain), ctgov (us-public-domain). pmc's per-article terms are the binding constraint; check the source article before redistributing a pmc-derived row.
 -- ref.id_crosswalk (ROADMAP.md, ADR-0015 pilot model): PMID <-> DOI <-> PMCID <->
 -- core_project_num <-> NCT. One row per PMID -- the common key across all five
 -- source tables. DOI/PMCID are single-valued (any_value across sources, since a
