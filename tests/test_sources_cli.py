@@ -14,12 +14,21 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from cdsci.lake import Settings, lake_connect, ops, upsert
 from cdsci.lake.sources._cli import build_app
 
 runner = CliRunner()
+
+
+def _run_option_names(app) -> set[str]:
+    """Real option flags for the generated `run` command, via click's own param
+    list -- not rendered `--help` text, which rich wraps at the terminal's
+    width and can split a flag across lines in a narrower CI terminal."""
+    run_cmd = get_command(app).commands["run"]
+    return {opt for param in run_cmd.params for opt in param.opts}
 
 
 @pytest.fixture
@@ -52,14 +61,17 @@ def test_build_app_rejects_a_name_not_in_sources():
 
 
 def test_run_options_are_generated_from_ingest_signature(lake_settings: Settings):
-    """--help lists exactly the stub's own kwargs (not a hand-written guess)."""
+    """`run`'s options are exactly the stub's own kwargs (not a hand-written guess)."""
     app = build_app("bioregistry", _stub_ingest(lake_settings), help="x")
+    opts = _run_option_names(app)
+    assert "--schema" in opts
+    assert "--limit" in opts
+    # `settings` is driver-injected, never a CLI option.
+    assert "--settings" not in opts
+
+    # --help itself still exits cleanly, regardless of terminal-width wrapping.
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
-    assert "--schema" in result.output
-    assert "--limit" in result.output
-    # `settings` is driver-injected, never a CLI option.
-    assert "--settings" not in result.output
 
 
 def test_run_command_calls_ingest_and_produces_a_ledger_row(lake_settings: Settings):
