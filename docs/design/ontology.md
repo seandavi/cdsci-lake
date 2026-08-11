@@ -81,9 +81,9 @@ and `terms.obsolete = false` (not deprecated; offer `replaced_by` if it is).
 python -m cdsci.lake.sources.ontology list
 
 # load specific ontologies
-python -m cdsci.lake.sources.ontology run -o uberon -o ncit -o hancestro
+python -m cdsci.lake.sources.ontology run --ontologies uberon --ontologies ncit --ontologies hancestro
 
-# load ALL available ontologies (omit --ontology)
+# load ALL available ontologies (omit --ontologies)
 python -m cdsci.lake.sources.ontology run
 
 # show the projected tables + keys

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typer
 
-from ...log import configure
+from .._cli import base_app
 from .ingest import (
     ingest,
     ingest_chemicals,
@@ -13,15 +13,7 @@ from .ingest import (
     ingest_supplemental,
 )
 
-app = typer.Typer(
-    help="Ingest NLM MeSH descriptors + tree hierarchy + qualifiers into lake.mesh.*.",
-    add_completion=False,
-)
-
-
-@app.callback()
-def _main(log_level: str = typer.Option("INFO", "--log-level", help="loguru level.")) -> None:
-    configure(log_level)
+app = base_app(help="Ingest NLM MeSH descriptors + tree hierarchy + qualifiers into lake.mesh.*.")
 
 
 @app.command("run")
