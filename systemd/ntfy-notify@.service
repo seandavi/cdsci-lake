@@ -1,0 +1,13 @@
+# Shared failure handler for every cdsci-lake scheduled job. A job's
+# .service unit points at this via `OnFailure=ntfy-notify@%N.service`
+# (see retractionwatch.service) -- %N is the failing unit's own name with
+# .service stripped, so the instance becomes ntfy-notify@retractionwatch,
+# not a doubled suffix. Same pattern as bioc-site's bioc-notify@.service,
+# swapped from "file a GitHub issue" to "POST to ntfy" as the channel.
+[Unit]
+Description=Report failure of %i to the shared cdsci-lake-ops ntfy topic
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/davsean/Documents/git/cdsci-lake/systemd
+ExecStart=/home/davsean/Documents/git/cdsci-lake/systemd/notify-failure.sh %i.service

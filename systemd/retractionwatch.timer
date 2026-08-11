@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekday-daily Retraction Watch load (source cadence: weekday-daily)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 07:00:00
+RandomizedDelaySec=300
+# Catch up after downtime rather than silently skipping to the next weekday.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

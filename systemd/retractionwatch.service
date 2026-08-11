@@ -1,0 +1,31 @@
+# Pilot job #1 for the cdsci-lake systemd scheduling convention -- see
+# monode/infrastructure's SCHEDULING.md for the full pattern this is an
+# instance of.
+[Unit]
+Description=Load Retraction Watch into lake.retractionwatch.retractions
+Documentation=file:///home/davsean/Documents/git/cdsci-lake/docs/design/dashboard_and_scheduling.md
+After=network-online.target
+Wants=network-online.target
+OnFailure=ntfy-notify@%N.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/davsean/Documents/git/cdsci-lake
+EnvironmentFile=/home/davsean/Documents/git/cdsci-lake/.env
+# Prod writes go to the shared Postgres-catalog lake; .env deliberately
+# omits this var so a plain test run can never hit prod by accident (see
+# cdsci.lake.config) -- set it explicitly here instead.
+Environment=CU_OPENALEX_LAKE_BACKEND=postgres
+ExecStart=/usr/bin/env uv run python -m cdsci.lake.sources.retractionwatch run
+# RuntimeMaxSec= silently has no effect on Type=oneshot (systemd quirk --
+# verified with `systemd-analyze verify`, don't reintroduce it). For
+# oneshot, the run-length ceiling is TimeoutStartSec=, matching
+# bioc-sync.service's existing use of the same directive for the same
+# reason. Historical runs finish in ~2s (small CSV); this ceiling is
+# generous on purpose so a slow network day doesn't false-alarm, while
+# still turning a genuine hang into a Failed state instead of an
+# invisible stuck process.
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=default.target
