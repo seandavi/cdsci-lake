@@ -25,8 +25,11 @@ echo " Starting DuckLake Operations Dashboard"
 echo "=================================================="
 
 # 1. Start FastAPI backend
-echo "Starting FastAPI backend on http://127.0.0.1:8000..."
-PYTHONPATH=src:backend uv run uvicorn backend.main:app --port 8000 --host 0.0.0.0 > backend.log 2>&1 &
+echo "Starting FastAPI backend on http://127.0.0.1:8010..."
+# Serve the prod postgres substrate. Backend is set here (not in .env) so tests
+# stay on the local backend — see memory: ".env omits backend to protect tests".
+CU_OPENALEX_LAKE_BACKEND=postgres \
+  PYTHONPATH=src:backend uv run uvicorn backend.main:app --port 8010 --host 0.0.0.0 > backend.log 2>&1 &
 BACKEND_PID=$!
 
 # Wait a brief moment to ensure backend started
@@ -43,7 +46,7 @@ echo "Backend running (PID: $BACKEND_PID, logs at backend.log)."
 # 2. Start Vite frontend
 echo "Starting Vite dev server..."
 cd frontend
-npm run dev --host=0.0.0.0 &
+npm run dev &
 FRONTEND_PID=$!
 cd ..
 

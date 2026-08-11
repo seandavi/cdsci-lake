@@ -7,7 +7,7 @@ import {
 import './styles/dashboard.css';
 import type { Source, Run, Snapshot, LogEntry } from './interfaces';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = '';  // relative — same origin, proxied to the backend by Vite (see vite.config.ts)
 
 function App() {
   const [sources, setSources] = useState<Source[]>([]);
