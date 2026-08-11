@@ -1,0 +1,27 @@
+# Pilot job #2 for the cdsci-lake systemd scheduling convention -- see
+# monode/infrastructure's SCHEDULING.md for the full pattern this is an
+# instance of.
+[Unit]
+Description=Load the monthly iCite snapshot into lake.icite.metadata
+Documentation=file:///home/davsean/Documents/git/cdsci-lake/docs/design/dashboard_and_scheduling.md
+After=network-online.target
+Wants=network-online.target
+OnFailure=ntfy-notify@%N.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/davsean/Documents/git/cdsci-lake
+EnvironmentFile=/home/davsean/Documents/git/cdsci-lake/.env
+Environment=CU_OPENALEX_LAKE_BACKEND=postgres
+ExecStart=/usr/bin/env uv run python -m cdsci.lake.sources.icite run
+# RuntimeMaxSec= silently has no effect on Type=oneshot (systemd quirk --
+# verified with `systemd-analyze verify`, don't reintroduce it). Use
+# TimeoutStartSec= instead, matching bioc-sync.service's precedent. A
+# no-op idempotent check finishes in ~20s, but a real new monthly
+# snapshot is a large figshare download + ~40M-row MERGE -- give it real
+# headroom rather than false-alarming on a big-but-healthy run.
+TimeoutStartSec=10800
+Nice=10
+
+[Install]
+WantedBy=default.target
