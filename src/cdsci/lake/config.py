@@ -180,6 +180,19 @@ class Settings(BaseSettings):
         "exports/registry/registry.tsv"
     )
 
+    # UniProt ID mapping — organism-scoped ``*_idmapping_selected.tab.gz`` dumps
+    # (CC BY 4.0, confirmed at uniprot.org/help/license 2026-08-11), tab-delimited,
+    # no header, 22 columns per UniProt's own README (UniProtKB-AC, UniProtKB-ID,
+    # GeneID, ... see ``sources/uniprot/ingest.py``). "current_release" has no
+    # version tag in the URL, so (like retractionwatch) we tag the snapshot by
+    # pull date. Only the human file is loaded by default; ``ingest(organisms=...)``
+    # takes any other ``by_organism/`` filename stem.
+    uniprot_idmapping_base_url: str = (
+        "https://ftp.uniprot.org/pub/databases/uniprot/current_release/"
+        "knowledgebase/idmapping/by_organism/"
+    )
+    uniprot_organisms: list[str] = ["HUMAN_9606"]
+
     # --- Reverse-ETL: publish to bioc-on-ice's Iceberg catalog via icegate ---
     # bioc-on-ice is a *publication* layer (ADR-0015 §"iceberg target"): the
     # REST catalog gateway already exists, live in production, so this is
