@@ -139,6 +139,8 @@ SOURCES: tuple[Source, ...] = (
     Source("ensembl", "ensembl", "Ensembl per-species GTF gene annotation (raw GTF; "
            "genome/gene/transcript/exon models)", "per-release", "ensembl-ftp",
            "ensembl-no-restrictions"),
+    Source("reactome", "reactome", "Reactome pathways: gene->pathway (all levels) + hierarchy",
+           "quarterly", "reactome-download", "cc0"),
 )
 
 

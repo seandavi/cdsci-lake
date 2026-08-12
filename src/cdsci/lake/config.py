@@ -212,6 +212,11 @@ class Settings(BaseSettings):
     # ``sources/ucsc_kg/ingest.py``. The dumps carry no version tag, so (like
     # retractionwatch) the snapshot is tagged by pull date.
     ucsc_goldenpath_base: str = "https://hgdownload.soe.ucsc.edu/goldenPath"
+    # Reactome's current-release download directory — three headerless flat TSVs
+    # (issue #34). Data is CC0 (reactome.org/license §1(c), confirmed 2026-08-11).
+    # Releases are quarterly but the files carry no version tag, so the snapshot
+    # is tagged by retrieval date. See ``sources/reactome/ingest.py``.
+    reactome_base_url: str = "https://reactome.org/download/current/"
 
     # --- Reverse-ETL: publish to bioc-on-ice's Iceberg catalog via icegate ---
     # bioc-on-ice is a *publication* layer (ADR-0015 §"iceberg target"): the
