@@ -218,6 +218,21 @@ class Settings(BaseSettings):
     # is tagged by retrieval date. See ``sources/reactome/ingest.py``.
     reactome_base_url: str = "https://reactome.org/download/current/"
 
+    # ROR — the versioned institution-registry bulk dump (CC0, confirmed at
+    # ror.readme.io/docs/data-dump 2026-08-11). This is the Zenodo *concept*
+    # record: it always resolves to the newest release, whose `metadata.version`
+    # (`v2.11`) is the release's own tag — so unlike the rolling sources above,
+    # the snapshot is tagged by the dump, not the pull date (issue #57).
+    ror_zenodo_concept_record: str = "6347574"
+
+    # ORCID — the unauthenticated public API, deliberately *not* the annual bulk
+    # Public Data File (~863 GB of one-XML-per-record; see
+    # ``sources/orcid/ingest.py`` for the deviation and its numbers). CC0.
+    # `expanded-search` answers `orcid:(A OR B OR ...)`; 100 iDs per request is
+    # ~2.3 KB of query string and ~0.4 s, verified on a real batch.
+    orcid_api_base: str = "https://pub.orcid.org/v3.0"
+    orcid_batch_size: int = 100
+
     # --- Reverse-ETL: publish to bioc-on-ice's Iceberg catalog via icegate ---
     # bioc-on-ice is a *publication* layer (ADR-0015 §"iceberg target"): the
     # REST catalog gateway already exists, live in production, so this is

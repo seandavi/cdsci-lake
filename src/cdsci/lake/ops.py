@@ -144,6 +144,12 @@ SOURCES: tuple[Source, ...] = (
            "ensembl-no-restrictions"),
     Source("reactome", "reactome", "Reactome pathways: gene->pathway (all levels) + hierarchy",
            "quarterly", "reactome-download", "cc0"),
+    Source("ror", "ror", "ROR: canonical institution identity (names, locations, relationships)",
+           "on-release", "zenodo", "cc0"),
+    # Not the annual bulk file: demand-driven fetch of caller-supplied iDs from
+    # the public API (issue #56 -- see sources/orcid/ingest.py for the numbers).
+    Source("orcid", "orcid", "ORCID: canonical researcher identity (names + affiliations), "
+           "scoped to requested iDs", "on-demand", "orcid-public-api", "cc0"),
 )
 
 
