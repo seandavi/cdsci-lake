@@ -131,6 +131,12 @@ SOURCES: tuple[Source, ...] = (
     # string. Cite a UCSC publication when used in published work.
     Source("ucsc_kg", "ucsc", "UCSC Known Gene xrefs + UCSCKG<->Entrez mapping, per build",
            "on-assembly-update", "ucsc-goldenpath", "ucsc-free"),
+    # `ensembl-no-restrictions`, not `cc0`: Ensembl names no license instrument, only
+    # "imposes no restrictions on access to, or use of, the data" + a third-party-
+    # constraints caveat (verified 2026-08-11 -- see sources/ensembl/ingest.py).
+    Source("ensembl", "ensembl", "Ensembl per-species GTF gene annotation (raw GTF; "
+           "genome/gene/transcript/exon models)", "per-release", "ensembl-ftp",
+           "ensembl-no-restrictions"),
 )
 
 
