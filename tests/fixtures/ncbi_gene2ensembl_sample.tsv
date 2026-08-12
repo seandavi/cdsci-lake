@@ -1,0 +1,5 @@
+#tax_id	GeneID	Ensembl_gene_identifier	RNA_nucleotide_accession.version	Ensembl_rna_identifier	protein_accession.version	Ensembl_protein_identifier
+3483	27215448	gene-A5N79_gp34	-	-	YP_009243652.1	YP_009243652.1
+3483	27215449	gene-A5N79_gp30	-	-	YP_009243656.1	YP_009243656.1
+3483	27215450	gene-A5N79_gt07	-	-	-	-
+3483	27215451	gene-A5N79_gp15	-	-	YP_009243668.1	YP_009243668.1
