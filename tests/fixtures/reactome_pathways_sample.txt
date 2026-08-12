@@ -1,0 +1,3 @@
+R-HSA-109582	Hemostasis	Homo sapiens
+R-HSA-1640170	Cell Cycle	Homo sapiens
+R-MMU-109582	 Hemostasis 	Mus musculus

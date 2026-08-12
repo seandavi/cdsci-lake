@@ -1,0 +1,5 @@
+1	R-HSA-109582	https://reactome.org/PathwayBrowser/#/R-HSA-109582	Hemostasis	TAS	Homo sapiens
+1	R-HSA-114608	https://reactome.org/PathwayBrowser/#/R-HSA-114608	Platelet degranulation 	TAS	Homo sapiens
+1	R-HSA-109582	https://reactome.org/PathwayBrowser/#/R-HSA-109582	Hemostasis	IEA	Homo sapiens
+MN908947.3	R-HSA-1169410	https://reactome.org/PathwayBrowser/#/R-HSA-1169410	Antimicrobial mechanism of IFN-stimulated genes	TAS	Homo sapiens
+11816	R-MMU-109582	https://reactome.org/PathwayBrowser/#/R-MMU-109582	Signaling by "NOTCH"	IEA	Mus musculus

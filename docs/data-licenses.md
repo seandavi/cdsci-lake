@@ -13,6 +13,7 @@ into it is internal use, not redistribution.
 | reporter, icite, ctgov, scp, census_geo | US public domain | yes | US-government works |
 | openalex | CC0 | yes | public domain dedication |
 | retractionwatch | CC0 (effectively) | yes | attribution appreciated |
+| reactome | CC0 | yes | reactome.org/license §1(c) covers the *data*; §1(a) CC BY 4.0 covers illustrations/icons only |
 | pmc | mixed OA | per-article | BioC-PMC open-access subset; honor per-article terms |
 | europepmc | Europe PMC terms | verify | confirm reuse terms before any external sharing |
 | **reliance** | **CC BY-NC 4.0** | **NO** | **non-commercial only; do NOT redistribute; attribute Marx** |
