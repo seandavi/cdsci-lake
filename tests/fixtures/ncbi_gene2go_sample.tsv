@@ -1,0 +1,13 @@
+#tax_id	GeneID	GO_ID	Evidence	Qualifier	GO_term	PubMed	Category
+2711	102577933	GO:0004449	IEA	enables	isocitrate dehydrogenase (NAD+) activity	30032202	Function
+2711	102577933	GO:0005739	IEA	located_in	mitochondrion	30032202	Component
+2711	102577933	GO:0006099	IEA	involved_in	tricarboxylic acid cycle	22301074|30032202	Process
+2711	102577933	GO:0006102	IEA	involved_in	isocitrate metabolic process	30032202	Process
+2711	102578042	GO:0016117	IEA	involved_in	carotenoid biosynthetic process	22301074	Process
+2711	102578042	GO:0016705	IEA	enables	oxidoreductase activity, acting on paired donors, with incorporation or reduction of molecular oxygen	22301074	Function
+3483	115694674	GO:0004672	IEA	enables	protein kinase activity	22301074|30032202	Function
+3483	115694674	GO:0005524	IEA	enables	ATP binding	22301074	Function
+3483	115694674	GO:0006468	IEA	involved_in	protein phosphorylation	22301074	Process
+3483	115694674	GO:0030247	IEA	enables	polysaccharide binding	22301074	Function
+3483	115694675	GO:0005524	IEA	enables	ATP binding	22301074	Function
+3483	115694675	GO:0005737	IEA	located_in	cytoplasm	30032202	Component

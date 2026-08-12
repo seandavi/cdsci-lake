@@ -122,6 +122,8 @@ SOURCES: tuple[Source, ...] = (
            "nightly", "ncbi-ftp", "us-public-domain"),
     Source("ncbi_gene2pubmed", "ncbi_gene2pubmed", "NCBI gene2pubmed: gene↔PMID links (all taxa)",
            "nightly", "ncbi-ftp", "us-public-domain"),
+    Source("ncbi_gene2go", "ncbi_gene2go", "NCBI gene2go: GO annotations per Entrez gene (all "
+           "taxa)", "nightly", "ncbi-ftp", "us-public-domain"),
     Source("ontology", "ontology", "OBO semantic-sql builds: terms/synonyms/xrefs/edges",
            "on-release", "semsql-s3", "mixed"),
     # "ucsc-free": genome.ucsc.edu/license (2026-08-11) grants no-license-needed
