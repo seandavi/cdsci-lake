@@ -14,6 +14,8 @@ into it is internal use, not redistribution.
 | openalex | CC0 | yes | public domain dedication |
 | retractionwatch | CC0 (effectively) | yes | attribution appreciated |
 | reactome | CC0 | yes | reactome.org/license §1(c) covers the *data*; §1(a) CC BY 4.0 covers illustrations/icons only |
+| ror | CC0 | yes | ror.readme.io/docs/data-dump: "All ROR IDs and metadata in the data dump are provided under the Creative Commons CC0 1.0 Universal Public Domain Dedication"; Zenodo record carries `license: cc-zero` |
+| orcid | CC0 | yes | info.orcid.org/annual-data-files: "ORCID releases the Public Data File under a CC0 1.0 Public Domain Dedication". Same terms for the public API. Only researcher-*public* fields are returned; ORCID's Public Data File Use Policy adds community norms (cite ORCID, honor deletions on refresh), not license conditions |
 | pmc | mixed OA | per-article | BioC-PMC open-access subset; honor per-article terms |
 | europepmc | Europe PMC terms | verify | confirm reuse terms before any external sharing |
 | **reliance** | **CC BY-NC 4.0** | **NO** | **non-commercial only; do NOT redistribute; attribute Marx** |

@@ -1,0 +1,561 @@
+[
+ {
+  "locations": [
+   {
+    "geonames_id": 2158177,
+    "geonames_details": {
+     "continent_code": "OC",
+     "continent_name": "Oceania",
+     "country_code": "AU",
+     "country_name": "Australia",
+     "country_subdivision_code": "VIC",
+     "country_subdivision_name": "Victoria",
+     "lat": -37.814,
+     "lng": 144.96332,
+     "name": "Melbourne"
+    }
+   }
+  ],
+  "established": 1887,
+  "external_ids": [
+   {
+    "type": "fundref",
+    "all": [
+     "501100001780",
+     "100008690",
+     "100010552"
+    ],
+    "preferred": "501100001780"
+   },
+   {
+    "type": "grid",
+    "all": [
+     "grid.1017.7"
+    ],
+    "preferred": "grid.1017.7"
+   },
+   {
+    "type": "isni",
+    "all": [
+     "0000 0001 2163 3550"
+    ],
+    "preferred": null
+   },
+   {
+    "type": "wikidata",
+    "all": [
+     "Q1057890"
+    ],
+    "preferred": null
+   }
+  ],
+  "id": "https://ror.org/04ttjf776",
+  "domains": [],
+  "links": [
+   {
+    "type": "website",
+    "value": "https://www.rmit.edu.au/"
+   },
+   {
+    "type": "wikipedia",
+    "value": "http://en.wikipedia.org/wiki/RMIT_University"
+   }
+  ],
+  "names": [
+   {
+    "value": "RMIT",
+    "types": [
+     "acronym"
+    ],
+    "lang": null
+   },
+   {
+    "value": "RMIT University",
+    "types": [
+     "ror_display",
+     "label"
+    ],
+    "lang": "en"
+   },
+   {
+    "value": "Royal Melbourne Institute of Technology University",
+    "types": [
+     "alias"
+    ],
+    "lang": "en"
+   }
+  ],
+  "relationships": [
+   {
+    "type": "child",
+    "label": "ARC Centre of Excellence for Automated Decision-Making and Society",
+    "id": "https://ror.org/039p7nx39"
+   },
+   {
+    "type": "child",
+    "label": "RMIT Europe",
+    "id": "https://ror.org/03m3ca021"
+   },
+   {
+    "type": "child",
+    "label": "RMIT Vietnam",
+    "id": "https://ror.org/004axh929"
+   },
+   {
+    "type": "related",
+    "label": "Austin Hospital",
+    "id": "https://ror.org/010mv7n52"
+   }
+  ],
+  "status": "active",
+  "types": [
+   "education",
+   "funder"
+  ],
+  "admin": {
+   "created": {
+    "date": "2018-11-14",
+    "schema_version": "1.0"
+   },
+   "last_modified": {
+    "date": "2024-12-11",
+    "schema_version": "2.1"
+   }
+  }
+ },
+ {
+  "locations": [
+   {
+    "geonames_id": 2524170,
+    "geonames_details": {
+     "continent_code": "EU",
+     "continent_name": "Europe",
+     "country_code": "IT",
+     "country_name": "Italy",
+     "country_subdivision_code": "82",
+     "country_subdivision_name": "Sicily",
+     "lat": 38.19394,
+     "lng": 15.55256,
+     "name": "Messina"
+    }
+   }
+  ],
+  "established": 1967,
+  "external_ids": [
+   {
+    "type": "grid",
+    "all": [
+     "grid.412507.5"
+    ],
+    "preferred": "grid.412507.5"
+   },
+   {
+    "type": "isni",
+    "all": [
+     "0000 0004 1773 5724"
+    ],
+    "preferred": null
+   }
+  ],
+  "id": "https://ror.org/03tf96d34",
+  "domains": [],
+  "links": [
+   {
+    "type": "website",
+    "value": "http://www.polime.it/"
+   }
+  ],
+  "names": [
+   {
+    "value": "Azienda Ospedaliera Universitaria Policlinico \"G. Martino\"",
+    "types": [
+     "ror_display",
+     "label"
+    ],
+    "lang": "it"
+   }
+  ],
+  "relationships": [],
+  "status": "active",
+  "types": [
+   "healthcare"
+  ],
+  "admin": {
+   "created": {
+    "date": "2018-11-14",
+    "schema_version": "1.0"
+   },
+   "last_modified": {
+    "date": "2024-12-11",
+    "schema_version": "2.1"
+   }
+  }
+ },
+ {
+  "locations": [
+   {
+    "geonames_id": 2800866,
+    "geonames_details": {
+     "continent_code": "EU",
+     "continent_name": "Europe",
+     "country_code": "BE",
+     "country_name": "Belgium",
+     "country_subdivision_code": "BRU",
+     "country_subdivision_name": "Brussels Capital",
+     "lat": 50.85045,
+     "lng": 4.34878,
+     "name": "Brussels"
+    }
+   }
+  ],
+  "established": 1991,
+  "external_ids": [
+   {
+    "type": "grid",
+    "all": [
+     "grid.6228.e"
+    ],
+    "preferred": "grid.6228.e"
+   }
+  ],
+  "id": "https://ror.org/05re2b915",
+  "domains": [],
+  "links": [
+   {
+    "type": "website",
+    "value": "http://ertico.com/"
+   }
+  ],
+  "names": [
+   {
+    "value": "ERTICO ",
+    "types": [
+     "acronym"
+    ],
+    "lang": null
+   },
+   {
+    "value": "European Road Transport Telematics Implementation Co-Ordination",
+    "types": [
+     "ror_display",
+     "label"
+    ],
+    "lang": "en"
+   }
+  ],
+  "relationships": [],
+  "status": "active",
+  "types": [
+   "other"
+  ],
+  "admin": {
+   "created": {
+    "date": "2018-11-14",
+    "schema_version": "1.0"
+   },
+   "last_modified": {
+    "date": "2024-12-11",
+    "schema_version": "2.1"
+   }
+  }
+ },
+ {
+  "admin": {
+   "created": {
+    "date": "2024-05-27",
+    "schema_version": "2.0"
+   },
+   "last_modified": {
+    "date": "2024-12-11",
+    "schema_version": "2.1"
+   }
+  },
+  "domains": [],
+  "established": 1975,
+  "external_ids": [
+   {
+    "all": [
+     "Q95580135"
+    ],
+    "preferred": "Q95580135",
+    "type": "wikidata"
+   }
+  ],
+  "id": "https://ror.org/05qhvy459",
+  "links": [
+   {
+    "type": "website",
+    "value": "https://sprakbanken.se"
+   },
+   {
+    "type": "wikipedia",
+    "value": "https://sv.wikipedia.org/wiki/Nationella_spr%C3%A5kbanken"
+   }
+  ],
+  "locations": [
+   {
+    "geonames_details": {
+     "continent_code": "EU",
+     "continent_name": "Europe",
+     "country_code": "SE",
+     "country_name": "Sweden",
+     "country_subdivision_code": "C",
+     "country_subdivision_name": "Uppsala",
+     "lat": 59.85882,
+     "lng": 17.63889,
+     "name": "Uppsala"
+    },
+    "geonames_id": 2666199
+   },
+   {
+    "geonames_details": {
+     "continent_code": "EU",
+     "continent_name": "Europe",
+     "country_code": "SE",
+     "country_name": "Sweden",
+     "country_subdivision_code": "AB",
+     "country_subdivision_name": "Stockholm",
+     "lat": 59.32938,
+     "lng": 18.06871,
+     "name": "Stockholm"
+    },
+    "geonames_id": 2673730
+   },
+   {
+    "geonames_details": {
+     "continent_code": "EU",
+     "continent_name": "Europe",
+     "country_code": "SE",
+     "country_name": "Sweden",
+     "country_subdivision_code": "O",
+     "country_subdivision_name": "Västra Götaland",
+     "lat": 57.70716,
+     "lng": 11.96679,
+     "name": "Gothenburg"
+    },
+    "geonames_id": 2711537
+   }
+  ],
+  "names": [
+   {
+    "lang": "sv",
+    "types": [
+     "label",
+     "ror_display"
+    ],
+    "value": "Språkbanken"
+   }
+  ],
+  "relationships": [
+   {
+    "label": "Språkbanken Tal",
+    "type": "child",
+    "id": "https://ror.org/05kbck686"
+   },
+   {
+    "label": "Språkbanken Text",
+    "type": "child",
+    "id": "https://ror.org/03xfh2n14"
+   },
+   {
+    "label": "Språkbanken Sam",
+    "type": "child",
+    "id": "https://ror.org/01mqjeb88"
+   }
+  ],
+  "status": "active",
+  "types": [
+   "archive"
+  ]
+ },
+ {
+  "locations": [
+   {
+    "geonames_id": 1816670,
+    "geonames_details": {
+     "continent_code": "AS",
+     "continent_name": "Asia",
+     "country_code": "CN",
+     "country_name": "China",
+     "country_subdivision_code": "BJ",
+     "country_subdivision_name": "Beijing",
+     "lat": 39.9075,
+     "lng": 116.39723,
+     "name": "Beijing"
+    }
+   }
+  ],
+  "established": 2011,
+  "external_ids": [
+   {
+    "type": "grid",
+    "all": [
+     "grid.511812.e"
+    ],
+    "preferred": "grid.511812.e"
+   }
+  ],
+  "id": "https://ror.org/058mseb02",
+  "domains": [],
+  "links": [
+   {
+    "type": "website",
+    "value": "https://en.cfsa.net.cn/"
+   }
+  ],
+  "names": [
+   {
+    "value": "CFSA",
+    "types": [
+     "acronym"
+    ],
+    "lang": null
+   },
+   {
+    "value": "China National Centre for Food Safety Risk Assessment",
+    "types": [
+     "ror_display",
+     "label"
+    ],
+    "lang": "en"
+   }
+  ],
+  "relationships": [
+   {
+    "label": "China National Center for Food Safety Risk Assessment",
+    "type": "successor",
+    "id": "https://ror.org/03kcjz738"
+   }
+  ],
+  "status": "withdrawn",
+  "types": [
+   "government"
+  ],
+  "admin": {
+   "created": {
+    "date": "2021-09-23",
+    "schema_version": "1.0"
+   },
+   "last_modified": {
+    "date": "2024-12-11",
+    "schema_version": "2.1"
+   }
+  }
+ },
+ {
+  "locations": [
+   {
+    "geonames_id": 2155472,
+    "geonames_details": {
+     "continent_code": "OC",
+     "continent_name": "Oceania",
+     "country_code": "AU",
+     "country_name": "Australia",
+     "country_subdivision_code": "NSW",
+     "country_subdivision_name": "New South Wales",
+     "lat": -32.92953,
+     "lng": 151.7801,
+     "name": "Newcastle"
+    }
+   }
+  ],
+  "established": null,
+  "external_ids": [
+   {
+    "type": "fundref",
+    "all": [
+     "100010635"
+    ],
+    "preferred": null
+   },
+   {
+    "type": "grid",
+    "all": [
+     "grid.3006.5"
+    ],
+    "preferred": "grid.3006.5"
+   },
+   {
+    "type": "isni",
+    "all": [
+     "0000 0004 0438 2042"
+    ],
+    "preferred": null
+   }
+  ],
+  "id": "https://ror.org/050b31k83",
+  "domains": [],
+  "links": [
+   {
+    "type": "website",
+    "value": "http://www.hnehealth.nsw.gov.au/Pages/home.aspx"
+   }
+  ],
+  "names": [
+   {
+    "value": "HNE Health",
+    "types": [
+     "alias"
+    ],
+    "lang": "en"
+   },
+   {
+    "value": "Hunter New England Health",
+    "types": [
+     "alias"
+    ],
+    "lang": "en"
+   },
+   {
+    "value": "Hunter New England Local Health District",
+    "types": [
+     "ror_display",
+     "label"
+    ],
+    "lang": "en"
+   }
+  ],
+  "relationships": [
+   {
+    "type": "child",
+    "label": "Belmont Hospital",
+    "id": "https://ror.org/045tkmf79"
+   },
+   {
+    "type": "child",
+    "label": "Hunter Genetics",
+    "id": "https://ror.org/00w1xt505"
+   },
+   {
+    "type": "child",
+    "label": "John Hunter Children's Hospital",
+    "id": "https://ror.org/048sjbt91"
+   },
+   {
+    "type": "child",
+    "label": "John Hunter Hospital",
+    "id": "https://ror.org/0187t0j49"
+   },
+   {
+    "type": "child",
+    "label": "Tamworth Hospital",
+    "id": "https://ror.org/02f53md90"
+   }
+  ],
+  "status": "active",
+  "types": [
+   "healthcare",
+   "funder"
+  ],
+  "admin": {
+   "created": {
+    "date": "2018-11-14",
+    "schema_version": "1.0"
+   },
+   "last_modified": {
+    "date": "2024-12-11",
+    "schema_version": "2.1"
+   }
+  }
+ }
+]

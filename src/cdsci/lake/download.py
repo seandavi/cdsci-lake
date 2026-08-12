@@ -26,10 +26,16 @@ _log = logger.bind(ctx="download")
     wait=wait_exponential(multiplier=2, max=60),
     reraise=True,
 )
-def get_json(url: str, *, params: dict | None = None) -> dict | list:
-    """GET and parse JSON, retrying transient HTTP errors."""
+def get_json(
+    url: str, *, params: dict | None = None, headers: dict | None = None
+) -> dict | list:
+    """GET and parse JSON, retrying transient HTTP errors.
+
+    ``headers`` exists for APIs that content-negotiate: ``pub.orcid.org`` serves
+    XML to httpx's default ``Accept: */*`` and only returns JSON when asked.
+    """
     with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
-        resp = client.get(url, params=params)
+        resp = client.get(url, params=params, headers=headers)
         resp.raise_for_status()
         return resp.json()
 
