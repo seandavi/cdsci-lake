@@ -120,6 +120,8 @@ SOURCES: tuple[Source, ...] = (
            "~8-weekly", "uniprot-ftp", "cc-by-4.0"),
     Source("ncbi_gene", "ncbi_gene", "NCBI Gene bulk dumps: gene_info + gene2ensembl (all taxa)",
            "nightly", "ncbi-ftp", "us-public-domain"),
+    Source("ncbi_gene2pubmed", "ncbi_gene2pubmed", "NCBI gene2pubmed: gene↔PMID links (all taxa)",
+           "nightly", "ncbi-ftp", "us-public-domain"),
     Source("ontology", "ontology", "OBO semantic-sql builds: terms/synonyms/xrefs/edges",
            "on-release", "semsql-s3", "mixed"),
     # "ucsc-free": genome.ucsc.edu/license (2026-08-11) grants no-license-needed
