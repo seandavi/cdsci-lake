@@ -118,6 +118,8 @@ SOURCES: tuple[Source, ...] = (
            "weekly", "github-tsv", "cc0"),
     Source("uniprot", "uniprot", "UniProt accession<->EntrezGene ID mapping (whole dump)",
            "~8-weekly", "uniprot-ftp", "cc-by-4.0"),
+    Source("ncbi_gene", "ncbi_gene", "NCBI Gene bulk dumps: gene_info + gene2ensembl (all taxa)",
+           "nightly", "ncbi-ftp", "us-public-domain"),
     Source("ontology", "ontology", "OBO semantic-sql builds: terms/synonyms/xrefs/edges",
            "on-release", "semsql-s3", "mixed"),
 )

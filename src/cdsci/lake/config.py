@@ -198,6 +198,13 @@ class Settings(BaseSettings):
         "knowledgebase/idmapping/idmapping_selected.tab.gz"
     )
 
+    # NCBI Gene — the bulk dump directory (US government work, public domain).
+    # `gene_info.gz` alone is 1.56 GiB gzipped / ~71.5M rows (confirmed via HEAD,
+    # 2026-08-11). No release number anywhere: the dumps are regenerated nightly,
+    # so Last-Modified and any checksum change daily on identical content and the
+    # snapshot is tagged by retrieval date (see ``sources/ncbi_gene/ingest.py``).
+    ncbi_gene_base_url: str = "https://ftp.ncbi.nlm.nih.gov/gene/DATA/"
+
     # --- Reverse-ETL: publish to bioc-on-ice's Iceberg catalog via icegate ---
     # bioc-on-ice is a *publication* layer (ADR-0015 §"iceberg target"): the
     # REST catalog gateway already exists, live in production, so this is
