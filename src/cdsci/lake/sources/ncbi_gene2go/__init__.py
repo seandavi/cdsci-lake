@@ -1,6 +1,6 @@
 """NCBI ``gene2go`` — GO annotations per Entrez gene, all organisms (issue #39).
 
-Raw landing table ``lake.ncbi_gene2go.gene2go`` (~48M rows); the derived
+Raw landing table ``lake.ncbi_gene2go.gene2go`` (123.9M rows, 2,407 taxa); the derived
 ``ncbi_gene2go.gene_go`` table is a SQL transform model under
 ``models/ncbi_gene2go/`` (ADR-0015), not part of this ingest.
 

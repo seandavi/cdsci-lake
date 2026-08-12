@@ -15,10 +15,12 @@ Its **own** source key (``ncbi_gene2go``, own lake schema) on purpose: gene2go
 and gene_info/gene2ensembl ingest independently, and one overwriting the other's
 ledger row would misreport what either was built from.
 
-Raw is landed whole -- ~48M rows, every organism NCBI annotates (1.37 GiB
-gzipped, confirmed via HEAD 2026-08-11). Per-species scoping is a ``WHERE``
-clause downstream, not a filter on the way in; see ncbi_gene's module docstring
-for why raw must not be a function of what happens to be derived today.
+Raw is landed whole -- **123,856,092 rows over 2,407 taxa**, every organism NCBI
+annotates (1.37 GiB gzipped; counted by streaming the real dump end to end,
+2026-08-11 -- issue #39's "~48M rows" is stale by a factor of 2.5). Per-species
+scoping is a ``WHERE`` clause downstream, not a filter on the way in; see
+ncbi_gene's module docstring for why raw must not be a function of what happens
+to be derived today.
 
 ``PubMed`` is kept as the raw pipe-separated PMID list -- splitting it is
 interpretation, and it is the one column that legitimately changes for an
@@ -52,15 +54,17 @@ COLUMNS: dict[str, str] = {
 }
 
 # The natural key: one annotation is a (gene, term, evidence code, relation,
-# aspect) tuple. Verified unique over 1.17M real rows / 20 taxa sliced out of
-# the live dump. `pubmed` and `go_term` are the updatable attributes.
+# aspect) tuple, verified unique over a 1.17M-row / 20-taxa slice of the live
+# dump. `pubmed` and `go_term` are the updatable attributes.
 #
 # bioc-on-ice's version COALESCE'd evidence/qualifier to '' before merging,
 # because a NULL key column never equals itself and the row would retire and
-# reappear on every merge. That normalization is not ported: `-` (NCBI's null
-# marker) does not occur in any of the eight columns in the real slice, so the
-# COALESCE would only obscure the day it does start occurring. If NCBI ever
-# ships one, `test_land_is_idempotent` is what catches it.
+# reappear on every merge. That normalization is deliberately NOT ported: a full
+# scan of the real dump (123.8M rows, 2026-08-11) finds NCBI's `-` marker in
+# exactly one column -- `pubmed`, 2,065,626 rows, and `pubmed` is not in the key.
+# Every key column is populated on every row, so the COALESCE would buy nothing
+# and hide the day that stops being true; `test_land_is_idempotent` is the
+# tripwire if it ever does.
 KEY: list[str] = ["taxon_id", "gene_id", "go_id", "evidence", "qualifier", "category"]
 
 

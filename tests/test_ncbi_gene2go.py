@@ -85,9 +85,10 @@ def test_land(landed):
 def test_land_is_idempotent(landed):
     """A re-land of unchanged data MERGEs to nothing — no new snapshot.
 
-    This is also the tripwire for NCBI starting to emit '-' in a key column:
-    `nullstr='-'` would make it NULL, a NULL key never equals itself, and the
-    row count would grow here.
+    This is also the tripwire for NCBI starting to emit '-' in a key column
+    (today it appears only in `pubmed`, which is not in the key): `nullstr='-'`
+    would make it NULL, a NULL key never equals itself, and the row count would
+    grow here.
     """
     before = landed.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
     ncbi_gene.land(
