@@ -143,6 +143,40 @@ def test_upsert_excludes_metadata_from_change(lake_settings: Settings):
         con.close()
 
 
+def test_upsert_is_idempotent_for_null_key_columns(lake_settings: Settings):
+    """A NULL in a key column must still match its existing row, not re-INSERT.
+
+    Regression for #71: the MERGE join used plain ``=``, and ``NULL = NULL`` is
+    NULL rather than true, so a row whose key was legitimately absent never
+    matched and duplicated on every load. Real case: ``ncbi_gene.gene2ensembl``
+    keys on six columns including ``rna_accession``/``protein_accession``, which
+    NCBI leaves empty for genes with no RNA/protein product.
+    """
+    con = lake_connect(lake_settings)
+    try:
+        src = "SELECT * FROM (VALUES (1,'a','x'),(2,NULL,'y')) v(id,acc,val)"
+        keys = ["id", "acc"]
+        assert upsert(con, "lake.main.nk", src, key=keys) == 2
+        assert upsert(con, "lake.main.nk", src, key=keys) == 2
+        assert upsert(con, "lake.main.nk", src, key=keys) == 2
+
+        # The NULL-key row exists exactly once, not once per load.
+        n = con.execute("SELECT count(*) FROM lake.main.nk WHERE acc IS NULL").fetchone()[0]
+        assert n == 1
+
+        # And an unchanged re-run still makes no snapshot (the no-op-is-free contract).
+        before = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+        upsert(con, "lake.main.nk", src, key=keys)
+        assert con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0] == before
+
+        # A real change to the NULL-key row updates in place rather than adding one.
+        changed = "SELECT * FROM (VALUES (1,'a','x'),(2,NULL,'Y')) v(id,acc,val)"
+        assert upsert(con, "lake.main.nk", changed, key=keys) == 2
+        assert con.execute("SELECT val FROM lake.main.nk WHERE acc IS NULL").fetchone()[0] == "Y"
+    finally:
+        con.close()
+
+
 def test_reporter_projects_curate(lake_settings: Settings):
     con = lake_connect(lake_settings)
     try:

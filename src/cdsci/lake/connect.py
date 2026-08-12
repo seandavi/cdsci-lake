@@ -273,6 +273,10 @@ def upsert(
     point of time-travel. A bulk ``CREATE OR REPLACE`` would instead make every
     snapshot a full rewrite.
 
+    That guarantee holds for **NULL key columns too**: the MERGE join is
+    ``IS NOT DISTINCT FROM``, so a key whose value is legitimately absent still
+    matches its existing row instead of re-INSERTing every load (#71).
+
     ``exclude_change_cols`` are columns set on update (via ``UPDATE SET *``) but
     **ignored** in the change predicate — for per-load stamps like
     ``snapshot_version`` that differ on every load. Without this, such a column
@@ -306,7 +310,13 @@ def upsert(
 
         cols = [c[0] for c in con.execute("DESCRIBE _cri_stage").fetchall()]
         compare = [c for c in cols if c not in keys and c not in ignore]
-        on = " AND ".join(f"t.{k} = s.{k}" for k in keys)
+        # IS NOT DISTINCT FROM, not `=`: a NULL key column is a real value here
+        # (NCBI writes `-` for "no RNA/protein product", which nullstr turns into
+        # NULL, and that NULL is part of gene2ensembl's natural key). Under plain
+        # `=`, NULL = NULL is NULL rather than true, so such a row never matches
+        # an existing one and re-INSERTs on every load — unbounded duplication,
+        # silently, for exactly the sources whose keys are widest (#71).
+        on = " AND ".join(f"t.{k} IS NOT DISTINCT FROM s.{k}" for k in keys)
         matched = ""
         if compare:
             changed = " OR ".join(f"t.{c} IS DISTINCT FROM s.{c}" for c in compare)
