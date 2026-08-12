@@ -122,6 +122,13 @@ SOURCES: tuple[Source, ...] = (
            "nightly", "ncbi-ftp", "us-public-domain"),
     Source("ontology", "ontology", "OBO semantic-sql builds: terms/synonyms/xrefs/edges",
            "on-release", "semsql-s3", "mixed"),
+    # "ucsc-free": genome.ucsc.edu/license (2026-08-11) grants no-license-needed
+    # public *and* commercial use of the browser's raw table data; the stated
+    # exceptions (liftOver chains, restricted clinical/GISAID tracks) don't apply
+    # to kgXref/knownToLocusLink. Not a standard SPDX/CC identifier, hence its own
+    # string. Cite a UCSC publication when used in published work.
+    Source("ucsc_kg", "ucsc", "UCSC Known Gene xrefs + UCSCKG<->Entrez mapping, per build",
+           "on-assembly-update", "ucsc-goldenpath", "ucsc-free"),
 )
 
 
