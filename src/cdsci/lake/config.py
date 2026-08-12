@@ -204,6 +204,14 @@ class Settings(BaseSettings):
     # so Last-Modified and any checksum change daily on identical content and the
     # snapshot is tagged by retrieval date (see ``sources/ncbi_gene/ingest.py``).
     ncbi_gene_base_url: str = "https://ftp.ncbi.nlm.nih.gov/gene/DATA/"
+    # UCSC Genome Browser goldenPath — per-assembly MySQL table dumps
+    # (``<base>/<build>/database/<table>.txt.gz``, tab-delimited, no header; the
+    # column order comes from the sibling ``<table>.sql``). Used for ``kgXref`` +
+    # ``knownToLocusLink`` (the UCSCKG↔Entrez mapping, issue #55). No license
+    # needed for UCSC's table data (genome.ucsc.edu/license, 2026-08-11) — see
+    # ``sources/ucsc_kg/ingest.py``. The dumps carry no version tag, so (like
+    # retractionwatch) the snapshot is tagged by pull date.
+    ucsc_goldenpath_base: str = "https://hgdownload.soe.ucsc.edu/goldenPath"
 
     # --- Reverse-ETL: publish to bioc-on-ice's Iceberg catalog via icegate ---
     # bioc-on-ice is a *publication* layer (ADR-0015 §"iceberg target"): the
