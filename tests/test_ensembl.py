@@ -27,7 +27,7 @@ from cdsci.lake.transform.models import load_models
 from cdsci.lake.transform.runner import run_all
 
 FIXTURES = Path(__file__).parent / "fixtures"
-MODELS = Path(__file__).parents[1] / "models"
+MODELS = Path(__file__).parents[1] / "transform" / "models"
 SAMPLE = FIXTURES / "ensembl_sample.gtf"
 
 # What Ensembl release 116's species_EnsemblVertebrates.txt says for yeast —
@@ -105,7 +105,7 @@ def test_curate_replace_rewrites_only_its_own_partition(con):
 
 
 def test_models_derive_genome_gene_transcript_exon(con):
-    """The real models under ``models/ensembl/`` against the real GTF slice."""
+    """The real models under ``transform/models/ensembl/`` against the real GTF slice."""
     ensembl.curate(con, SAMPLE, INFO)
     models = {t: m for t, m in load_models(MODELS).items() if t.startswith("ensembl.")}
     assert set(models) == {

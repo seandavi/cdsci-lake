@@ -176,6 +176,38 @@ def _attach_local(con: duckdb.DuckDBPyConnection, s: Settings, *, read_only: boo
     )
 
 
+def resolve_lake_credentials(settings: Settings | None = None) -> tuple[str, str, str, str]:
+    """Resolve ``(r2_key, r2_secret, r2_account, pg_password)`` for the shared lake.
+
+    GSM by default, the env-backed settings when ``cred_source == "env"`` (ADR-0011
+    §6 — omicidx's Prefect workers have no gcloud). Public because the SQLMesh
+    transform config (ADR-0019) needs the same four secrets to build its own
+    connection, and duplicating the resolution there would let the two drift.
+    """
+    s = settings or get_settings()
+    if s.cred_source == "env":
+        creds = (
+            s.r2_access_key_id, s.r2_secret_access_key, s.r2_account_id, s.lake_pg_password,
+        )
+        missing = [
+            n for n, v in zip(
+                ("r2_access_key_id", "r2_secret_access_key", "r2_account_id",
+                 "lake_pg_password"),
+                creds,
+                strict=True,
+            ) if not v
+        ]
+        if missing:
+            raise ValueError(f"cred_source='env' but these settings are unset: {missing}")
+        return creds  # type: ignore[return-value]
+    return (
+        get_secret(s.r2_access_key_secret, s.gsm_project),
+        get_secret(s.r2_secret_key_secret, s.gsm_project),
+        get_secret(s.r2_account_id_secret, s.gsm_project),
+        get_secret(s.lake_pg_password_secret, s.gsm_project),
+    )
+
+
 def _attach_postgres(con: duckdb.DuckDBPyConnection, s: Settings, *, read_only: bool) -> None:
     """Attach the shared Postgres-catalog DuckLake; secrets come from GSM.
 
@@ -188,23 +220,7 @@ def _attach_postgres(con: duckdb.DuckDBPyConnection, s: Settings, *, read_only: 
     gcloud). The GSM path is byte-for-byte unchanged.
     """
     con.execute("INSTALL postgres; LOAD postgres;")
-    if s.cred_source == "env":
-        r2_key, r2_secret, r2_account, pg_password = (
-            s.r2_access_key_id, s.r2_secret_access_key, s.r2_account_id, s.lake_pg_password,
-        )
-        missing = [
-            n for n, v in (
-                ("r2_access_key_id", r2_key), ("r2_secret_access_key", r2_secret),
-                ("r2_account_id", r2_account), ("lake_pg_password", pg_password),
-            ) if not v
-        ]
-        if missing:
-            raise ValueError(f"cred_source='env' but these settings are unset: {missing}")
-    else:
-        r2_key = get_secret(s.r2_access_key_secret, s.gsm_project)
-        r2_secret = get_secret(s.r2_secret_key_secret, s.gsm_project)
-        r2_account = get_secret(s.r2_account_id_secret, s.gsm_project)
-        pg_password = get_secret(s.lake_pg_password_secret, s.gsm_project)
+    r2_key, r2_secret, r2_account, pg_password = resolve_lake_credentials(s)
     con.execute(
         "CREATE OR REPLACE SECRET r2_lake (TYPE r2, KEY_ID ?, SECRET ?, ACCOUNT_ID ?);",
         [r2_key, r2_secret, r2_account],

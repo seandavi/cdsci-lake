@@ -58,7 +58,7 @@ def graph_cmd(ctx: typer.Context) -> None:
 @app.command("run")
 def run_cmd(
     ctx: typer.Context,
-    target: str = typer.Argument(..., help="Model target, e.g. ref.id_crosswalk."),
+    target: str = typer.Argument(..., help="Model target, e.g. ncbi_gene2pubmed.gene_publication."),
 ) -> None:
     """Run one model — no dependency check; use ``run-all`` for the full graph."""
     models = load_models(ctx.obj)

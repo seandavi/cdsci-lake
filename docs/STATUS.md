@@ -60,8 +60,8 @@ cdsci-lake` and `lake_connect(read_only=True)`.
 - **Census geo / `ref` schema** (`census_geo`) — canonical US FIPS + boundaries from
   Census cartographic shapefiles via DuckDB `spatial` (`ST_Read`, no parser). MERGE
   on `fips`: `ref.geo_state` (fips↔abbrev↔name + WKB geom) and `ref.geo_county`
-  (5-digit GEOID). Geometry stored as WKB (consumers `ST_GeomFromWKB`). This is the
-  geographic anchor for `ref.id_crosswalk`: `scp.fips`/`substr(fips,1,2)` ⋈
+  (5-digit GEOID). Geometry stored as WKB (consumers `ST_GeomFromWKB`). The
+  geographic join keys stand on their own: `scp.fips`/`substr(fips,1,2)` ⋈
   `ref.geo_state.fips` and `reporter.org_state` ⋈ `ref.geo_state.abbrev` — a real
   key (verified) replacing the inline state-name map; plus polygons for choropleths.
 - **OpenAlex importer** (`openalex`) — **built + subset-validated, NOT yet loaded to
@@ -172,9 +172,10 @@ state-abbrev crosswalk belongs in the planned `ref` schema (see `docs/design/scp
 
 1. **CRISP (1970–2009, XML)** — the 2 historical RePORTER groups need an XML
    stream-parse path (design doc §1.7–1.8). Not implemented.
-3. **`ref.id_crosswalk`** — the cross-source ID table (PMID↔DOI↔PMCID↔core_project_num↔
-   NCT). Note: `publink.pmid` is BIGINT but `omicidx.pubmed_article.pmid` is VARCHAR —
-   normalize types here.
+3. ~~**`ref.id_crosswalk`**~~ — built, unused, **retired 2026-08-15** in favour of
+   per-pair joins (rationale in `docs/ROADMAP.md`). The type reconciliation it was
+   going to centralize still applies per join site: `publink.pmid` is BIGINT but
+   `omicidx.pubmed_article.pmid` is VARCHAR.
 4. **`lake_ops` metadata model** (ADR-0001 §6) — source/version/run/watermark/contract
    tables in Postgres; wire ingestors to record runs + snapshot ids.
 5. **Scoped roles** — replace the admin bootstrap credential with `lake_writer`

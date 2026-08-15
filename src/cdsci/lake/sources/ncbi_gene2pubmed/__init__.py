@@ -6,7 +6,7 @@ Raw landing table ``lake.ncbi_gene2pubmed.gene2pubmed`` (~40M rows); the derived
 
 Download + load are ``ncbi_gene``'s dump-agnostic helpers; see
 :mod:`cdsci.lake.sources.ncbi_gene2pubmed.ingest` for the column spec, the key,
-and why this is its own table rather than part of ``ref.id_crosswalk``.
+and why this is its own edge table rather than a per-PMID alias row.
 
 License: US government work (NCBI/NLM), public domain.
 """

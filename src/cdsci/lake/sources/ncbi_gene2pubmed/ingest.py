@@ -13,10 +13,12 @@ by the shared helper, the usual memory-bounding lever.
 
 **Target schema decision** (the issue asks for this before any schema is
 committed to): gene<->PubMed links get their **own** ``lake.ncbi_gene2pubmed``
-schema; they do **not** join ``ref.id_crosswalk``. That table's grain is *one
-row per PMID* -- it exists so a consumer can translate one publication
-identifier into its siblings (doi/pmcid/grant/nct), all functionally dependent
-on the pmid. gene2pubmed is a genuine many-to-many edge: one PMID cites many
+schema; they are **not** an alias set keyed one-row-per-PMID. (The argument was
+originally made against ``ref.id_crosswalk``, retired unused 2026-08-15 -- see
+``docs/ROADMAP.md``; the grain reasoning stands on its own.) A per-PMID alias
+row translates one publication identifier into its siblings (doi/pmcid/grant/
+nct), all functionally dependent on the pmid. gene2pubmed is a genuine
+many-to-many edge: one PMID cites many
 genes (PMID 25750732 carries 32,224 gene rows in the first 8 MiB of the real
 dump alone) and one gene is cited by many PMIDs. Folding it in would either
 explode the crosswalk's grain
@@ -24,8 +26,9 @@ explode the crosswalk's grain
 one-row-per-pmid assumption) or bury an array column whose cardinality dwarfs
 the row itself. It is an edge table between two entities, not an alias set for
 one -- so it stays a separate table, keyed on (gene_id, pmid), and a consumer
-joins it to ``ref.id_crosswalk`` on ``pmid`` when they want the other
-publication identifiers.
+joins it on ``pmid`` directly to whichever source carries the identifier they
+want (``icite.metadata`` for doi, ``pmc.documents`` for pmcid,
+``reporter.publink`` for grants, ``ctgov.references`` for trials).
 
 Reverse-ETL to bioc-on-ice (the issue's third section) is deliberately **not**
 here -- see cdsci-lake#63; build in the lake first, publish later if at all.

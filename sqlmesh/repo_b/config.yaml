@@ -1,0 +1,25 @@
+# repo_b — same DuckLake catalog, same state db as repo_a.
+# See repo_a/config.yaml — both repos must name themselves for shared state.
+project: repo_b
+
+gateways:
+  ducklake:
+    connection:
+      type: duckdb
+      extensions:
+        - ducklake
+      catalogs:
+        lake:
+          type: ducklake
+          path: /home/davsean/Documents/git/cdsci-lake/sqlmesh/catalog.ducklake
+          data_path: /home/davsean/Documents/git/cdsci-lake/sqlmesh/lake_data
+    state_connection:
+      type: duckdb
+      database: /home/davsean/Documents/git/cdsci-lake/sqlmesh/state.db
+
+default_gateway: ducklake
+
+model_defaults:
+  dialect: duckdb
+  start: 2026-08-14
+  cron: '@daily'
