@@ -29,3 +29,4 @@ dist/
 # SQLMesh working state (transform/ project + sqlmesh/ sandbox)
 .cache/
 transform/logs/
+*.log
