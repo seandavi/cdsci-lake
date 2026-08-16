@@ -20,20 +20,20 @@ phases are gated so an early phase can be abandoned without stranding work.
 
 Gate for everything else. Nothing in Phase 1+ starts until this is green.
 
-1. **Land `project="omicidx"`** in omicidx (`transform/config.py`). Owner's
-   call under omicidx `RUN-SCOPE.md` gate 6.
-2. **Expect a full re-fingerprint on omicidx's next plan.** Changing the
-   project name changes every snapshot's fingerprint, so all 38 models get new
-   physical objects (`sqlmesh__<schema>.<model>__<new_fingerprint>`) and the old
-   ones are orphaned. Observed in the sandbox: recovery needed no backfill
-   because the physical layer survived, but the *old* physical objects linger.
-   Two consequences to plan for, not discover:
-   - Run omicidx's plan **before** any cdsci-lake work, at a quiet moment, and
-     confirm `sradb.*`/`geometadb.*` still resolve afterwards.
-   - The orphaned `sqlmesh__*` objects are the same class of debris cleaned up
-     on 2026-08-14. Sweep with `maintenance_cli purge-schema` only if a whole
-     schema is dead; otherwise let SQLMesh's own janitor expire them and follow
-     with `maintenance_cli vacuum`.
+1. ~~**Land `project="omicidx"`**~~ — **done.** It is on omicidx `main` (in
+   `372311c`) and live in the shared state: prod's 50 snapshots now carry
+   `project='omicidx'` alongside the 50 older unnamed ones.
+2. ~~Expect a full re-fingerprint on omicidx's next plan.~~ **Wrong — it was a
+   metadata-only change.** This step predicted new physical objects for all 38
+   models plus a pile of orphans. What actually happened when omicidx's timer
+   next ran: `change_category: 6` (metadata), `version` and `dev_version`
+   unchanged, `physical_schema` unchanged. Verified afterwards — still exactly
+   45 physical views across `sqlmesh__{src,stg,sradb,geometadb}`, no
+   duplication, and `sradb.*`/`geometadb.*` resolving normally.
+   Adding a project name touches `metadata_hash`, not `data_hash`, so nothing
+   rebuilds and nothing is orphaned. Kept here because the reasoning that
+   produced the wrong prediction — "a fingerprint change means new physical
+   objects" — is worth not repeating: check the change category first.
 3. **CI check: every participating config sets `project:`.** One unnamed
    project silently disables the cross-project guard for *everyone*
    (`any(self._projects)`, `core/context.py:692,702`). This is a one-line
@@ -64,6 +64,15 @@ invent a MODEL extension for it.
 Order of work: `ncbi_gene2accession/mapping.sql` first — with
 `ref/id_crosswalk.sql` retired (2026-08-15, unused — see `docs/ROADMAP.md`) it is
 the best remaining DAG exerciser. If it ports cleanly the rest are rote.
+
+**Never run a bare `sqlmesh create_external_models` on shared state.** Our
+context loads ~65 models — our own plus every model injected from prod — so the
+command introspects omicidx's upstreams too and writes them into *our*
+`external_models.yaml`. The next plan then proposes re-labelling omicidx's
+external models `project cdsci_lake`. Caught in a plan preview during the port;
+the fix is to prune the file to the tables our own models actually read. The
+same "the context is bigger than this repo" trap applies to anything that
+enumerates models — see the scope filter required in #85.
 
 **Everything ports into cdsci-lake's own environment** (ADR-0019 §6), not
 `prod`. Nothing is promoted during this phase: no other producer depends on
@@ -166,12 +175,13 @@ under-collect; running it before the janitor wastes the pass.
    promoted into `prod` only when another producer depends on them. Promotion
    is a virtual-layer repoint (measured: `SKIP: No model batches to execute`),
    so this is revisitable per model at any time.
-3. **Who runs the apply?** omicidx's is a Prefect flow. cdsci-lake schedules
-   via systemd timers (`SCHEDULING.md`). Per-producer environments mean each
-   scheduler applies to its own environment, so no lock is needed for the
-   common case — but two schedulers can still both plan `prod` once models are
-   promoted. Needs an ordering story *before* the first promotion, not before
-   Phase 1.
+3. **Who runs the apply?** Simpler than first written: omicidx retired Prefect
+   (omicidx `372311c`, "Excise Prefect: retire the worker, schedule everything
+   on systemd timers"), so both producers now schedule the same way —
+   `SCHEDULING.md`'s systemd timer + ntfy convention. Per-producer environments
+   mean each timer applies to its own environment, so no lock is needed for the
+   common case; two timers can still both plan `prod` once models are promoted.
+   Needs an ordering story *before* the first promotion, not before Phase 1.
 4. ~~`ref.id_crosswalk` physical identity~~ — **moot**: the table was retired
    2026-08-15 (unused). The general form still applies to whichever models get
    promoted to `prod`: confirm no published product depends on a model's

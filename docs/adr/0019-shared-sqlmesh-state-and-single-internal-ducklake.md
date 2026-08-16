@@ -78,7 +78,7 @@ candidate model is a full re-run over one engine. That weight stays on the
    see Consequences. That change is the omicidx owner's call under its
    `RUN-SCOPE.md` gate 6. **Nothing in this ADR is actioned before it lands.**
 4. **Reverse-ETL stays ours.** SQLMesh does not subsume the publish step — the
-   same conclusion omicidx reached (its parquet export stays in Prefect) and
+   same conclusion omicidx reached (its parquet export stays a separate job) and
    `docs/research/sqlmesh-on-ducklake.md` reached before adoption.
    `transform/targets.py` (146 LOC, the `parquet`/`duckdb`/`lake_table`/
    `iceberg` adapters) and its ADR-0015 config-not-code contract survive intact,
@@ -122,7 +122,7 @@ candidate model is a full re-run over one engine. That weight stays on the
 - **A `prod` model is executed by whoever plans `prod`.** Measured: repo_a made
   a breaking change and planned `prod` alone; repo_b's dependent model was
   flagged `Indirect Breaking` and **rebuilt by repo_a's plan** (`[full
-  refresh]`). Under a shared `prod`, omicidx's scheduled Prefect apply would
+  refresh]`). Under a shared `prod`, omicidx's scheduled apply would
   rebuild cdsci-lake's models — which for a cross-source model over `icite` /
   `openalex` / `pmc` is tens of millions of rows. That is shared *compute* and
   ambiguous ownership,
