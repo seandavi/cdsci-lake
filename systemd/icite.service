@@ -13,7 +13,13 @@ Type=oneshot
 WorkingDirectory=/home/davsean/Documents/git/cdsci-lake
 EnvironmentFile=/home/davsean/Documents/git/cdsci-lake/.env
 Environment=CU_OPENALEX_LAKE_BACKEND=postgres
-ExecStart=/usr/bin/env uv run python -m cdsci.lake.sources.icite run
+# NOT `/usr/bin/env uv` -- systemd --user gives a minimal PATH
+# (/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin) that excludes ~/.local/bin,
+# where uv is installed, so `env uv` exits 127 "No such file or directory".
+# `systemd-analyze verify` does NOT catch it -- only actually starting the unit
+# does. This unit had the same defect but had not fired since 2026-08-10, so it
+# was latent rather than observed; next trigger was 2026-09-01.
+ExecStart=%h/.local/bin/uv run python -m cdsci.lake.sources.icite run
 # RuntimeMaxSec= silently has no effect on Type=oneshot (systemd quirk --
 # verified with `systemd-analyze verify`, don't reintroduce it). Use
 # TimeoutStartSec= instead, matching bioc-sync.service's precedent. A

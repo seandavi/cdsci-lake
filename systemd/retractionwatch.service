@@ -16,7 +16,12 @@ EnvironmentFile=/home/davsean/Documents/git/cdsci-lake/.env
 # omits this var so a plain test run can never hit prod by accident (see
 # cdsci.lake.config) -- set it explicitly here instead.
 Environment=CU_OPENALEX_LAKE_BACKEND=postgres
-ExecStart=/usr/bin/env uv run python -m cdsci.lake.sources.retractionwatch run
+# NOT `/usr/bin/env uv` -- systemd --user gives a minimal PATH
+# (/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin) that excludes ~/.local/bin,
+# where uv is installed, so `env uv` exits 127 "No such file or directory".
+# `systemd-analyze verify` does NOT catch it -- only actually starting the unit
+# does, which is how this shipped and failed every weekday until 2026-08-18.
+ExecStart=%h/.local/bin/uv run python -m cdsci.lake.sources.retractionwatch run
 # RuntimeMaxSec= silently has no effect on Type=oneshot (systemd quirk --
 # verified with `systemd-analyze verify`, don't reintroduce it). For
 # oneshot, the run-length ceiling is TimeoutStartSec=, matching
