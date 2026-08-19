@@ -165,6 +165,32 @@ The join is on a state-name ↔ 2-letter map built inline; `scp` keys geography 
 FIPS/state-name while `reporter` uses `org_state` (2-letter), so a durable FIPS ↔
 state-abbrev crosswalk belongs in the planned `ref` schema (see `docs/design/scp.md`).
 
+## Transform layer — SQLMesh migration (ADR-0019, PR #92 open)
+
+`main` still runs the old SQL-files-plus-`sqlglot` runner (`cdsci.lake.transform`,
+659 LOC). Branch `sqlmesh-transform` (PR #92, CI green) ports it to SQLMesh per
+ADR-0019 — **not yet merged**:
+
+- `transform/config.py` — SQLMesh config reusing `cdsci.lake` `Settings` +
+  `resolve_lake_credentials()`; `project="cdsci_lake"`, `default_target_environment`
+  pinned off `prod`. State shared with omicidx in the lake Postgres `sqlmesh`
+  schema (prerequisite `project="omicidx"` is live on omicidx `main`).
+- 15 of 32 candidate models ported to `MODEL (...)` DDL under `transform/models/`;
+  `.test.sql` → native `AUDIT` blocks. **Applied and verified in the `cdsci_lake`
+  environment**: `bugsigdb.{experiment,signature,signature_taxon,study}` and
+  `uniprot.identifier_mapping` build, audits pass, row counts match the old
+  tables exactly. The other 10 ported models (ensembl, ncbi_gene*) can't build —
+  blocked on EL sources never loaded to prod, pre-existing gap.
+- `ref.id_crosswalk` (ADR-0015 pilot, 40.8M rows, never read) retired rather
+  than ported.
+- Old runner untouched — deliberate rollback path until #82 retires it.
+
+**Known gaps, tracked in #81** (SQLMesh state → `lake_ops` map): every SQLMesh
+apply writes snapshots with no run attribution (`run_id` NULL, #89); model runs
+don't appear in `/api/runs` (#86); `lake_ops` has no `asset`/`lineage` tables
+yet (#80, #87, #88). Nothing schedules an apply — it only runs when typed.
+ADR-0019 itself is still `Status: proposed`.
+
 ## Next steps (not yet done)
 
 > The canonical, maintained backlog (incl. candidate sources + their cadence) now
@@ -172,6 +198,8 @@ state-abbrev crosswalk belongs in the planned `ref` schema (see `docs/design/scp
 
 1. **CRISP (1970–2009, XML)** — the 2 historical RePORTER groups need an XML
    stream-parse path (design doc §1.7–1.8). Not implemented.
+2. **Merge PR #92**, then work the `lake_ops` sync (#85–#90) and load the six
+   blocked EL sources so all 15 ported models build.
 3. ~~**`ref.id_crosswalk`**~~ — built, unused, **retired 2026-08-15** in favour of
    per-pair joins (rationale in `docs/ROADMAP.md`). The type reconciliation it was
    going to centralize still applies per join site: `publink.pmid` is BIGINT but
@@ -182,8 +210,7 @@ state-abbrev crosswalk belongs in the planned `ref` schema (see `docs/design/scp
    (ingest) and `lake_reader` (consumers) Postgres roles + scoped R2 tokens.
 6. **Consumer migration** — point `cancer_center` enrichment at `lake.icite.metadata`
    (RCR) instead of the per-project caches.
-7. **Repo remote** — this repo has local history only; create the GitHub repo and push
-   (`git remote add origin … && git push -u origin <branch>`).
+7. ~~**Repo remote**~~ — **done**: `github.com/seandavi/cdsci-lake`, `main` pushed.
 
 ## Open versioned views / contract
 
