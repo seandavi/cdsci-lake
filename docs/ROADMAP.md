@@ -20,10 +20,20 @@ rationale for *what's next*, not how it was built.
 - **Versioned consumer views + `dataset_contract` registry** — per-source stable
   views (`icite.v_rcr`, …) as the consumer contract, so column renames don't break
   downstream. Add before multiple consumers depend on raw table column names.
-- **`ref.id_crosswalk`** — the unified PMID ↔ DOI ↔ PMCID ↔ core_project_num ↔ NCT
-  table. Adopt the science-datalake `xref` shape (see below). Normalize `pmid` types
-  (`publink.pmid` BIGINT vs omicidx `VARCHAR`) and DOI (lowercase, unprefixed —
-  already done for `openalex.works`).
+- ~~**`ref.id_crosswalk`**~~ — **retired 2026-08-15, replaced by per-pair joins.**
+  It was built (40.8M rows) as ADR-0015's pilot model and ran five times, but
+  nothing ever read it: no consumer in this repo, none in cu-research-intelligence
+  / bioc-on-ice / omicidx, and no `dataset_contract` row. Every join it was meant
+  to serve is a direct two-table join against `icite` / `pmc.documents` /
+  `openalex.works` / `reporter.publink` / `ctgov.references`, each of which
+  already carries the id pair in question. Publish a unified crosswalk later if a
+  real consumer needs one — as an explicit product (ADR-0019 §2), not a
+  speculative table.
+  **What still applies regardless:** the id-normalization rules it was going to
+  enforce are per-source obligations — `pmid` type reconciliation
+  (`publink.pmid` BIGINT vs omicidx `VARCHAR`) and DOI normalization (lowercase,
+  unprefixed — done for `openalex.works`) must happen wherever a join crosses
+  those sources.
 - **CRISP historical RePORTER (1970–2009, XML)** — the two pre-CSV ExPORTER groups
   need an XML stream-parse path. Not implemented.
 - **Consumer migration** — point `cancer_center` enrichment at `lake.icite.metadata`
@@ -77,7 +87,8 @@ Notes:
   first customer for whatever scheduler we adopt (cron / pg_cron + LISTEN/NOTIFY).
   *(Source landed; the daily-schedule automation is the remaining piece.)*
 - Reliance on Science + SciSciNet v2 join on the OpenAlex Work ID **for free**;
-  Retraction Watch + PreprintToPaper are DOI-only and motivate `ref.id_crosswalk`.
+  Retraction Watch + PreprintToPaper are DOI-only, so they join on normalized DOI
+  directly (`openalex.works.doi` is already lowercased/unprefixed).
 - Use-case fit: **Reliance on Science** (papers→patents = translational benchmarking)
   and **Retraction Watch** (integrity flags) are the highest-value adds; **SciSciNet**
   (disruption as a complement to RCR) is a maybe given its 210 GB; **PreprintToPaper**
@@ -89,9 +100,10 @@ Notes:
 DuckDB-over-Parquet lake of the same sources; we keep our DuckLake substrate but adopt
 its content/schema lessons (see ADR-0005 "Prior art"):
 
-- **`ref.id_crosswalk` ← its `xref` layer** — `doi_map` (normalized DOI →
-  `(source, source_id)`, UNION-ALL, "always filter on `doi=`") + `unified_papers`
-  (denormalized pre-join with per-source coverage flags). This is the template.
+- ~~**`ref.id_crosswalk` ← its `xref` layer**~~ — moot with the crosswalk retired
+  (above). The `doi_map` shape (normalized DOI → `(source, source_id)`, UNION-ALL,
+  "always filter on `doi=`") stays the reference design if a published crosswalk
+  product is ever warranted.
 - **DOI normalization** — done for `openalex.works`; apply uniformly as sources land.
 - **Edge tables over nested JSON** — done for `works_authorships` / `work_references`.
 

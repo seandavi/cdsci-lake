@@ -1,0 +1,5 @@
+catalog.ducklake*
+state.db*
+lake_data/
+.cache/
+logs/

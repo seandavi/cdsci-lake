@@ -81,6 +81,7 @@ rows (`section_type` / `passage_type` are filterable columns).
 ## Crosswalk
 
 `pmcid` ↔ `pmid`/`doi` ties full text to `icite.metadata` (RCR), `reporter.publink`
-(grants), `ctgov.references` (trials), and `omicidx.pubmed_article`. Feeds the
-planned `ref.id_crosswalk` (PMCID anchor). Note the recurring type reconciliation:
+(grants), `ctgov.references` (trials), and `omicidx.pubmed_article` — each a
+direct join on the shared id, no crosswalk table in between (`ref.id_crosswalk`
+was retired unused; see `docs/ROADMAP.md`). Note the recurring type reconciliation:
 `pmc.documents.pmid` is BIGINT vs `omicidx.pubmed_article.pmid` VARCHAR.

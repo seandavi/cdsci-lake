@@ -66,8 +66,8 @@ question #57 itself raises and does not settle — deliberately left unanswered
 here, and publishing deferred per #63.
 
 On ``ref`` vs. its own schema (#57's other open question), the same grain
-argument #38 used for ``gene2pubmed``: ``ref.id_crosswalk``'s grain is one row
-per PMID, and an organization is not a paper — it cannot go there without
+argument #38 used for ``gene2pubmed``: the publication-crosswalk grain is one
+row per PMID, and an organization is not a paper — it cannot go there without
 breaking the grain. ``ref.bioregistry`` is the tempting counterexample, but it
 is a *registry of this lake's own naming convention*, not an upstream entity
 with a release cadence. Landing in ``lake.ror`` keeps the rule simple: **a

@@ -58,8 +58,8 @@ question #56 raises and does not settle — deliberately left unanswered here, a
 publishing deferred per #63.
 
 On ``ref`` vs. its own schema (#56's other open question), the same grain
-argument #38 used for ``gene2pubmed``: ``ref.id_crosswalk``'s grain is one row
-per PMID, and a researcher is not a paper. Landing in ``lake.orcid`` keeps the
+argument #38 used for ``gene2pubmed``: the publication-crosswalk grain is one
+row per PMID, and a researcher is not a paper. Landing in ``lake.orcid`` keeps the
 rule simple — **a source's raw table lives in the source's schema; ``ref`` is
 the transform layer's namespace** (``models/ref/*.sql``). A researcher
 crosswalk, if ever wanted, belongs there as a model over this table. See

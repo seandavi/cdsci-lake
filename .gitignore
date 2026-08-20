@@ -25,3 +25,8 @@ dist/
 /logs/
 
 /.claude/handoffs/
+
+# SQLMesh working state (transform/ project + sqlmesh/ sandbox)
+.cache/
+transform/logs/
+*.log

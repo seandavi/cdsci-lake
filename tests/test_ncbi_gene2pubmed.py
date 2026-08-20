@@ -22,7 +22,7 @@ from cdsci.lake.transform.models import load_models
 from cdsci.lake.transform.runner import run_model
 
 FIXTURES = Path(__file__).parent / "fixtures"
-MODELS = Path(__file__).parent.parent / "models"
+MODELS = Path(__file__).parent.parent / "transform" / "models"
 SAMPLE = FIXTURES / "ncbi_gene2pubmed_sample.tsv"
 VERSION = "test-2026-08-11"
 SCHEMA = "ncbi_gene2pubmed"
@@ -62,7 +62,7 @@ def test_land(landed):
         "SELECT pmid FROM lake.ncbi_gene2pubmed.gene2pubmed WHERE gene_id = 310495633"
     ).fetchall()} == {7751290, 9182530, 10799476, 11200221}
 
-    # One PMID, many genes — the grain that keeps this out of ref.id_crosswalk.
+    # One PMID, many genes — the grain that keeps this out of a per-PMID alias table.
     assert landed.execute(
         "SELECT count(DISTINCT gene_id), any_value(taxon_id) "
         "FROM lake.ncbi_gene2pubmed.gene2pubmed WHERE pmid = 28065880"

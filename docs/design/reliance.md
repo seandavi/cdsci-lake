@@ -80,7 +80,8 @@ single MERGE — run it in the background.
 `reliance.patent_citations` answers **"which of our research is cited by patents,
 and how much"** — a translational benchmarking signal distinct from academic
 citations. The pairs table adds **"our researchers who also patent."** DOI/PMID
-join paths to `icite`/`publink` follow once `ref.id_crosswalk` lands.
+join paths to `icite`/`publink` are direct on the shared id — normalize DOI
+(lowercase, unprefixed) and `pmid` type at the join site.
 
 ## Open items
 

@@ -27,7 +27,7 @@ from cdsci.lake.transform.models import load_models
 from cdsci.lake.transform.runner import run_model
 
 FIXTURES = Path(__file__).parent / "fixtures"
-MODELS = Path(__file__).parent.parent / "models"
+MODELS = Path(__file__).parent.parent / "transform" / "models"
 GENE2GO = FIXTURES / "ncbi_gene2go_sample.tsv"
 VERSION = "test-2026-08-11"
 

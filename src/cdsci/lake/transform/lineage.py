@@ -27,7 +27,7 @@ from .models import Model
 class LineageEdge:
     """One output column's dependency on an upstream ``table.column``."""
 
-    target: str  # "ref.id_crosswalk"
+    target: str  # "ncbi_gene2pubmed.gene_publication"
     target_column: str  # "pmid"
     source_table: str  # "reporter.publink"
     source_column: str  # "pmid"

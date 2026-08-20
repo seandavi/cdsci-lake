@@ -23,7 +23,7 @@ from cdsci.lake.transform.models import load_models
 from cdsci.lake.transform.runner import run_model
 
 FIXTURES = Path(__file__).parent / "fixtures"
-MODELS = Path(__file__).parent.parent / "models"
+MODELS = Path(__file__).parent.parent / "transform" / "models"
 GENE_INFO = FIXTURES / "ncbi_gene_info_sample.tsv"
 GENE2ENSEMBL = FIXTURES / "ncbi_gene2ensembl_sample.tsv"
 VERSION = "test-2026-08-11"

@@ -1,0 +1,31 @@
+# repo_a — shares ONE DuckLake catalog and ONE state db with repo_b.
+# Absolute paths so both repos resolve to the same files regardless of cwd.
+#
+# `project:` is what makes the shared state safe: on load, SQLMesh pulls prod's
+# snapshots and re-injects any whose project is NOT in the current context
+# (core/context.py:702-715), so planning one repo alone preserves the other's
+# models. Both guards are `any(self._projects)` — an unset name (the default "")
+# is falsy and silently disables the whole mechanism.
+project: repo_a
+
+gateways:
+  ducklake:
+    connection:
+      type: duckdb
+      extensions:
+        - ducklake
+      catalogs:
+        lake:
+          type: ducklake
+          path: /home/davsean/Documents/git/cdsci-lake/sqlmesh/catalog.ducklake
+          data_path: /home/davsean/Documents/git/cdsci-lake/sqlmesh/lake_data
+    state_connection:
+      type: duckdb
+      database: /home/davsean/Documents/git/cdsci-lake/sqlmesh/state.db
+
+default_gateway: ducklake
+
+model_defaults:
+  dialect: duckdb
+  start: 2026-08-14
+  cron: '@daily'

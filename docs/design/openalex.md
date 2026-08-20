@@ -120,4 +120,5 @@ python -m cdsci.lake.sources.openalex works --max-files 4 --mode merge
 - A full author table incl. unaffiliated authorships (re-derivable from the snapshot).
 - Watermark-driven incrementals (read only `updated_date > last_pull`) — wire into the
   planned `lake_ops` metadata model (ADR-0001 §6).
-- Type-normalize `pmid` against omicidx PubMed (`VARCHAR`) for `ref.id_crosswalk`.
+- Type-normalize `pmid` against omicidx PubMed (`VARCHAR`) wherever the two are
+  joined — a per-join-site obligation now that `ref.id_crosswalk` is retired.
