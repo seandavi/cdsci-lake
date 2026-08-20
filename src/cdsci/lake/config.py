@@ -131,14 +131,15 @@ class Settings(BaseSettings):
     openalex_batch_files: int = Field(default=50, ge=1)
     openalex_max_files: int | None = None
     openalex_max_object_bytes: int = 67_108_864  # 64 MiB — hyperauthorship records
-    # OBO ontologies — semantic-sql's per-ontology SQLite builds, published to the
-    # public ``bbop-sqlite`` S3 bucket (anonymous https; no credentials). The bucket
-    # listing IS the registry (``available_ontologies`` reads ListObjectsV2), so a
+    # OBO ontologies — semantic-sql's per-ontology SQLite builds, served via the
+    # semanticsql.berkeleybop.io CDN (migrated from the retired bbop-sqlite S3 bucket;
+    # see INCATools/semantic-sql#115). The bucket listing IS the registry
+    # (``available_ontologies`` reads ListObjectsV2 proxied at the CDN root), so a
     # new OBO ontology is picked up with no code change. Each ``<stem>.db.gz`` is the
     # relational-graph SQLite encoding of one OWL ontology, scanned via DuckDB's
     # sqlite extension; snapshot_version = the object's S3 Last-Modified date.
     # Verified 2026-06-26 (332 ontologies available).
-    semsql_base_url: str = "https://s3.amazonaws.com/bbop-sqlite"
+    semsql_base_url: str = "https://semanticsql.berkeleybop.io"
     # Europe PMC text-mined annotations — a directory of per-database CSVs (one
     # file per annotated resource: uniprot, chebi, nct, …), all the same shape
     # (accession, PMCID, EXTID, SOURCE). Loaded into one tidy table keyed by the
