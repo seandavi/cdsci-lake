@@ -3,6 +3,8 @@
 - Status: accepted
 - Date: 2026-08-07
 
+> Superseded on the `iceberg` target by [ADR-0020](0020-public-iceberg-writes-are-pyiceberg-only.md).
+
 > Un-defers the transform layer ADR-0012/0013 parked, and gives ADR-0014's asset/
 > lineage model its first non-EL producer. Settled in conversation; the
 > deliberation is preserved as the decisions below.

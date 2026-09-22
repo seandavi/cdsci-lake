@@ -1,12 +1,25 @@
 """``cdsci.lake.transform.targets`` — reverse-ETL adapters (ADR-0015 decision 3).
 
 A target is config, not code: ``{"type": "parquet" | "duckdb" | "lake_table" |
-"iceberg", ...}``. DuckDB stays the sole execution engine — native Parquet,
-native DuckDB ``ATTACH``, the ``iceberg`` extension through an attached REST
-catalog (icegate). ``postgres`` is deliberately absent — omicidx's existing
-reverse-ETL does zero-downtime A/B-slot table swaps with per-table hardcoded
-DDL, which needs a declarative DDL/column-mapping design this module doesn't
-have yet (tracked separately, not in scope for ADR-0015's first pass).
+"iceberg", ...}``. DuckDB stays the sole execution engine for ``parquet``,
+``duckdb``, and ``lake_table`` — native Parquet, native DuckDB ``ATTACH``.
+``postgres`` is deliberately absent — omicidx's existing reverse-ETL does
+zero-downtime A/B-slot table swaps with per-table hardcoded DDL, which needs a
+declarative DDL/column-mapping design this module doesn't have yet (tracked
+separately, not in scope for ADR-0015's first pass).
+
+The ``iceberg`` target type is disabled (cdsci-lake#63, M0 of the DuckLake
+publication program): its DuckDB ``DELETE FROM`` + ``INSERT INTO`` full-table
+refresh clobbered 2.4M pre-existing rows in a shared-writer table
+(``annotation.identifier_mapping``) because the delete was unscoped to this
+call's own rows. Production public Iceberg writes are PyIceberg-only per
+program policy (AGENTS.md, design doc §16 decision 6); DuckDB ``DELETE`` /
+``UPDATE`` / ``MERGE`` / ``CREATE OR REPLACE`` against a production public
+Iceberg table is forbidden. ``publish()`` raises before any catalog
+connection when asked for ``type="iceberg"``. The type stays in ``Target``'s
+``Literal`` so an existing config fails loudly at publish time rather than
+silently at parse/construction time. A shared PyIceberg adapter is tracked as
+M6 of the publication program (``docs/design/scientific-publication-platform.md``).
 """
 
 from __future__ import annotations
@@ -38,11 +51,8 @@ class Target:
       source table's own name).
     * ``lake_table`` — ``{}``; a no-op, the model's own write already *is* the
       publish (named for symmetry — a model can list it as a target explicitly).
-    * ``iceberg`` — ``{"endpoint", "token", "catalog", "namespace", "table"}``.
-      ``token`` is the already-resolved secret — resolving it from env/GSM is
-      the caller's job (matching ``Settings``' role elsewhere in this repo),
-      not this module's; keeps ``_publish_iceberg`` testable without mutating
-      process environment.
+    * ``iceberg`` — disabled (cdsci-lake#63). ``publish()`` raises
+      ``NotImplementedError`` for this type; see the module docstring.
     """
 
     type: Literal["parquet", "duckdb", "lake_table", "iceberg"]
@@ -66,7 +76,15 @@ def publish(
     elif target.type in ("duckdb", "lake_table"):
         _publish_duckdb(con, source_table, target.config)
     elif target.type == "iceberg":
-        _publish_iceberg(con, source_table, target.config)
+        raise NotImplementedError(
+            "the 'iceberg' reverse-ETL target is disabled (cdsci-lake#63): its DuckDB "
+            "DELETE+INSERT full-table refresh clobbered a shared-writer table's "
+            "pre-existing rows. Production public Iceberg writes are PyIceberg-only "
+            "(AGENTS.md; docs/design/scientific-publication-platform.md §16 decision 6); "
+            "DuckDB DELETE/UPDATE/MERGE/CREATE OR REPLACE against public Iceberg is "
+            "forbidden. No replacement adapter exists yet (tracked as M6 of the "
+            "DuckLake publication program)."
+        )
     else:
         raise ValueError(f"unknown reverse-ETL target type: {target.type!r}")
 
@@ -110,37 +128,3 @@ def _publish_duckdb(con: duckdb.DuckDBPyConnection, source_table: str, config: d
     finally:
         con.execute("DETACH _publish_target;")
 
-
-def _publish_iceberg(con: duckdb.DuckDBPyConnection, source_table: str, config: dict) -> None:
-    """CREATE-if-absent + full-refresh MERGE, not a literal ``CREATE OR REPLACE`` passthrough.
-
-    DuckDB's Iceberg ``UPDATE``/``DELETE`` are merge-on-read (positional
-    deletes) only — ``CREATE OR REPLACE TABLE`` is not an Iceberg write
-    primitive. A full-table refresh is create-if-absent, then delete-all +
-    insert-all. Writes through an attached REST catalog — icegate, already
-    live in production for ``bioc-on-ice`` (ADR-0015).
-    """
-    con.execute("INSTALL iceberg; LOAD iceberg;")
-    con.execute(
-        "CREATE OR REPLACE SECRET _publish_ice (TYPE ICEBERG, TOKEN ?);", [config["token"]]
-    )
-    con.execute(
-        f"ATTACH '{config['catalog']}' AS _publish_ice_cat "
-        f"(TYPE ICEBERG, ENDPOINT '{config['endpoint']}', SECRET _publish_ice);"
-    )
-    try:
-        namespace, table = config["namespace"], config["table"]
-        con.execute(f"CREATE SCHEMA IF NOT EXISTS _publish_ice_cat.{namespace};")
-        full = f"_publish_ice_cat.{namespace}.{table}"
-        exists = con.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_catalog = ? AND table_schema = ? AND table_name = ?",
-            ["_publish_ice_cat", namespace, table],
-        ).fetchone()
-        if exists is None:
-            con.execute(f"CREATE TABLE {full} AS SELECT * FROM {source_table} LIMIT 0;")
-        con.execute(f"DELETE FROM {full};")
-        con.execute(f"INSERT INTO {full} SELECT * FROM {source_table};")
-        logger.info("transform: published {} -> iceberg {}", source_table, full)
-    finally:
-        con.execute("DETACH _publish_ice_cat;")

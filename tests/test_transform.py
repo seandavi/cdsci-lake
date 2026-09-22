@@ -2,8 +2,8 @@
 
 Exercise model discovery, the dependency graph/topo sort, model execution
 against a local DuckLake, and the parquet/duckdb reverse-ETL adapters. No
-network, no Postgres — the ``iceberg`` adapter needs a live REST catalog and
-is exercised only by manual smoke test (targets.py's docstring notes this).
+network, no Postgres — the ``iceberg`` target is disabled (cdsci-lake#63) and
+raises before any catalog connection; see ``test_publish_iceberg_disabled``.
 """
 
 from __future__ import annotations
@@ -197,5 +197,22 @@ def test_publish_parquet_requires_date(lake_settings: Settings):
         con.execute("CREATE SCHEMA lake.a; CREATE TABLE lake.a.t1 AS SELECT 1 AS x")
         with pytest.raises(ValueError, match="date is required"):
             publish(con, "lake.a.t1", Target("parquet", {"path": "/tmp/{date}/t1.parquet"}))
+    finally:
+        con.close()
+
+
+def test_publish_iceberg_disabled(lake_settings: Settings):
+    """cdsci-lake#63: the iceberg target must fail closed, before any catalog connection.
+
+    Config deliberately omits endpoint/token/catalog — if this ever tried to
+    connect, it would raise a KeyError or a connection error instead of this
+    NotImplementedError, so the exact error type/message doubles as proof no
+    catalog attach was attempted.
+    """
+    con = lake_connect(lake_settings)
+    try:
+        con.execute("CREATE SCHEMA lake.a; CREATE TABLE lake.a.t1 AS SELECT 1 AS x")
+        with pytest.raises(NotImplementedError, match="cdsci-lake#63"):
+            publish(con, "lake.a.t1", Target("iceberg", {}))
     finally:
         con.close()
