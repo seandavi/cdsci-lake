@@ -234,15 +234,36 @@ class SourceAssetVersion:
 
 @dataclass(frozen=True)
 class ArtifactEntry:
+    """``size``/``sha256``/``content_type`` are populated for location-bearing
+    entries that name one file (e.g. ``ducklake``); optional -- ``None`` -- for
+    entries like ``parquet`` whose ``location`` names a directory, not one file.
+    Omitted from ``to_dict()`` when ``None`` so existing manifests without these
+    fields still round-trip byte-identically.
+    """
+
     status: ArtifactStatus
     required: bool
     location: str = ""
+    size: int | None = None
+    sha256: str | None = None
+    content_type: str | None = None
 
     def __post_init__(self) -> None:
         _check_public_strings(self)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"status": self.status.value, "required": self.required, "location": self.location}
+        d: dict[str, Any] = {
+            "status": self.status.value,
+            "required": self.required,
+            "location": self.location,
+        }
+        if self.size is not None:
+            d["size"] = self.size
+        if self.sha256 is not None:
+            d["sha256"] = self.sha256
+        if self.content_type is not None:
+            d["content_type"] = self.content_type
+        return d
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> ArtifactEntry:
@@ -250,6 +271,9 @@ class ArtifactEntry:
             status=ArtifactStatus(d["status"]),
             required=d["required"],
             location=d.get("location", ""),
+            size=d.get("size"),
+            sha256=d.get("sha256"),
+            content_type=d.get("content_type"),
         )
 
 

@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 import duckdb
 
@@ -48,14 +49,58 @@ def _get_or_record_failure(
         return None
 
 
+_PRIVATE_PATH_RAW_MARKERS = (rb"/(home|tmp|var|mnt)/", rb"://", rb"[A-Za-z]:[\\/]")
+_PRIVATE_PATH_RAW_PATTERN = re.compile(b"|".join(_PRIVATE_PATH_RAW_MARKERS))
+
+
+def _inspect_catalog_metadata(catalog_path: Path) -> tuple[list[str], int]:
+    """Open ``catalog_path`` as a plain (non-DuckLake) database and return
+    ``(leak_reasons, snapshot_count)``: ``leak_reasons`` names every place (raw file
+    bytes, or a ``table.column``) that still looks like an absolute path or URL
+    scheme -- design §4 rule 4 -- and ``snapshot_count`` is the released catalog's own
+    ``ducklake_snapshot`` row count (a release is one published state -- cdsci-lake#95
+    M2 review finding #7's single-snapshot collapse). Reasons never include the leaked
+    value itself, only its location -- an ``AcceptanceCheck.detail`` is itself a
+    public-artifact field (design §4), so it must not carry the very private path
+    this check exists to catch.
+    """
+    reasons: list[str] = []
+    if _PRIVATE_PATH_RAW_PATTERN.search(catalog_path.read_bytes()):
+        reasons.append("raw catalog bytes contain an absolute-path or URL-scheme marker")
+
+    con = duckdb.connect(str(catalog_path), read_only=True)
+    try:
+        table_names = [
+            r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()
+        ]
+        for table_name in table_names:
+            for col_name, col_type, *_ in con.execute(f"DESCRIBE {table_name}").fetchall():
+                if col_type != "VARCHAR":
+                    continue
+                hit = con.execute(
+                    f'SELECT count(*) FROM {table_name} WHERE "{col_name}" IS NOT NULL '
+                    f'AND ("{col_name}" LIKE \'/%\' OR "{col_name}" LIKE \'%://%\')'
+                ).fetchone()[0]
+                if hit:
+                    reasons.append(f"{table_name}.{col_name}")
+        snapshot_count = con.execute("SELECT count(*) FROM ducklake_snapshot").fetchone()[0]
+    finally:
+        con.close()
+    return reasons, snapshot_count
+
+
 def _check_frozen_ducklake(
     store: LocalDirStore, prefix: PurePosixPath, manifest: ReleaseManifest
 ) -> list[AcceptanceCheck]:
     """Design §11.6: a fresh, credential-free ``ATTACH`` of this release's own
     ``catalog.ducklake`` (local -- the http-served variant is the same statement
     against a served base URL, exercised in acceptance, not here) -- every manifest
-    table is discoverable, its ``count(*)`` matches the manifest row count, and its
-    columns match ``schema.json``.
+    table is discoverable, its ``count(*)`` matches the manifest row count, a bounded
+    sample query genuinely opens its Parquet file(s) (check 3), and its columns match
+    ``schema.json``. Also checks the catalog carries no private path (design §4 rule
+    4), collapses to one published snapshot (review finding #7), the ``ducklake``
+    artifact's recorded checksum matches the file on disk, and mutation under
+    ``READ_ONLY`` fails (check 10).
     """
     checks: list[AcceptanceCheck] = []
     catalog_dir = store.root / prefix
@@ -67,20 +112,93 @@ def _check_frozen_ducklake(
         return checks
     checks.append(AcceptanceCheck("ducklake.catalog_readable", passed=True, required=True))
 
+    artifact = manifest.artifacts.get("ducklake")
+    if artifact is not None and artifact.sha256 is not None:
+        actual_bytes = catalog_path.read_bytes()
+        actual_size = len(actual_bytes)
+        actual_sha256 = hashlib.sha256(actual_bytes).hexdigest()
+        checks.append(
+            AcceptanceCheck(
+                "ducklake.artifact_checksum_matches",
+                passed=(actual_size == artifact.size and actual_sha256 == artifact.sha256),
+                required=True,
+                detail=f"size={actual_size} vs manifest {artifact.size}, "
+                f"sha256_ok={actual_sha256 == artifact.sha256}",
+            )
+        )
+
+    try:
+        leak_reasons, snapshot_count = _inspect_catalog_metadata(catalog_path)
+    except Exception as exc:  # noqa: BLE001 -- e.g. a corrupt catalog file; type name
+        # only, same reasoning as the attach_succeeds except-clause below.
+        checks.append(
+            AcceptanceCheck(
+                "ducklake.no_private_paths",
+                passed=False,
+                required=True,
+                detail=type(exc).__name__,
+            )
+        )
+        checks.append(
+            AcceptanceCheck(
+                "ducklake.single_snapshot", passed=False, required=True, detail=type(exc).__name__
+            )
+        )
+    else:
+        checks.append(
+            AcceptanceCheck(
+                "ducklake.no_private_paths",
+                passed=not leak_reasons,
+                required=True,
+                detail="; ".join(leak_reasons)[:500],
+            )
+        )
+        checks.append(
+            AcceptanceCheck(
+                "ducklake.single_snapshot",
+                passed=snapshot_count == 1,
+                required=True,
+                detail=f"snapshot_count={snapshot_count}",
+            )
+        )
+
     con = duckdb.connect()
     try:
         con.execute("INSTALL ducklake; LOAD ducklake;")
         con.execute(frozen_ducklake_attach_sql(str(catalog_dir), alias="frozen"))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 -- never the raw message, which can carry
+        # this build's local path (design §4 rule 4) and would itself then fail the
+        # public-path allowlist AcceptanceCheck.__post_init__ runs on `detail`.
         checks.append(
             AcceptanceCheck(
-                "ducklake.attach_succeeds", passed=False, required=True, detail=str(exc)[:500]
+                "ducklake.attach_succeeds",
+                passed=False,
+                required=True,
+                detail=type(exc).__name__,
             )
         )
         return checks
     checks.append(AcceptanceCheck("ducklake.attach_succeeds", passed=True, required=True))
 
     try:
+        if manifest.tables:
+            first_table = manifest.tables[0].name
+            try:
+                con.execute(f'DELETE FROM frozen.main."{first_table}" WHERE 1=0')
+            except Exception:  # noqa: BLE001 -- expected: READ_ONLY must reject this
+                checks.append(
+                    AcceptanceCheck("ducklake.read_only_enforced", passed=True, required=True)
+                )
+            else:
+                checks.append(
+                    AcceptanceCheck(
+                        "ducklake.read_only_enforced",
+                        passed=False,
+                        required=True,
+                        detail="mutation under READ_ONLY unexpectedly succeeded",
+                    )
+                )
+
         table_names = {
             r[0] for r in con.execute(
                 "SELECT table_name FROM duckdb_tables() WHERE database_name = 'frozen'"
@@ -104,17 +222,39 @@ def _check_frozen_ducklake(
                 )
             )
 
+            try:
+                con.execute(f"SELECT * FROM {qualified} LIMIT 5").fetchall()
+            except Exception as exc:  # noqa: BLE001 -- e.g. a deleted/corrupt Parquet
+                # file behind a catalog whose count(*) is answered from catalog stats
+                # alone (design §11.6 check 3) -- type name only, see attach_succeeds.
+                checks.append(
+                    AcceptanceCheck(
+                        f"{table.name}.ducklake_sample_readable",
+                        passed=False,
+                        required=True,
+                        detail=type(exc).__name__,
+                    )
+                )
+            else:
+                checks.append(
+                    AcceptanceCheck(
+                        f"{table.name}.ducklake_sample_readable", passed=True, required=True
+                    )
+                )
+
             schema_bytes = _get_or_record_failure(
                 store, prefix / table.schema_path, checks, f"{table.name}.ducklake_schema_readable"
             )
             if schema_bytes is None:
                 continue
             expected_columns = [
-                (c["name"], _expected_duckdb_type(c["arrow_type"]))
+                (c["name"], _expected_duckdb_type(c["arrow_type"]), c["nullable"])
                 for c in json.loads(schema_bytes)["columns"]
             ]
             described = con.execute(f"DESCRIBE {qualified}").fetchall()
-            actual_columns = [(name, col_type) for name, col_type, *_ in described]
+            actual_columns = [
+                (name, col_type, null == "YES") for name, col_type, null, *_ in described
+            ]
             checks.append(
                 AcceptanceCheck(
                     f"{table.name}.ducklake_schema_matches",
@@ -280,8 +420,18 @@ def verify_release(
             )
         )
 
-    if isinstance(store, LocalDirStore) and "ducklake" in manifest.artifacts:
-        checks.extend(_check_frozen_ducklake(store, prefix, manifest))
+    if "ducklake" in manifest.artifacts:
+        if isinstance(store, LocalDirStore):
+            checks.extend(_check_frozen_ducklake(store, prefix, manifest))
+        else:
+            checks.append(
+                AcceptanceCheck(
+                    "ducklake.acceptance_supported",
+                    passed=False,
+                    required=True,
+                    detail=f"Frozen DuckLake acceptance not implemented for {type(store).__name__}",
+                )
+            )
 
     return AcceptanceReport(
         dataset=dataset_id, release=release_id, run_id=run_id,
