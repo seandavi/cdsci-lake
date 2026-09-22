@@ -1,14 +1,20 @@
 # 0019. One internal DuckLake, one shared SQLMesh state: transform unification across producers
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-08-15
+- Accepted: 2026-09-22. The omicidx `project=` prerequisite landed on omicidx
+  main (see commit 1b2d9a6) and the port shipped in PR #92. Accepted on the
+  expectation that bioc-on-ice and cancer-on-ice join as further producers on
+  the shared state, which is where the cross-producer graph pays off. Review
+  trigger: if no model is consumed cross-producer within two quarters, revisit
+  against the ADR-0015 fallback.
 
 > Revisits ADR-0015's rejection of SQLMesh for this repo. ADR-0015 evaluated
 > SQLMesh as a *single-project* transform engine; the multi-repo mode — which
 > is where the unification value lives — was not considered. Settled in
 > conversation after a local two-project spike; the deliberation is preserved
-> as the decisions below. **Proposed, not accepted:** decision 3 has a
-> prerequisite in a repo this ADR does not own.
+> as the decisions below. Decision 3's prerequisite in omicidx has since
+> landed; see the acceptance note above.
 
 ## Context
 
