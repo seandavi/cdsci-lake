@@ -1,0 +1,12 @@
+[Unit]
+Description=Hourly SQLMesh transform state sync into lake_ops (cdsci-lake#85)
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=300
+# Idempotent (watermark-bracketed): firing on a quiet hour costs nothing, so
+# catch up after downtime rather than silently skipping a missed run.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

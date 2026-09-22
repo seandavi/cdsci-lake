@@ -1,0 +1,33 @@
+# Pilot job for the cdsci-lake systemd scheduling convention -- see
+# monode/infrastructure's SCHEDULING.md for the full pattern this is an
+# instance of.
+[Unit]
+Description=Sync SQLMesh transform state into lake_ops (cdsci-lake#85)
+Documentation=file:///home/davsean/Documents/git/cdsci-lake/docs/design/dashboard_and_scheduling.md
+After=network-online.target
+Wants=network-online.target
+OnFailure=ntfy-notify@%N.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/davsean/Documents/git/cdsci-lake
+EnvironmentFile=/home/davsean/Documents/git/cdsci-lake/.env
+# Prod writes go to the shared Postgres-catalog lake; .env deliberately
+# omits this var so a plain test run can never hit prod by accident (see
+# cdsci.lake.config) -- set it explicitly here instead.
+Environment=CU_OPENALEX_LAKE_BACKEND=postgres
+# NOT `/usr/bin/env uv` -- systemd --user gives a minimal PATH
+# (/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin) that excludes ~/.local/bin,
+# where uv is installed, so `env uv` exits 127 "No such file or directory"
+# (icite.service/retractionwatch.service's precedent).
+ExecStart=%h/.local/bin/uv run python -m cdsci.lake.transform sync
+# RuntimeMaxSec= silently has no effect on Type=oneshot (systemd quirk --
+# verified with `systemd-analyze verify`, don't reintroduce it). The sync
+# only reads SQLMesh state + brackets a snapshot-id range, no bulk download --
+# generous ceiling on purpose so a slow day doesn't false-alarm, while a
+# genuine hang still turns into a Failed state.
+TimeoutStartSec=1800
+Nice=10
+
+[Install]
+WantedBy=default.target
