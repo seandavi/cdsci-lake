@@ -42,6 +42,7 @@ from typing import Protocol
 import duckdb
 
 from ..contracts import DatasetContract, Materialization, TableContract, TemporalModel
+from ..log import event
 from .release import (
     AcceptanceReport,
     ArtifactEntry,
@@ -263,6 +264,14 @@ def build_release(
         prefix / "provenance.json", _provenance_bytes(manifest), content_type=_JSON_CONTENT_TYPE
     )
     out.put_if_absent(prefix / "lineage.json", b'{"edges": []}', content_type=_JSON_CONTENT_TYPE)
+    event(
+        "build_release_completed",
+        run_id=manifest.run_id,
+        asset=f"release.{manifest.dataset}.{manifest.release}",
+        release=manifest.release,
+        rows=sum(t.row_count for t in manifest_tables if t.row_count is not None),
+        status=manifest.status.value,
+    )
     return manifest
 
 
@@ -316,6 +325,13 @@ def finalize_release(
     store.put_if_absent(
         prefix / "manifest.json", published.to_json().encode(), content_type=_JSON_CONTENT_TYPE
     )
+    event(
+        "release_published",
+        run_id=published.run_id,
+        asset=f"release.{published.dataset}.{published.release}",
+        release=published.release,
+        status=published.status.value,
+    )
     return published
 
 
@@ -346,6 +362,13 @@ def record_release(
         details={"checks": [c.to_dict() for c in report.checks]},
     )
     ops.record_publication_receipt(con, receipt)
+    event(
+        "release_receipt_recorded",
+        run_id=manifest.run_id,
+        asset=f"release.{manifest.dataset}.{manifest.release}",
+        release=manifest.release,
+        status=receipt.status.value,
+    )
 
     release_ref = f"release.{manifest.dataset}.{manifest.release}"
     ops.register_asset(

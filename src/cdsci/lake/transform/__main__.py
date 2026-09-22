@@ -28,9 +28,12 @@ app = typer.Typer(
 def _main(
     ctx: typer.Context,
     log_level: str = typer.Option("INFO", "--log-level", help="loguru level."),
+    log_json: bool = typer.Option(
+        False, "--log-json", help="Emit structured JSON log events (design §8.2)."
+    ),
     models_dir: str = typer.Option("models", "--models-dir", help="Directory of *.sql models."),
 ) -> None:
-    configure(log_level)
+    configure(log_level, json=log_json)
     ctx.obj = models_dir
 
 
