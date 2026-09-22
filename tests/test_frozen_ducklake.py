@@ -22,7 +22,7 @@ from pathlib import Path
 import duckdb
 import pytest
 from fixtures.contracts import dataset as fx
-from test_release_builder import _candidate, _tables
+from test_release_builder import _candidate, _RangeHandler, _tables
 
 from cdsci.lake.publish import frozen
 from cdsci.lake.publish.builder import LocalDirStore, ObjectStore, build_release, finalize_release
@@ -111,7 +111,7 @@ def test_frozen_catalog_served_over_http_attach_and_select(tmp_path: Path):
     _, manifest = _build_frozen(tmp_path)
     release_dir = _release_dir(tmp_path)
 
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(release_dir))
+    handler = functools.partial(_RangeHandler, directory=str(release_dir))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     port = server.server_port
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -261,7 +261,7 @@ def test_frozen_catalog_http_sample_query_fetches_parquet_bytes(tmp_path: Path):
     release_dir = _release_dir(tmp_path)
     requested_paths: list[str] = []
 
-    class _LoggingHandler(http.server.SimpleHTTPRequestHandler):
+    class _LoggingHandler(_RangeHandler):
         def log_message(self, format, *args):  # noqa: A002
             requested_paths.append(self.path)
 

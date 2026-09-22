@@ -49,8 +49,14 @@ def _get_or_record_failure(
         return None
 
 
-_PRIVATE_PATH_RAW_MARKERS = (rb"/(home|tmp|var|mnt)/", rb"://", rb"[A-Za-z]:[\\/]")
-_PRIVATE_PATH_RAW_PATTERN = re.compile(b"|".join(_PRIVATE_PATH_RAW_MARKERS))
+# A rooted or drive-lettered path of >= 3 segments, not preceded by a path/word
+# char (so it does not fire inside the relative `tables/x/data/y.parquet` strings the
+# catalog legitimately holds, nor on random slack bytes). Root-agnostic: /data, /Users,
+# /scratch are caught as well as /home and /tmp.
+_PRIVATE_PATH_RAW_PATTERN = re.compile(
+    rb"(?<![A-Za-z0-9_.+/\\-])(?:[A-Za-z]:[\\/]|[/\\])(?:[A-Za-z0-9_.+-]+[\\/]){2,}[A-Za-z0-9_.+-]+"
+    rb"|://"
+)
 
 
 def _inspect_catalog_metadata(catalog_path: Path) -> tuple[list[str], int]:
@@ -113,7 +119,16 @@ def _check_frozen_ducklake(
     checks.append(AcceptanceCheck("ducklake.catalog_readable", passed=True, required=True))
 
     artifact = manifest.artifacts.get("ducklake")
-    if artifact is not None and artifact.sha256 is not None:
+    if artifact is None or artifact.sha256 is None or artifact.size is None:
+        checks.append(
+            AcceptanceCheck(
+                "ducklake.artifact_checksum_matches",
+                passed=False,
+                required=True,
+                detail="manifest.artifacts.ducklake lacks size/sha256",
+            )
+        )
+    else:
         actual_bytes = catalog_path.read_bytes()
         actual_size = len(actual_bytes)
         actual_sha256 = hashlib.sha256(actual_bytes).hexdigest()

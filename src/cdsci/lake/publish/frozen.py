@@ -176,7 +176,9 @@ def _materialize_catalog(tmp_catalog_path: Path, catalog_path: Path) -> None:
     con = duckdb.connect()
     try:
         con.execute(f"ATTACH {_sql_literal(str(tmp_catalog_path))} AS src (READ_ONLY)")
-        con.execute(f"ATTACH {_sql_literal(str(catalog_path))} AS dst")
+        # 16 KiB blocks: the default 256 KiB block yields a ~5 MB file that is >99% zero
+        # padding for a small release; every consumer ATTACH downloads it.
+        con.execute(f"ATTACH {_sql_literal(str(catalog_path))} AS dst (BLOCK_SIZE 16384)")
         con.execute("COPY FROM DATABASE src TO dst")
     finally:
         con.close()
@@ -210,10 +212,9 @@ def build_frozen_ducklake(
             # ponytail: relies on a prior `INSTALL ducklake` having cached the
             # extension locally -- offline/air-gapped runs need that done ahead of time.
             con.execute("INSTALL ducklake; LOAD ducklake;")
-            # `SET TimeZone='UTC'` here does *not* make ducklake_snapshot.snapshot_time
-            # UTC -- DuckLake records it from the OS's local timezone regardless of the
-            # session's TimeZone setting (verified against DuckLake 1.5/duckdb 1.5.4).
-            # Left unset since it would be a no-op; noted so it isn't tried again blind.
+            # snapshot_time is TIMESTAMP WITH TIME ZONE (an instant); the zone is a
+            # reader-session rendering. Pin UTC so the build host's zone never shows.
+            con.execute("SET TimeZone='UTC'")
             con.execute(
                 f"ATTACH {_sql_literal(f'ducklake:{tmp_catalog_path}')} AS cat (DATA_PATH '.')"
             )
