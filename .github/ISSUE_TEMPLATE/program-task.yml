@@ -1,0 +1,104 @@
+name: DuckLake publication program task
+description: Bounded implementation, migration, acceptance, or contract work for the shared publication program
+title: ""
+labels:
+  - "program:ducklake-publication"
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Owning area
+      options:
+        - cdsci platform
+        - release contract
+        - bioc-on-ice conversion
+        - cancer-on-ice conversion
+        - DuckDock
+        - Iceberg / icegate adapter
+        - acceptance and operations
+    validations:
+      required: true
+
+  - type: input
+    id: goal
+    attributes:
+      label: Goal
+      description: One observable outcome, not a broad theme.
+      placeholder: A release candidate records normalized asset versions and lineage edges.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context and governing contracts
+      description: Link the program map, relevant SPEC/ADR/design sections, and existing implementation evidence.
+      placeholder: |
+        Program map: #...
+        Governing contract: docs/design/scientific-publication-platform.md §...
+        Existing seam: src/...
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: In scope
+      description: Name the exact repository/module/source/table seam this issue owns.
+      placeholder: |
+        - Add asset_version bootstrap and write/read functions.
+        - Add offline migration and idempotence tests.
+    validations:
+      required: true
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: Explicitly exclude tempting adjacent work.
+      placeholder: |
+        - No dashboard changes.
+        - No SQLMesh synchronization.
+        - No domain schema migration.
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and blockers
+      description: Link blocking issues or write "None". Name decisions rather than hiding them in prose.
+      placeholder: "Blocked by #... / None"
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Each item must be observable and capable of failing.
+      placeholder: |
+        - [ ] Bootstrap is idempotent locally and through the Postgres-compatible test seam.
+        - [ ] Existing producer calls require no changes.
+        - [ ] Focused tests fail before and pass after the change.
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation commands and evidence
+      placeholder: |
+        uv run pytest tests/test_ops.py -q
+        uv run pytest -q
+    validations:
+      required: true
+
+  - type: textarea
+    id: handoff
+    attributes:
+      label: Cross-repository handoff
+      description: State which contract, fixture, receipt, or follow-up issue another lane consumes. Use "None" when local.
+      placeholder: Release-contract fixture consumed by bioc-on-ice issue ...
+    validations:
+      required: true

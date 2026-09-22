@@ -1,0 +1,66 @@
+name: DuckLake publication architecture decision
+description: Resolve a hard-to-reverse cross-repository contract or ownership decision
+title: "Decision: "
+labels:
+  - "program:ducklake-publication"
+  - "type:decision"
+body:
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision to make
+      description: State one concrete question with mutually exclusive outcomes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Link current specifications, accepted ADRs, implementation evidence, and the program map.
+    validations:
+      required: true
+
+  - type: textarea
+    id: invariants
+    attributes:
+      label: Invariants
+      description: Facts that every acceptable option must preserve.
+      placeholder: |
+        - Public Iceberg writes remain PyIceberg-only.
+        - Domain repositories retain scientific metadata ownership.
+    validations:
+      required: true
+
+  - type: textarea
+    id: options
+    attributes:
+      label: Options and tradeoffs
+      description: Include the status quo and the smallest viable option.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence needed
+      description: Name prototypes, measurements, primary-source research, or acceptance tests needed before deciding.
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Cross-repository impact
+      description: Identify affected repositories, contracts, migrations, and reversibility cost.
+    validations:
+      required: true
+
+  - type: textarea
+    id: resolution
+    attributes:
+      label: Resolution record
+      description: Complete when decided; link the ADR/SPEC change and summarize rejected alternatives. Leave "Pending" initially.
+      value: Pending
+    validations:
+      required: true

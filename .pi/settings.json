@@ -1,0 +1,19 @@
+{
+  "observational-memory": {
+    "observeAfterTokens": 10000,
+    "reflectAfterTokens": 20000,
+    "compactAfterTokensMode": "ratio",
+    "compactAfterTokensRatio": 0.55,
+    "observationsPoolMaxTokens": 20000,
+    "observationsPoolTargetTokens": 10000,
+    "agentMaxTurns": 12,
+    "model": {
+      "provider": "claude-bridge",
+      "id": "claude-fable-5-1",
+      "thinking": "low"
+    },
+    "showWorkerNotifications": false,
+    "passive": false,
+    "debugLog": false
+  }
+}

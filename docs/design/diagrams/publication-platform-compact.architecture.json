@@ -1,0 +1,382 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Scientific Lake Publication Platform",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "internal-authoring",
+        "label": "Internal authoring",
+        "focus": [
+          "sources",
+          "producers",
+          "ducklake",
+          "ops"
+        ],
+        "note": "Trusted producers curate source-faithful data in one private DuckLake."
+      },
+      {
+        "id": "release-build",
+        "label": "Release build",
+        "focus": [
+          "ducklake",
+          "release_builder",
+          "public_r2",
+          "registry"
+        ],
+        "note": "A release builder emits immutable Parquet, schemas, manifests, and catalog artifacts."
+      },
+      {
+        "id": "public-access",
+        "label": "Public access",
+        "focus": [
+          "public_r2",
+          "registry",
+          "frozen",
+          "iceberg_access",
+          "duckdb_users",
+          "builders",
+          "iceberg_users"
+        ],
+        "note": "DuckLake is the primary query path; files and optional Iceberg remain independently usable."
+      }
+    ],
+    "viewBox": [
+      1390,
+      820
+    ]
+  },
+  "components": [
+    {
+      "id": "sources",
+      "type": "external",
+      "label": "Upstream Sources",
+      "sublabel": "files + APIs",
+      "pos": [
+        24,
+        300
+      ],
+      "size": [
+        119,
+        66
+      ]
+    },
+    {
+      "id": "producers",
+      "type": "backend",
+      "label": "Domain Producers",
+      "sublabel": "domain SQL",
+      "pos": [
+        194,
+        300
+      ],
+      "size": [
+        134,
+        66
+      ]
+    },
+    {
+      "id": "ducklake",
+      "type": "database",
+      "label": "Internal DuckLake",
+      "sublabel": "private DuckLake + R2",
+      "pos": [
+        387,
+        215
+      ],
+      "size": [
+        142,
+        72
+      ],
+      "tag": "authoring authority"
+    },
+    {
+      "id": "ops",
+      "type": "database",
+      "label": "lake_ops",
+      "sublabel": "runs + lineage",
+      "pos": [
+        387,
+        410
+      ],
+      "size": [
+        142,
+        72
+      ],
+      "tag": "operational authority"
+    },
+    {
+      "id": "release_builder",
+      "type": "backend",
+      "label": "Release Builder",
+      "sublabel": "Arrow artifacts",
+      "pos": [
+        596,
+        300
+      ],
+      "size": [
+        142,
+        72
+      ],
+      "tag": "publication gate"
+    },
+    {
+      "id": "public_r2",
+      "type": "cloud",
+      "label": "Public R2 Releases",
+      "sublabel": "Parquet + JSON",
+      "pos": [
+        802,
+        100
+      ],
+      "size": [
+        142,
+        72
+      ],
+      "tag": "canonical public bytes"
+    },
+    {
+      "id": "registry",
+      "type": "backend",
+      "label": "Dataset Registry",
+      "sublabel": "metadata API",
+      "pos": [
+        802,
+        300
+      ],
+      "size": [
+        142,
+        72
+      ],
+      "tag": "machine interface"
+    },
+    {
+      "id": "frozen",
+      "type": "database",
+      "label": "Frozen DuckLake",
+      "sublabel": "ATTACH \u2192 SELECT",
+      "pos": [
+        1011,
+        100
+      ],
+      "size": [
+        138,
+        66
+      ],
+      "tag": "primary query UX"
+    },
+    {
+      "id": "iceberg_access",
+      "type": "security",
+      "label": "Iceberg + icegate",
+      "sublabel": "optional REST",
+      "pos": [
+        1011,
+        500
+      ],
+      "size": [
+        138,
+        66
+      ],
+      "tag": "PyIceberg-only writes"
+    },
+    {
+      "id": "duckdb_users",
+      "type": "external",
+      "label": "DuckDB Users",
+      "sublabel": "local queries",
+      "pos": [
+        1209,
+        100
+      ],
+      "size": [
+        138,
+        66
+      ]
+    },
+    {
+      "id": "builders",
+      "type": "external",
+      "label": "Client Builders",
+      "sublabel": "R, Python, web",
+      "pos": [
+        1209,
+        300
+      ],
+      "size": [
+        138,
+        72
+      ]
+    },
+    {
+      "id": "iceberg_users",
+      "type": "external",
+      "label": "Iceberg Clients",
+      "sublabel": "Spark + PyIceberg",
+      "pos": [
+        1209,
+        500
+      ],
+      "size": [
+        138,
+        66
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "Private authoring plane",
+      "wraps": [
+        "producers",
+        "ducklake",
+        "ops",
+        "release_builder"
+      ],
+      "pad": 22
+    },
+    {
+      "kind": "region",
+      "label": "Public release plane",
+      "wraps": [
+        "public_r2",
+        "registry",
+        "frozen",
+        "iceberg_access"
+      ],
+      "pad": 22
+    }
+  ],
+  "connections": [
+    {
+      "from": "sources",
+      "to": "producers",
+      "label": "extract + validate",
+      "variant": "emphasis",
+      "labelAt": [
+        168,
+        286
+      ]
+    },
+    {
+      "from": "producers",
+      "to": "ducklake",
+      "label": "DuckDB upsert",
+      "variant": "emphasis",
+      "labelAt": [
+        357,
+        211
+      ]
+    },
+    {
+      "from": "producers",
+      "to": "ops",
+      "label": "run events",
+      "variant": "dashed",
+      "labelAt": [
+        357,
+        456
+      ]
+    },
+    {
+      "from": "ducklake",
+      "to": "release_builder",
+      "label": "approved relations",
+      "variant": "emphasis",
+      "labelAt": [
+        563,
+        211
+      ]
+    },
+    {
+      "from": "ops",
+      "to": "release_builder",
+      "label": "versions + lineage",
+      "variant": "dashed",
+      "labelAt": [
+        563,
+        496
+      ]
+    },
+    {
+      "from": "release_builder",
+      "to": "public_r2",
+      "label": "Parquet + manifests",
+      "variant": "emphasis",
+      "labelAt": [
+        773,
+        181
+      ]
+    },
+    {
+      "from": "release_builder",
+      "to": "registry",
+      "variant": "emphasis"
+    },
+    {
+      "from": "release_builder",
+      "to": "iceberg_access",
+      "label": "optional adapter",
+      "variant": "dashed",
+      "labelAt": [
+        878,
+        485
+      ]
+    },
+    {
+      "from": "public_r2",
+      "to": "frozen",
+      "label": "public files",
+      "variant": "emphasis",
+      "labelAt": [
+        978,
+        86
+      ]
+    },
+    {
+      "from": "frozen",
+      "to": "duckdb_users",
+      "label": "DuckDB ATTACH",
+      "variant": "emphasis",
+      "labelAt": [
+        1179,
+        86
+      ]
+    },
+    {
+      "from": "registry",
+      "to": "builders",
+      "label": "datasets + schemas + files",
+      "variant": "emphasis",
+      "labelAt": [
+        1076,
+        286
+      ]
+    },
+    {
+      "from": "public_r2",
+      "to": "builders",
+      "label": "anonymous HTTPS",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "orthogonal-v",
+      "labelAt": [
+        1165,
+        205
+      ]
+    },
+    {
+      "from": "iceberg_access",
+      "to": "iceberg_users",
+      "label": "Iceberg REST",
+      "variant": "security",
+      "labelAt": [
+        1179,
+        486
+      ]
+    }
+  ]
+}
