@@ -219,7 +219,9 @@ def test_manifest_rejects_percent_encoded_traversal_in_relative_path():
         )
 
 
-@pytest.mark.parametrize("uri", ["https://2130706433/x", "https://0x7f000001/x"])
+@pytest.mark.parametrize(
+    "uri", ["https://2130706433/x", "https://0x7f000001/x", "https://0x7f.0.0.1/x"]
+)
 def test_manifest_rejects_decimal_and_hex_ip_host_bypass(uri: str):
     """N4: a host must look like a hostname (dot + letter); decimal/hex IP spellings fail."""
     with pytest.raises(PublicPathError):

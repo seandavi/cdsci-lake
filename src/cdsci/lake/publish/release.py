@@ -89,8 +89,10 @@ def _is_private_or_loopback_host(host: str) -> bool:
 
 
 def _looks_like_a_public_hostname(host: str) -> bool:
-    """Cheaply kills decimal/hex/octal IP spellings: a real hostname has a dot and a letter."""
-    return "." in host and any(c.isalpha() for c in host)
+    """Cheaply kills decimal/hex/octal IP spellings: a real hostname has a dot and an
+    all-alphabetic top-level label (``0x7f.0.0.1`` has a letter but a numeric TLD)."""
+    labels = host.split(".")
+    return len(labels) > 1 and all(labels) and labels[-1].isalpha()
 
 
 def _check_no_unsafe_pattern(value: str, *, field_name: str) -> None:
