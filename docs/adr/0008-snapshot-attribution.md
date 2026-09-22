@@ -77,3 +77,15 @@ creates a snapshot, and that snapshot now carries its attribution. Outside an
 - Attribution depends on DuckLake's transaction-scoped `set_commit_message`; the
   explicit-transaction wrapper is therefore mandatory and bounds each attributed
   write to one transaction (keep per-block writes bounded — see PMC shards).
+
+## Amendment 2026-09-22 (cdsci-lake#89)
+
+SQLMesh's DuckDB engine adapter runs with `SUPPORTS_TRANSACTIONS = False`, so
+this ADR's `set_commit_message`-in-a-transaction mechanism cannot reach
+SQLMesh-written snapshots (verified empirically). For the transform layer only,
+attribution is sourced from `lake_ops` instead: `ops.sync_sqlmesh_snapshot_attribution`
+brackets DuckLake snapshot ids per model against a watermark and records matches
+in `lake_ops.snapshot_attribution(snapshot_id, run_id, source)`; `/api/snapshots`
+joins this table when a snapshot's own `commit_extra_info` has none. The EL write
+path (`ops.run` / `Run.attribute`) is unaffected and keeps in-catalog attribution
+as originally specified. Sync writes rows only for project `cdsci_lake`.
