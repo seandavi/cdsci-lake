@@ -1,18 +1,26 @@
 """``cdsci.lake.publish.builder`` — format-neutral release builder (design §6.5-§6.7, §11.5).
 
-:func:`build_release` writes one release's Parquet + manifest/schema/file-index JSON
-deterministically to an :class:`ObjectStore`, using only DuckDB's own ``write_parquet``
-(``pyarrow`` stays dev-only, per AGENTS.md). Layout is the design §4 public tree, minus
-the ``datasets/``/``releases/`` wrapping segments M1 doesn't need yet::
+:func:`build_release` writes one release's Parquet + schema/file-index/provenance/lineage
+JSON deterministically to an :class:`ObjectStore`, using only DuckDB's own
+``write_parquet`` (``pyarrow`` stays dev-only, per AGENTS.md), and returns the release's
+:class:`~cdsci.lake.publish.release.ReleaseManifest` **without writing it**. Layout is the
+design §4 public tree, minus the ``datasets/``/``releases/`` wrapping segments M1 doesn't
+need yet::
 
     <dataset_id>/<release_id>/manifest.json, provenance.json, lineage.json,
         tables/<name>/{schema.json, files.json, data/part-00000.parquet}
 
-:func:`verify_release` is the cold-path counterpart -- reloads the manifest through
-:class:`~cdsci.lake.publish.release.ReleaseManifest`/``TableFileIndex`` (whose
-``__post_init__`` already runs the public-path/asset-ref allowlists) and re-checks
-size + sha256 per file. No ``cdsci.lake.ops``/lake import -- it is the seed of
-DuckDock's ``verify``, which must run with no private credentials.
+``verify_release`` (:mod:`cdsci.lake.publish.verify`) is the cold-path counterpart --
+given the in-memory manifest :func:`build_release` returned (or reloading one from
+``store`` when called with no manifest) it re-runs the public-path/asset-ref allowlists
+and re-checks every table's schema digest, row count, and per-file size/checksum. It
+makes no ``ops`` call and needs no credentials -- it is the seed of DuckDock's ``verify``,
+split into its own module for that eventual extraction.
+
+:func:`finalize_release` is the only function here that writes ``manifest.json``, and
+only once ``report.passed`` -- so a release that fails acceptance leaves no
+``manifest.json`` behind for a registry/``latest.json`` promotion to pick up (design
+§11.5 #8).
 
 :func:`record_release` is the one function here that touches ``ops``: writes the
 release's :class:`~cdsci.lake.publish.release.PublicationReceipt` and registers the
@@ -21,6 +29,7 @@ release + its lineage edges (design §13 M1's "record receipts in lake_ops").
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import tempfile
@@ -34,8 +43,6 @@ import duckdb
 
 from ..contracts import DatasetContract, Materialization, TableContract, TemporalModel
 from .release import (
-    SPEC_VERSION,
-    AcceptanceCheck,
     AcceptanceReport,
     ArtifactStatus,
     FileEntry,
@@ -106,26 +113,13 @@ def _check_parquet_matches_contract(contract: TableContract, parquet_path: Path)
             )
 
 
-@dataclass(frozen=True)
-class ObjectMetadata:
-    size: int
-    content_type: str
-
-
 class ObjectStore(Protocol):
     """Design §6.7, simplified to plain ``bytes`` in/out (not ``BinaryIO``) -- every M1
     object is small enough to hold in memory; add streaming when a table needs it."""
 
     def put_if_absent(self, path: PurePosixPath, body: bytes, *, content_type: str) -> None: ...
 
-    def head(self, path: PurePosixPath) -> ObjectMetadata: ...
-
     def get(self, path: PurePosixPath) -> bytes: ...
-
-    def copy_pointer(self, path: PurePosixPath, document: bytes) -> None: ...
-
-
-_CONTENT_TYPE_BY_SUFFIX = {".parquet": _PARQUET_CONTENT_TYPE, ".json": _JSON_CONTENT_TYPE}
 
 
 @dataclass(frozen=True)
@@ -145,24 +139,11 @@ class LocalDirStore:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(body)
 
-    def head(self, path: PurePosixPath) -> ObjectMetadata:
-        dest = self._abs(path)
-        if not dest.is_file():
-            raise FileNotFoundError(str(path))
-        content_type = _CONTENT_TYPE_BY_SUFFIX.get(dest.suffix, "application/octet-stream")
-        return ObjectMetadata(size=dest.stat().st_size, content_type=content_type)
-
     def get(self, path: PurePosixPath) -> bytes:
         dest = self._abs(path)
         if not dest.is_file():
             raise FileNotFoundError(str(path))
         return dest.read_bytes()
-
-    def copy_pointer(self, path: PurePosixPath, document: bytes) -> None:
-        """Pointer paths (``latest.json``) are the one thing a release domain may replace."""
-        dest = self._abs(path)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(document)
 
 
 def build_release(
@@ -172,16 +153,24 @@ def build_release(
     *,
     contract: DatasetContract,
 ) -> ReleaseManifest:
-    """Write one release's Parquet + schema/file-index/manifest JSON to ``out``.
+    """Write one release's Parquet + schema/file-index/provenance/lineage JSON to
+    ``out`` and return the release's :class:`ReleaseManifest` -- **not yet written**;
+    call :func:`finalize_release` once :func:`verify_release` has passed it.
 
     ``tables`` maps each name in ``candidate.tables`` to a DuckDB relation holding its
     rows (order-independent -- sorted here per ``contract``). ``contract`` supplies the
     per-table ``TableContract`` (columns, primary key, sort order, temporal model) that
     ``ReleaseCandidate`` itself doesn't carry.
 
-    Deterministic: sorted by ``sort_by`` (falling back to ``primary_key``), written in
-    one fixed-size row group via DuckDB's own Parquet writer -- verified byte-identical
-    across repeat runs and separate processes (design §11.5 #1).
+    Deterministic: sorted by ``sort_by`` plus any remaining ``primary_key`` columns (so
+    a ``sort_by`` that doesn't cover the full key still produces one row order, not an
+    arbitrary one among ties), written in one fixed-size row group via DuckDB's own
+    Parquet writer.
+
+    # ponytail: determinism is scoped to one DuckDB version -- the Parquet footer's
+    # ``created_by`` (and possibly row-group/encoding choices) can change across a
+    # DuckDB upgrade. Rebuilding an already-published release after a DuckDB upgrade
+    # must cut a new release_id, not silently overwrite the old bytes.
     """
     prefix = PurePosixPath(candidate.dataset) / candidate.release
     manifest_tables: list[ManifestTable] = []
@@ -189,15 +178,26 @@ def build_release(
     with tempfile.TemporaryDirectory() as tmp:
         for name in candidate.tables:
             table_contract = contract.tables[name]
-            sort_cols = table_contract.sort_by or table_contract.primary_key
+            if table_contract.partition_by:
+                # ponytail: single file per table; honour partition_by when a table needs it
+                raise ValueError(
+                    f"{table_contract.name}: partition_by is not supported by this release "
+                    f"builder yet: {table_contract.partition_by}"
+                )
+            sort_cols = (
+                *table_contract.sort_by,
+                *(k for k in table_contract.primary_key if k not in table_contract.sort_by),
+            )
             ordered = tables[name].order(", ".join(sort_cols))
-            row_count = ordered.aggregate("count(*) AS n").fetchone()[0]
 
             tmp_path = Path(tmp) / f"{name}.parquet"
             ordered.write_parquet(
                 str(tmp_path), row_group_size=_ROW_GROUP_SIZE, compression="zstd"
             )
             _check_parquet_matches_contract(table_contract, tmp_path)
+            row_count = duckdb.execute(
+                "SELECT count(*) FROM read_parquet(?)", [str(tmp_path)]
+            ).fetchone()[0]
             data = tmp_path.read_bytes()
             sha256 = hashlib.sha256(data).hexdigest()
 
@@ -256,9 +256,6 @@ def build_release(
         prefix / "provenance.json", _provenance_bytes(manifest), content_type=_JSON_CONTENT_TYPE
     )
     out.put_if_absent(prefix / "lineage.json", b'{"edges": []}', content_type=_JSON_CONTENT_TYPE)
-    out.put_if_absent(
-        prefix / "manifest.json", manifest.to_json().encode(), content_type=_JSON_CONTENT_TYPE
-    )
     return manifest
 
 
@@ -271,83 +268,28 @@ def _provenance_bytes(manifest: ReleaseManifest) -> bytes:
     ).encode()
 
 
-def verify_release(store: ObjectStore, dataset_id: str, release_id: str) -> AcceptanceReport:
-    """Cold-path acceptance (design §11.5/§11.7): reload the manifest + file indexes
-    (re-running their public-path/asset-ref allowlists) and re-check size + sha256 per
-    file. No ``ops``/lake import -- the seed of DuckDock's ``verify``.
+def finalize_release(
+    store: ObjectStore, manifest: ReleaseManifest, report: AcceptanceReport
+) -> ReleaseManifest:
+    """Write ``manifest.json`` with status ``published`` -- but only once ``report``
+    has passed every required check (design §11.5 #8: "a required adapter failure
+    prevents latest.json and registry promotion"). Raises and writes nothing on a
+    failed report.
     """
-    prefix = PurePosixPath(dataset_id) / release_id
-    checks: list[AcceptanceCheck] = []
-    run_id = "unknown"
-
-    try:
-        manifest = ReleaseManifest.from_json(store.get(prefix / "manifest.json").decode())
-    except Exception as exc:  # noqa: BLE001 -- surfaced as a failed check, not a crash
-        checks.append(
-            AcceptanceCheck("manifest_loads", passed=False, required=True, detail=str(exc)[:500])
+    if not report.passed:
+        failed = [c.name for c in report.checks if c.required and not c.passed]
+        raise ValueError(
+            f"{manifest.dataset} {manifest.release}: acceptance failed, refusing to publish "
+            f"manifest.json (failed required checks: {failed})"
         )
-        return AcceptanceReport(
-            dataset=dataset_id, release=release_id, run_id=run_id,
-            checked_at=datetime.now(UTC).isoformat(), checks=tuple(checks),
-        )
-    checks.append(AcceptanceCheck("manifest_loads", passed=True, required=True))
-    run_id = manifest.run_id
-    checks.append(
-        AcceptanceCheck(
-            "spec_version", passed=manifest.spec_version == SPEC_VERSION, required=True,
-            detail=manifest.spec_version,
-        )
+    published = dataclasses.replace(
+        manifest, status=ArtifactStatus.PUBLISHED, published_at=datetime.now(UTC).isoformat()
     )
-
-    for table in manifest.tables:
-        try:
-            file_index = TableFileIndex.from_json(store.get(prefix / table.files_path).decode())
-        except Exception as exc:  # noqa: BLE001
-            checks.append(
-                AcceptanceCheck(
-                    f"{table.name}.file_index_loads", passed=False, required=True,
-                    detail=str(exc)[:500],
-                )
-            )
-            continue
-        checks.append(AcceptanceCheck(f"{table.name}.file_index_loads", passed=True, required=True))
-
-        expected = _MATERIALIZATION_FOR_TEMPORAL_MODEL[table.temporal_model]
-        checks.append(
-            AcceptanceCheck(
-                f"{table.name}.materialization_matches_temporal_model",
-                passed=file_index.materialization == expected,
-                required=True,
-                detail=f"{file_index.materialization.value} vs expected {expected.value}",
-            )
-        )
-
-        for entry in file_index.files:
-            file_path = prefix / "tables" / table.name / entry.uri
-            try:
-                body = store.get(file_path)
-            except Exception as exc:  # noqa: BLE001
-                checks.append(
-                    AcceptanceCheck(
-                        f"{table.name}.{entry.uri}.readable", passed=False, required=True,
-                        detail=str(exc)[:200],
-                    )
-                )
-                continue
-            size_ok = len(body) == entry.size
-            sha_ok = hashlib.sha256(body).hexdigest() == entry.sha256
-            checks.append(
-                AcceptanceCheck(
-                    f"{table.name}.{entry.uri}.size_and_checksum",
-                    passed=size_ok and sha_ok, required=True,
-                    detail=f"size={len(body)} (expected {entry.size}), sha256_ok={sha_ok}",
-                )
-            )
-
-    return AcceptanceReport(
-        dataset=dataset_id, release=release_id, run_id=run_id,
-        checked_at=datetime.now(UTC).isoformat(), checks=tuple(checks),
+    prefix = PurePosixPath(published.dataset) / published.release
+    store.put_if_absent(
+        prefix / "manifest.json", published.to_json().encode(), content_type=_JSON_CONTENT_TYPE
     )
+    return published
 
 
 def record_release(

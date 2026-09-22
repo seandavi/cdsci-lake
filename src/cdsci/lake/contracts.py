@@ -20,7 +20,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -28,10 +27,15 @@ if TYPE_CHECKING:
 
 # Dotted internal lake ref grammar (ADR-0014 Amendment 2026-09-22): lowercase
 # identifiers, no scheme, no credentials -- e.g. "lake.demo.events". Anchors the
-# leading segment to "lake" so a release-asset ref ("release.<dataset>.<release>",
-# which may carry uppercase/hyphenated producer-chosen ids) is deliberately NOT
-# matched here -- that ref form goes through the looser :func:`check_asset_ref`.
-_LAKE_REF_PATTERN = re.compile(r"^lake(\.[a-z][a-z0-9_]*){2,}$")
+# leading segment to "lake" and pins exactly three dotted segments
+# ("lake.<schema>.<table>", no deeper) so a release-asset ref
+# ("release.<dataset>.<release>", which may carry uppercase/hyphenated
+# producer-chosen ids) is deliberately NOT matched here -- that ref form goes
+# through the looser :func:`check_asset_ref`.
+_LAKE_REF_PATTERN = re.compile(r"^lake(\.[a-z][a-z0-9_]*){2}$")
+
+_CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
+_CREDENTIAL_WORD_PATTERN = re.compile(r"password|secret|token|credential", re.IGNORECASE)
 
 
 def check_asset_ref(ref: str) -> None:
@@ -39,13 +43,21 @@ def check_asset_ref(ref: str) -> None:
 
     Generic across ref schemes (``lake.<schema>.<table>``, ``r2://...``,
     ``postgres://...``, ``release.<dataset>.<release>``) -- guards only what matters
-    regardless of scheme: no stray whitespace, no embedded credentials. Shared by
-    :mod:`cdsci.lake.ops` (any asset type) and :mod:`cdsci.lake.publish.release`
-    (layered under the stricter :func:`check_lake_asset_ref`).
+    regardless of scheme: no stray whitespace, no control characters, no embedded
+    credentials (a bare ``@``, anywhere, not just in a URL's netloc -- a scheme-less
+    or ``scheme:``-only ref like ``postgres:user:pass@host`` never populates
+    ``urlsplit().netloc``; and no case-insensitive password/secret/token/credential
+    substring). Shared by :mod:`cdsci.lake.ops` (any asset type) and
+    :mod:`cdsci.lake.publish.release` (layered under the stricter
+    :func:`check_lake_asset_ref`).
     """
     if not ref or ref != ref.strip():
         raise ValueError(f"invalid asset ref: {ref!r}")
-    if "@" in urlsplit(ref).netloc:
+    if _CONTROL_CHAR_PATTERN.search(ref):
+        raise ValueError(f"asset ref must not contain control characters: {ref!r}")
+    if "@" in ref:
+        raise ValueError(f"asset ref must not embed credentials: {ref!r}")
+    if _CREDENTIAL_WORD_PATTERN.search(ref):
         raise ValueError(f"asset ref must not embed credentials: {ref!r}")
 
 
@@ -154,6 +166,14 @@ class TableContract:
             raise ValueError(f"{self.name}: primary_key column(s) not in columns: {missing}")
         if len(column_names) != len(self.columns):
             raise ValueError(f"{self.name}: duplicate column name(s) in columns")
+        missing_sort = [k for k in self.sort_by if k not in column_names]
+        if missing_sort:
+            raise ValueError(f"{self.name}: sort_by column(s) not in columns: {missing_sort}")
+        missing_partition = [k for k in self.partition_by if k not in column_names]
+        if missing_partition:
+            raise ValueError(
+                f"{self.name}: partition_by column(s) not in columns: {missing_partition}"
+            )
 
     def arrow_schema(self) -> pa.Schema:
         import pyarrow as pa
@@ -171,6 +191,10 @@ class TableContract:
         Pure dict construction -- no ``pyarrow`` import, so a publish-side caller
         without the dev/publish extras installed can still render a schema.
         """
+        # `properties` is deliberately dropped here: it's free-form producer key/value
+        # metadata, not schema-shaped, and unlike `examples` it isn't validated against
+        # the public-artifact secret/path allowlists -- rendering it would let a producer
+        # accidentally publish arbitrary unchecked content through the schema document.
         return {
             "name": self.name,
             "description": self.description,
@@ -181,6 +205,7 @@ class TableContract:
             "temporal_model": self.temporal_model.value,
             "owner": self.owner,
             "license": self.license,
+            "examples": list(self.examples),
             "columns": [
                 {
                     "name": c.name,

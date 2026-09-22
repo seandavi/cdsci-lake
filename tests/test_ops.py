@@ -453,6 +453,37 @@ def test_record_publication_receipt_round_trips_and_is_idempotent(lake_settings:
         con.close()
 
 
+def test_record_publication_receipt_falls_back_to_active_run_id(lake_settings: Settings):
+    """S4: a receipt with no run_id of its own picks up the enclosing run() block's
+    run_id, so it matches register_asset()'s active-run-derived last_run_id."""
+    con = lake_connect(lake_settings)
+    try:
+        src = "SELECT * FROM (VALUES (1,'a')) v(id,val)"
+        with ops.run(con, source="icite", target="lake.icite.t", version="v1") as r:
+            r.rows = upsert(con, "lake.icite.t", src, key="id")
+            ops.register_asset(
+                con, ref="release.demo-catalog.R1", writer="cdsci", asset_type="release",
+                name="demo-catalog R1",
+            )
+            receipt = PublicationReceipt(
+                dataset="demo-catalog", release="R1", format="parquet",
+                destination="demo-catalog/R1", schema_digest="sha256:abc", run_id="",
+                status=ArtifactStatus.PUBLISHED,
+            )
+            ops.record_publication_receipt(con, receipt)
+            active_run_id = r.run_id
+
+        receipt_run_id = con.execute(
+            "SELECT run_id FROM ops.lake_ops.publication_receipt WHERE release_id = 'R1'"
+        ).fetchone()[0]
+        asset_run_id = con.execute(
+            "SELECT last_run_id FROM ops.lake_ops.asset WHERE ref = 'release.demo-catalog.R1'"
+        ).fetchone()[0]
+        assert receipt_run_id == asset_run_id == active_run_id
+    finally:
+        con.close()
+
+
 def test_asset_ref_validation_rejects_a_private_dsn(lake_settings: Settings):
     """A credential-bearing DSN is rejected before it reaches the ledger."""
     con = lake_connect(lake_settings)

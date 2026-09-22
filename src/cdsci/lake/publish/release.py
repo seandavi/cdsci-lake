@@ -73,7 +73,6 @@ _LOCATOR_FIELDS = frozenset(
 _UNSAFE_PATTERN = re.compile(
     r"(?ix)"
     r"\b(s3|r2|gs|file|postgres(?:ql)?)://"  # private/local storage schemes
-    r"|ducklake://[^/@]*@"  # ducklake ref with userinfo
     r"|(?<![\w./-])/(mnt|home|tmp|etc|var|opt|data)/"  # absolute POSIX path
     r"|token="
     r"|password"
@@ -170,9 +169,9 @@ def _check_lake_asset_ref(value: str, *, field_name: str) -> None:
     Delegates to :func:`cdsci.lake.contracts.check_lake_asset_ref` (ADR-0014 Amendment
     2026-09-22: the dotted ``lake.<schema>.<table>`` grammar) and re-raises as
     :class:`PublicPathError`, the exception type this module's callers already expect.
+    An empty ``ref`` is rejected here too -- ``SourceAssetVersion`` always names a real
+    lake table, so a missing ref is a construction error, not a value to skip.
     """
-    if not value:
-        return
     try:
         check_lake_asset_ref(value, field_name=field_name)
     except ValueError as exc:

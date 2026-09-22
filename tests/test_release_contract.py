@@ -262,6 +262,12 @@ def test_source_asset_version_accepts_dotted_lake_ref():
     SourceAssetVersion(ref="lake.demo.events", version="snapshot:1")
 
 
+def test_source_asset_version_rejects_empty_ref():
+    """S3: an empty ref is a construction error, not silently skipped."""
+    with pytest.raises(PublicPathError):
+        SourceAssetVersion(ref="", version="snapshot:1")
+
+
 @pytest.mark.parametrize(
     "ref",
     [

@@ -780,6 +780,11 @@ def record_publication_receipt(con: duckdb.DuckDBPyConnection, receipt: Publicat
     release_id, dataset_id = receipt.release, receipt.dataset
     asset_ref = f"release.{dataset_id}.{release_id}"
     receipt_id = str(uuid.uuid4())
+    # Fall back to the enclosing run() block's run_id when the receipt itself doesn't
+    # carry one, so this row and register_asset()'s last_run_id (also active_run()-
+    # derived) attribute to the same run instead of silently diverging.
+    active = active_run()
+    run_id = receipt.run_id or (active.run_id if active else None)
     con.execute(
         f"DELETE FROM {_t('publication_receipt')} "
         "WHERE release_id = ? AND dataset_id = ? AND asset_ref = ?",
@@ -791,7 +796,7 @@ def record_publication_receipt(con: duckdb.DuckDBPyConnection, receipt: Publicat
         " run_id, recorded_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)",
         [receipt_id, release_id, dataset_id, asset_ref, receipt.spec_version,
-         receipt.status.value, receipt.to_json(), receipt.run_id],
+         receipt.status.value, receipt.to_json(), run_id],
     )
     return receipt_id
 

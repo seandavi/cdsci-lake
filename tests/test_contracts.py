@@ -11,7 +11,13 @@ from __future__ import annotations
 import pytest
 from fixtures.contracts import dataset as fx
 
-from cdsci.lake.contracts import ColumnContract, TableContract, TemporalModel
+from cdsci.lake.contracts import (
+    ColumnContract,
+    TableContract,
+    TemporalModel,
+    check_asset_ref,
+    check_lake_asset_ref,
+)
 
 
 def test_table_contract_primary_key_must_exist_in_columns():
@@ -82,6 +88,54 @@ def test_validate_rejects_order_only_mismatch_with_explicit_message():
     )
     with pytest.raises(ValueError, match="column order differs"):
         fx.EVENTS_TABLE.validate(reordered)
+
+
+def test_table_contract_rejects_sort_by_column_not_in_columns():
+    with pytest.raises(ValueError, match="sort_by column"):
+        TableContract(
+            name="t", description="d", grain="g", primary_key=("id",),
+            temporal_model=TemporalModel.APPEND_IMMUTABLE, owner="o", license="l",
+            columns=(ColumnContract("id", "string", "the id", nullable=False),),
+            sort_by=("missing_col",),
+        )
+
+
+def test_table_contract_rejects_partition_by_column_not_in_columns():
+    with pytest.raises(ValueError, match="partition_by column"):
+        TableContract(
+            name="t", description="d", grain="g", primary_key=("id",),
+            temporal_model=TemporalModel.APPEND_IMMUTABLE, owner="o", license="l",
+            columns=(ColumnContract("id", "string", "the id", nullable=False),),
+            partition_by=("missing_col",),
+        )
+
+
+def test_check_lake_asset_ref_rejects_four_segments():
+    """S1: the grammar is pinned to exactly 'lake.<schema>.<table>' -- no deeper."""
+    with pytest.raises(ValueError, match="dotted form"):
+        check_lake_asset_ref("lake.a.b.c")
+
+
+def test_check_lake_asset_ref_accepts_three_segments():
+    check_lake_asset_ref("lake.demo.events")
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "postgres:user:pass@host/db",
+        "r2://b/k?X-Amz-Credential=x",
+        "\x00lake.x.y",
+    ],
+)
+def test_check_asset_ref_rejects_credentials_and_control_chars(ref: str):
+    with pytest.raises(ValueError):
+        check_asset_ref(ref)
+
+
+def test_check_lake_asset_ref_rejects_file_scheme():
+    with pytest.raises(ValueError, match="scheme"):
+        check_lake_asset_ref("file:///x")
 
 
 def test_arrow_schema_without_pyarrow_raises_import_error(monkeypatch):

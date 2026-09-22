@@ -257,7 +257,7 @@ Rules:
   "run_id": "0199...",
   "source_asset_versions": [
     {
-      "ref": "ducklake://lake/ensembl/gene",
+      "ref": "lake.ensembl.gene",
       "version": "snapshot:812"
     }
   ],
