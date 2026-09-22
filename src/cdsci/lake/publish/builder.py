@@ -44,6 +44,7 @@ import duckdb
 from ..contracts import DatasetContract, Materialization, TableContract, TemporalModel
 from .release import (
     AcceptanceReport,
+    ArtifactEntry,
     ArtifactStatus,
     FileEntry,
     ManifestTable,
@@ -51,6 +52,7 @@ from .release import (
     ReleaseCandidate,
     ReleaseManifest,
     TableFileIndex,
+    check_required_artifacts,
 )
 
 _PARQUET_CONTENT_TYPE = "application/vnd.apache.parquet"
@@ -251,6 +253,11 @@ def build_release(
         run_id=candidate.run_id,
         tables=tuple(manifest_tables),
         source_asset_versions=candidate.source_asset_versions,
+        artifacts={
+            "parquet": ArtifactEntry(
+                status=ArtifactStatus.STAGED, required=True, location="tables/"
+            )
+        },
     )
     out.put_if_absent(
         prefix / "provenance.json", _provenance_bytes(manifest), content_type=_JSON_CONTENT_TYPE
@@ -269,21 +276,41 @@ def _provenance_bytes(manifest: ReleaseManifest) -> bytes:
 
 
 def finalize_release(
-    store: ObjectStore, manifest: ReleaseManifest, report: AcceptanceReport
+    store: ObjectStore,
+    manifest: ReleaseManifest,
+    report: AcceptanceReport,
+    contract: DatasetContract,
 ) -> ReleaseManifest:
     """Write ``manifest.json`` with status ``published`` -- but only once ``report``
     has passed every required check (design §11.5 #8: "a required adapter failure
-    prevents latest.json and registry promotion"). Raises and writes nothing on a
-    failed report.
+    prevents latest.json and registry promotion") and ``manifest.artifacts`` satisfies
+    ``contract.required_artifacts`` (:func:`~cdsci.lake.publish.release.check_required_artifacts`).
+    ``contract`` is required here, not optional as on ``verify_release`` -- a caller
+    that skipped ``verify_release``'s own optional ``required_artifacts_present``
+    check (or never passed it ``contract``) must not be able to publish a release
+    missing a required artifact by omission. Raises and writes nothing on either
+    failure. Also promotes every ``STAGED`` artifact (e.g. the ``ducklake`` catalog
+    :func:`~cdsci.lake.publish.frozen.build_frozen_ducklake` stamped staged, not yet
+    acceptance-checked) to ``VERIFIED``.
     """
+    check_required_artifacts(manifest, contract)
     if not report.passed:
         failed = [c.name for c in report.checks if c.required and not c.passed]
         raise ValueError(
             f"{manifest.dataset} {manifest.release}: acceptance failed, refusing to publish "
             f"manifest.json (failed required checks: {failed})"
         )
+    verified_artifacts = {
+        name: dataclasses.replace(entry, status=ArtifactStatus.VERIFIED)
+        if entry.status == ArtifactStatus.STAGED
+        else entry
+        for name, entry in manifest.artifacts.items()
+    }
     published = dataclasses.replace(
-        manifest, status=ArtifactStatus.PUBLISHED, published_at=datetime.now(UTC).isoformat()
+        manifest,
+        status=ArtifactStatus.PUBLISHED,
+        published_at=datetime.now(UTC).isoformat(),
+        artifacts=verified_artifacts,
     )
     prefix = PurePosixPath(published.dataset) / published.release
     store.put_if_absent(

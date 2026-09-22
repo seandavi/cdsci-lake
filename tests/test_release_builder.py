@@ -32,10 +32,25 @@ from cdsci.lake.publish.builder import (
     finalize_release,
     record_release,
 )
-from cdsci.lake.publish.release import ArtifactStatus, ReleaseCandidate, SourceAssetVersion
+from cdsci.lake.publish.release import (
+    ArtifactEntry,
+    ArtifactStatus,
+    ReleaseCandidate,
+    RequiredArtifactMissingError,
+    SourceAssetVersion,
+)
 from cdsci.lake.publish.verify import verify_release
 
 RUN_ID = "01927c9e-0000-7000-8000-00000000b001"
+
+# This file exercises M1's build_release/finalize_release mechanics only -- no
+# build_frozen_ducklake -- so a manifest here only ever carries the "parquet"
+# artifact build_release itself stamps; fx.DATASET_CONTRACT's default
+# required_artifacts (parquet + ducklake) is M2's shared-fixture contract, not this
+# file's. A Parquet-only product's own contract would look like this.
+_PARQUET_ONLY_CONTRACT = dataclasses.replace(
+    fx.DATASET_CONTRACT, required_artifacts=frozenset({"parquet"})
+)
 
 
 # ponytail: stdlib http.server has no Range support at all (verified against this
@@ -110,7 +125,7 @@ def _schema_path(dataset_root: Path, table: str, release: str = "R1") -> Path:
 def _built_and_finalized(con: duckdb.DuckDBPyConnection, store: LocalDirStore):
     manifest = build_release(_candidate(), _tables(con), store, contract=fx.DATASET_CONTRACT)
     report = verify_release(store, "demo-catalog", "R1", manifest=manifest)
-    finalize_release(store, manifest, report)
+    finalize_release(store, manifest, report, contract=_PARQUET_ONLY_CONTRACT)
     return manifest
 
 
@@ -129,6 +144,18 @@ def test_build_release_is_byte_identical_across_repeat_builds(tmp_path: Path):
     assert first == second
     assert manifest1.dataset == "demo-catalog" and manifest1.release == "R1"
     assert {t.name for t in manifest1.tables} == {"demo.events", "demo.entities"}
+
+
+def test_build_release_stamps_the_parquet_artifact_itself(tmp_path: Path):
+    """cancer-lane review: ``build_release`` alone -- no ``build_frozen_ducklake`` --
+    must populate ``manifest.artifacts["parquet"]``; a Parquet-only product otherwise
+    gets no artifact entry at all."""
+    con = duckdb.connect()
+    store = LocalDirStore(root=tmp_path)
+    manifest = build_release(_candidate(), _tables(con), store, contract=fx.DATASET_CONTRACT)
+    assert manifest.artifacts["parquet"] == ArtifactEntry(
+        status=ArtifactStatus.STAGED, required=True, location="tables/"
+    )
 
 
 def test_build_release_sort_by_ties_broken_by_primary_key_deterministically(tmp_path: Path):
@@ -202,7 +229,7 @@ def test_verify_release_passes_on_a_clean_build(tmp_path: Path):
     assert report.passed is True
     assert report.run_id == RUN_ID
 
-    finalize_release(store, manifest, report)
+    finalize_release(store, manifest, report, contract=_PARQUET_ONLY_CONTRACT)
     reloaded_report = verify_release(store, "demo-catalog", "R1")  # cold reload from store
     assert reloaded_report.passed is True
 
@@ -346,7 +373,7 @@ def test_record_release_writes_receipt_and_publishes_lineage(tmp_path: Path):
     manifest = build_release(candidate, _tables(con_build), store, contract=fx.DATASET_CONTRACT)
     report = verify_release(store, "demo-catalog", "R1", manifest=manifest)
     assert report.passed is True
-    published = finalize_release(store, manifest, report)
+    published = finalize_release(store, manifest, report, contract=_PARQUET_ONLY_CONTRACT)
     assert published.status == ArtifactStatus.PUBLISHED
 
     lake_settings = Settings(storage_base_uri=f"file://{tmp_path / 'lake'}")
@@ -382,5 +409,26 @@ def test_finalize_release_raises_and_writes_nothing_on_a_failed_report(tmp_path:
     assert failing_report.passed is False
 
     with pytest.raises(ValueError, match="acceptance failed"):
-        finalize_release(store, manifest, failing_report)
+        finalize_release(store, manifest, failing_report, contract=_PARQUET_ONLY_CONTRACT)
+    assert not (tmp_path / "demo-catalog" / "R1" / "manifest.json").exists()
+
+
+def test_finalize_release_refuses_missing_required_artifact_even_if_report_passed(
+    tmp_path: Path,
+):
+    """cancer-lane review: ``verify_release``'s ``required_artifacts_present`` check is
+    optional (only run when the caller passes ``contract``) -- ``finalize_release``
+    must not rely on the caller having done so. A report that passed (because
+    ``verify_release`` was called with no ``contract``) must still not let a release
+    missing a contract-required artifact (here: ``ducklake``) finalize."""
+    con = duckdb.connect()
+    store = LocalDirStore(root=tmp_path)
+    manifest = build_release(_candidate(), _tables(con), store, contract=fx.DATASET_CONTRACT)
+    assert manifest.artifacts.keys() == {"parquet"}
+
+    report = verify_release(store, "demo-catalog", "R1", manifest=manifest)  # no contract=
+    assert report.passed is True
+
+    with pytest.raises(RequiredArtifactMissingError):
+        finalize_release(store, manifest, report, contract=fx.DATASET_CONTRACT)
     assert not (tmp_path / "demo-catalog" / "R1" / "manifest.json").exists()
