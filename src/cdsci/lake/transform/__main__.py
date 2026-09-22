@@ -8,6 +8,8 @@ top-level SQL-file directory) is the one piece of shared state, threaded through
 
 from __future__ import annotations
 
+import json
+
 import typer
 
 from ..connect import lake_connect
@@ -80,6 +82,29 @@ def run_all_cmd(ctx: typer.Context) -> None:
         con.close()
     for target, rows in results.items():
         typer.echo(f"  {target}: {rows} rows")
+
+
+@app.command("sync")
+def sync_cmd() -> None:
+    """Sync SQLMesh state into ``lake_ops`` (the transform sync seam, cdsci-lake#85).
+
+    Builds the SQLMesh ``Context`` from ``transform/config.py`` (relative to the
+    working directory, same convention the ``sqlmesh`` CLI itself uses) and opens
+    the lake read-only -- this command only writes ``lake_ops``, never the lake
+    catalog. ``sqlmesh`` stays behind the ``[transform]`` extra: imported here,
+    not at module load, so ``list``/``graph``/``run``/``run-all`` don't need it.
+    """
+    from sqlmesh.core.context import Context
+
+    from .sync import sync
+
+    context = Context(paths="transform")
+    con = lake_connect(read_only=True, with_ops=True)
+    try:
+        report = sync(con, context)
+    finally:
+        con.close()
+    typer.echo(json.dumps(report.to_dict()))
 
 
 if __name__ == "__main__":
