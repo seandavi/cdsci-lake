@@ -12,10 +12,20 @@ that eventual extraction.
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 
-from .builder import _MATERIALIZATION_FOR_TEMPORAL_MODEL, ObjectStore
+import duckdb
+
+from ..contracts import DatasetContract
+from .builder import (
+    _MATERIALIZATION_FOR_TEMPORAL_MODEL,
+    LocalDirStore,
+    ObjectStore,
+    _expected_duckdb_type,
+)
+from .frozen import CATALOG_FILENAME, frozen_ducklake_attach_sql
 from .release import (
     SPEC_VERSION,
     AcceptanceCheck,
@@ -38,17 +48,108 @@ def _get_or_record_failure(
         return None
 
 
+def _check_frozen_ducklake(
+    store: LocalDirStore, prefix: PurePosixPath, manifest: ReleaseManifest
+) -> list[AcceptanceCheck]:
+    """Design §11.6: a fresh, credential-free ``ATTACH`` of this release's own
+    ``catalog.ducklake`` (local -- the http-served variant is the same statement
+    against a served base URL, exercised in acceptance, not here) -- every manifest
+    table is discoverable, its ``count(*)`` matches the manifest row count, and its
+    columns match ``schema.json``.
+    """
+    checks: list[AcceptanceCheck] = []
+    catalog_dir = store.root / prefix
+    catalog_path = catalog_dir / CATALOG_FILENAME
+    if not catalog_path.is_file():
+        checks.append(
+            AcceptanceCheck("ducklake.catalog_readable", passed=False, required=True)
+        )
+        return checks
+    checks.append(AcceptanceCheck("ducklake.catalog_readable", passed=True, required=True))
+
+    con = duckdb.connect()
+    try:
+        con.execute("INSTALL ducklake; LOAD ducklake;")
+        con.execute(frozen_ducklake_attach_sql(str(catalog_dir), alias="frozen"))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(
+            AcceptanceCheck(
+                "ducklake.attach_succeeds", passed=False, required=True, detail=str(exc)[:500]
+            )
+        )
+        return checks
+    checks.append(AcceptanceCheck("ducklake.attach_succeeds", passed=True, required=True))
+
+    try:
+        table_names = {
+            r[0] for r in con.execute(
+                "SELECT table_name FROM duckdb_tables() WHERE database_name = 'frozen'"
+            ).fetchall()
+        }
+        for table in manifest.tables:
+            check_name = f"{table.name}.ducklake_table_exists"
+            if table.name not in table_names:
+                checks.append(AcceptanceCheck(check_name, passed=False, required=True))
+                continue
+            checks.append(AcceptanceCheck(check_name, passed=True, required=True))
+
+            qualified = f'frozen.main."{table.name}"'
+            count = con.execute(f"SELECT count(*) FROM {qualified}").fetchone()[0]
+            checks.append(
+                AcceptanceCheck(
+                    f"{table.name}.ducklake_row_count_matches",
+                    passed=(table.row_count is not None and count == table.row_count),
+                    required=True,
+                    detail=f"ducklake count={count}, manifest row_count={table.row_count}",
+                )
+            )
+
+            schema_bytes = _get_or_record_failure(
+                store, prefix / table.schema_path, checks, f"{table.name}.ducklake_schema_readable"
+            )
+            if schema_bytes is None:
+                continue
+            expected_columns = [
+                (c["name"], _expected_duckdb_type(c["arrow_type"]))
+                for c in json.loads(schema_bytes)["columns"]
+            ]
+            described = con.execute(f"DESCRIBE {qualified}").fetchall()
+            actual_columns = [(name, col_type) for name, col_type, *_ in described]
+            checks.append(
+                AcceptanceCheck(
+                    f"{table.name}.ducklake_schema_matches",
+                    passed=actual_columns == expected_columns,
+                    required=True,
+                    detail=f"ducklake columns {actual_columns} vs schema.json {expected_columns}",
+                )
+            )
+    finally:
+        con.close()
+    return checks
+
+
 def verify_release(
     store: ObjectStore,
     dataset_id: str,
     release_id: str,
     manifest: ReleaseManifest | None = None,
+    *,
+    contract: DatasetContract | None = None,
 ) -> AcceptanceReport:
     """Cold-path acceptance (design §11.5/§11.7): given ``manifest`` (typically the
     in-memory result of ``build_release``, not yet written) -- or, when ``manifest``
     is ``None``, reloaded from ``store``'s ``manifest.json`` -- re-run the public-path/
     asset-ref allowlists and re-check every table's schema digest, declared row count,
     and per-file size/checksum.
+
+    ``contract``, when given, adds a ``required_artifacts_present`` check (design
+    §11.5 #8's ``required_artifacts`` gate) -- omitted, not skipped-as-passed, when
+    ``contract`` is ``None``, since a caller with no contract has no basis to know
+    what's required. When ``store`` is a :class:`~cdsci.lake.publish.builder.LocalDirStore`
+    and the manifest declares a ``ducklake`` artifact, this also runs design §11.6's
+    Frozen DuckLake acceptance: a fresh, credential-free ``ATTACH`` of the release's
+    own ``catalog.ducklake``, checking every manifest table is discoverable, its
+    ``count(*)`` matches the manifest row count, and its columns match ``schema.json``.
     """
     prefix = PurePosixPath(dataset_id) / release_id
     checks: list[AcceptanceCheck] = []
@@ -87,6 +188,16 @@ def verify_release(
     checks.append(
         AcceptanceCheck("tables_nonempty", passed=len(manifest.tables) > 0, required=True)
     )
+    if contract is not None:
+        missing_artifacts = contract.required_artifacts - manifest.artifacts.keys()
+        checks.append(
+            AcceptanceCheck(
+                "required_artifacts_present",
+                passed=not missing_artifacts,
+                required=True,
+                detail=f"missing: {sorted(missing_artifacts)}" if missing_artifacts else "",
+            )
+        )
     for doc_name, doc_path in (("provenance", manifest.provenance), ("lineage", manifest.lineage)):
         check_name = f"{doc_name}_readable"
         if _get_or_record_failure(store, prefix / doc_path, checks, check_name) is not None:
@@ -168,6 +279,9 @@ def verify_release(
                 detail=f"files sum rows={total_rows}, manifest row_count={table.row_count}",
             )
         )
+
+    if isinstance(store, LocalDirStore) and "ducklake" in manifest.artifacts:
+        checks.extend(_check_frozen_ducklake(store, prefix, manifest))
 
     return AcceptanceReport(
         dataset=dataset_id, release=release_id, run_id=run_id,
