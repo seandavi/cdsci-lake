@@ -49,11 +49,12 @@ class DuckDBDashboardRepository:
         return [RunModel(**r) for r in rows]
 
     async def get_snapshots(self, limit: int = 50) -> list[SnapshotModel]:
-        def load(con):
-            rows = snapshot_log(con, limit=limit)
-            attributed = ops.snapshot_run_ids(con, [r[0] for r in rows])
-            return rows, attributed
-        rows, attributed = await self._read(load, ([], {}))
+        # Two independent reads -- an absent `snapshot_attribution` side table (a
+        # lake never synced through SQLMesh) must not blank the snapshot rows too.
+        rows = await self._read(lambda con: snapshot_log(con, limit=limit), [])
+        attributed = await self._read(
+            lambda con: ops.snapshot_run_ids(con, [r[0] for r in rows]), {}
+        )
         results = []
         for snapshot_id, ts, author, message, extra_info, changes in rows:
             run_id = None

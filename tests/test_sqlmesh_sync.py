@@ -25,10 +25,17 @@ from cdsci.lake.connect import ops_db_path  # noqa: E402
 from cdsci.lake.transform.sqlmesh_sync import sync_project_attribution  # noqa: E402
 
 
-def test_sync_project_attribution_attributes_a_real_sqlmesh_apply(tmp_path: Path):
+def test_sync_project_attribution_attributes_a_real_sqlmesh_apply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from sqlmesh.core.analytics import disable_analytics
     from sqlmesh.core.config import Config, GatewayConfig, ModelDefaultsConfig
     from sqlmesh.core.config.connection import DuckDBAttachOptions, DuckDBConnectionConfig
     from sqlmesh.core.context import Context
+
+    # Offline: no analytics ping, no reads/writes under the real ~/.sqlmesh.
+    disable_analytics()
+    monkeypatch.setenv("SQLMESH_HOME", str(tmp_path))
 
     lake_settings = Settings(storage_base_uri=f"file://{tmp_path / 'lake_root'}")
     catalog_path = tmp_path / "lake_root" / "catalog.ducklake"
@@ -86,3 +93,49 @@ def test_sync_project_attribution_attributes_a_real_sqlmesh_apply(tmp_path: Path
 
     # Idempotent: re-syncing the same, unchanged apply finds nothing new.
     assert sync_project_attribution(context, con) == []
+
+
+def test_sync_project_attribution_skips_a_foreign_project_model(monkeypatch: pytest.MonkeyPatch):
+    """`context.models` also holds PROD models SQLMesh injects from *other*
+    projects (state snapshots outside the loader's own projects --
+    `sqlmesh/core/context.py`'s uncached-snapshot handling around `load()`).
+    A foreign-project model must never reach `ops.sync_sqlmesh_snapshot_attribution`
+    -- it would otherwise be synced/attributed under this project's watermark."""
+    from cdsci.lake.transform import sqlmesh_sync
+
+    class _FakeModel:
+        def __init__(self, name: str, project: str):
+            self.name = name
+            self.project = project
+
+    class _FakeSnapshot:
+        def __init__(self, name: str):
+            self._name = name
+            self.version = "v1"
+
+        def table_name(self) -> str:
+            return f"lake.sqlmesh__{self._name}"
+
+    class _FakeConfig:
+        project = "cdsci_lake"
+
+    class _FakeContext:
+        config = _FakeConfig()
+        models = {
+            "own.model": _FakeModel("own.model", "cdsci_lake"),
+            "foreign.model": _FakeModel("foreign.model", "omicidx"),
+        }
+
+        def get_snapshot(self, fqn: str):
+            return _FakeSnapshot(fqn)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        sqlmesh_sync.ops,
+        "sync_sqlmesh_snapshot_attribution",
+        lambda con, *, project, model, target, version=None: calls.append(model) or None,
+    )
+
+    sync_project_attribution(_FakeContext(), con=None)
+
+    assert calls == ["own.model"]  # the foreign-project model produced no call

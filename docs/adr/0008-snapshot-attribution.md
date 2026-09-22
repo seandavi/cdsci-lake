@@ -84,8 +84,35 @@ SQLMesh's DuckDB engine adapter runs with `SUPPORTS_TRANSACTIONS = False`, so
 this ADR's `set_commit_message`-in-a-transaction mechanism cannot reach
 SQLMesh-written snapshots (verified empirically). For the transform layer only,
 attribution is sourced from `lake_ops` instead: `ops.sync_sqlmesh_snapshot_attribution`
-brackets DuckLake snapshot ids per model against a watermark and records matches
-in `lake_ops.snapshot_attribution(snapshot_id, run_id, source)`; `/api/snapshots`
+brackets DuckLake snapshot ids per model against a watermark, excludes any
+snapshot that already carries its own `commit_extra_info` (in-catalog
+attribution wins over the side table), and records matches in
+`lake_ops.snapshot_attribution(snapshot_id, run_id, source)`; `/api/snapshots`
 joins this table when a snapshot's own `commit_extra_info` has none. The EL write
 path (`ops.run` / `Run.attribute`) is unaffected and keeps in-catalog attribution
-as originally specified. Sync writes rows only for project `cdsci_lake`.
+as originally specified.
+
+A snapshot's `changes` map names a full-refresh replace by dotted
+`schema.table`, but reports a data-only change (SQLMesh's INCREMENTAL/SCD2
+model kinds, which don't recreate the table) by bare internal table id;
+`_changed_tables` resolves those ids against the catalog's own
+`ducklake_table`/`ducklake_schema` metadata, so both kinds are attributable, not
+just full-refresh.
+
+**Write semantics:** `lake_ops.snapshot_attribution` uniqueness is
+`snapshot_id` (delete-then-insert, ADR-0006's portability convention) -- a
+re-sync of the same snapshot (e.g. after a watermark reset) replaces its one
+row rather than accumulating duplicates. The watermark write is the *last*
+write in the sync (after the run + attribution inserts, on both the matched and
+no-match paths), so a crash mid-sync leaves the watermark exactly where it was
+and a retry re-scans and recovers the same range instead of silently losing
+attribution.
+
+Sync writes rows only for project `cdsci_lake`: `sync_sqlmesh_snapshot_attribution`
+rejects any other `project` argument, and its caller
+`sync_project_attribution` additionally skips any model in SQLMesh's own
+`context.models` whose `Model.project` isn't the context's project --
+SQLMesh injects PROD models belonging to *other* projects into that dict
+(any state snapshot outside the loader's own projects), so scanning it
+unfiltered would otherwise attribute a foreign producer's (e.g. omicidx's)
+model under `cdsci_lake`.

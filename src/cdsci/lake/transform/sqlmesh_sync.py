@@ -26,10 +26,13 @@ if t.TYPE_CHECKING:
 def sync_project_attribution(context: Context, con: duckdb.DuckDBPyConnection) -> list[str]:
     """Attribute every model ``context`` itself defines against ``con``.
 
-    ``context.models`` holds only the models *this* project's ``models/`` files
-    declare -- a cross-project reference resolves through SQLMesh's own state
-    without ever appearing here -- so this can never sync an injected model
-    belonging to another producer (e.g. omicidx).
+    ``context.models`` is **not** scoped to this project alone: SQLMesh also
+    injects PROD models belonging to *other* projects into it (any state
+    snapshot whose ``node.project`` isn't one of the loader's own projects gets
+    added to ``self._models`` -- ``sqlmesh/core/context.py`` around
+    ``load()``'s uncached-snapshot handling). Skip any model whose own
+    :attr:`~sqlmesh.core.node.Model.project` isn't ``context``'s, so this can
+    never sync a model belonging to another producer (e.g. omicidx).
 
     Returns the ``run_id``s of the new runs recorded (skips models with nothing
     new to attribute since their last sync).
@@ -37,6 +40,8 @@ def sync_project_attribution(context: Context, con: duckdb.DuckDBPyConnection) -
     project = context.config.project
     run_ids = []
     for fqn, model in context.models.items():
+        if model.project != project:
+            continue
         snapshot = context.get_snapshot(fqn)
         if snapshot is None:
             continue

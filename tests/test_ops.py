@@ -620,3 +620,181 @@ def test_snapshot_run_ids_reads_back_the_side_table(lake_settings: Settings):
         assert ops.snapshot_run_ids(con, []) == {}
     finally:
         con.close()
+
+
+def test_sync_sqlmesh_snapshot_attribution_matches_a_data_only_change_by_table_id(
+    lake_settings: Settings,
+):
+    """An INCREMENTAL/SCD2-shaped change reports only the internal table id in
+    `changes` (no dotted `schema.table`) -- `_changed_tables` must resolve it via
+    the catalog's own table/schema metadata, not just match full-refresh
+    replaces (P1 finding 3)."""
+    con = lake_connect(lake_settings)
+    try:
+        _create_unattributed_table(con, "bugsigdb", "signature")
+        # A data-only write after the CREATE: DuckLake's `changes` for this
+        # snapshot is `{"inlined_insert": ["<table_id>"]}` -- id-only, no dot.
+        con.execute("INSERT INTO lake.bugsigdb.signature VALUES (2)")
+        insert_snapshot_id = con.execute(
+            "SELECT max(snapshot_id) FROM lake.snapshots()"
+        ).fetchone()[0]
+        changes = con.execute(
+            "SELECT changes FROM lake.snapshots() WHERE snapshot_id = ?", [insert_snapshot_id]
+        ).fetchone()[0]
+        assert all("." not in v for vs in changes.values() for v in vs), (
+            f"test setup expected an id-only change, got {changes}"
+        )
+
+        run_id = ops.sync_sqlmesh_snapshot_attribution(
+            con, project="cdsci_lake", model="bugsigdb.signature",
+            target="lake.bugsigdb.signature",
+        )
+        assert run_id is not None
+        attributed_ids = {
+            r[0] for r in con.execute(
+                "SELECT snapshot_id FROM ops.lake_ops.snapshot_attribution"
+            ).fetchall()
+        }
+        assert insert_snapshot_id in attributed_ids
+    finally:
+        con.close()
+
+
+def test_sync_sqlmesh_snapshot_attribution_skips_snapshots_with_commit_extra_info(
+    lake_settings: Settings,
+):
+    """A snapshot already attributed in-catalog (ADR-0008 §1) must not also get a
+    side-table row -- the bracketing query excludes `commit_extra_info IS NOT
+    NULL` (P1 finding 4)."""
+    con = lake_connect(lake_settings)
+    try:
+        _create_unattributed_table(con, "bugsigdb", "signature")
+        src = "SELECT 2 AS id"
+        with ops.run(con, source="icite", target="lake.bugsigdb.signature", version="v1") as r:
+            r.rows = upsert(con, "lake.bugsigdb.signature", src, key="id")
+        assert r.changed is True
+
+        run_id = ops.sync_sqlmesh_snapshot_attribution(
+            con, project="cdsci_lake", model="bugsigdb.signature",
+            target="lake.bugsigdb.signature",
+        )
+        assert run_id is not None
+        attributed_ids = {
+            r2[0] for r2 in con.execute(
+                "SELECT snapshot_id FROM ops.lake_ops.snapshot_attribution"
+            ).fetchall()
+        }
+        assert r.snapshot_after not in attributed_ids
+    finally:
+        con.close()
+
+
+def test_sync_sqlmesh_snapshot_attribution_no_duplicate_rows_after_watermark_reset(
+    lake_settings: Settings,
+):
+    """A watermark reset (e.g. a manual replay) re-brackets an already-attributed
+    snapshot -- the side table must replace, not duplicate, its row (P2 finding 5)."""
+    con = lake_connect(lake_settings)
+    try:
+        _create_unattributed_table(con, "bugsigdb", "signature")
+        first_run_id = ops.sync_sqlmesh_snapshot_attribution(
+            con, project="cdsci_lake", model="bugsigdb.signature",
+            target="lake.bugsigdb.signature",
+        )
+        assert first_run_id is not None
+
+        ops.set_watermark(con, "sqlmesh:cdsci_lake", "bugsigdb.signature", 0)
+        second_run_id = ops.sync_sqlmesh_snapshot_attribution(
+            con, project="cdsci_lake", model="bugsigdb.signature",
+            target="lake.bugsigdb.signature",
+        )
+        assert second_run_id is not None
+        assert second_run_id != first_run_id
+
+        rows = con.execute(
+            "SELECT snapshot_id, run_id FROM ops.lake_ops.snapshot_attribution"
+        ).fetchall()
+        by_snapshot: dict[int, list[str]] = {}
+        for sid, rid in rows:
+            by_snapshot.setdefault(sid, []).append(rid)
+        assert all(len(rids) == 1 for rids in by_snapshot.values())  # no duplicates
+        assert all(rids == [second_run_id] for rids in by_snapshot.values())  # latest wins
+    finally:
+        con.close()
+
+
+def test_sync_sqlmesh_snapshot_attribution_run_times_from_snapshot_time(lake_settings: Settings):
+    """The synthetic run row's started_at/finished_at come from the matched
+    snapshots' own snapshot_time, not the sync call's wall-clock time
+    (P2 finding 6; this preempts #86's separately-tracked run-row timestamps)."""
+    con = lake_connect(lake_settings)
+    try:
+        _create_unattributed_table(con, "bugsigdb", "signature")
+        run_id = ops.sync_sqlmesh_snapshot_attribution(
+            con, project="cdsci_lake", model="bugsigdb.signature",
+            target="lake.bugsigdb.signature",
+        )
+        assert run_id is not None
+        snapshot_id = con.execute(
+            "SELECT snapshot_id FROM ops.lake_ops.snapshot_attribution WHERE run_id = ?",
+            [run_id],
+        ).fetchone()[0]
+        expected_time = con.execute(
+            "SELECT snapshot_time FROM lake.snapshots() WHERE snapshot_id = ?", [snapshot_id]
+        ).fetchone()[0]
+
+        started_at, finished_at = con.execute(
+            "SELECT started_at, finished_at FROM ops.lake_ops.run WHERE run_id = ?", [run_id]
+        ).fetchone()
+        assert started_at == expected_time
+        assert finished_at == expected_time
+    finally:
+        con.close()
+
+
+def test_sync_sqlmesh_snapshot_attribution_watermark_survives_a_crash_mid_write(
+    lake_settings: Settings,
+):
+    """A crash between the run insert and the watermark write must leave the
+    watermark untouched, so a retry re-scans and recovers instead of silently
+    losing attribution (P1 finding 2)."""
+    con = lake_connect(lake_settings)
+    try:
+        _create_unattributed_table(con, "bugsigdb", "signature")
+
+        class _CrashOnRunInsert:
+            """Wraps `con`, raising once when the run-row INSERT executes."""
+
+            def __init__(self, inner):
+                self._inner = inner
+                self._armed = True
+
+            def execute(self, sql, params=None):
+                if self._armed and "INSERT INTO ops.lake_ops.run" in sql:
+                    self._armed = False
+                    raise RuntimeError("boom")
+                if params is None:
+                    return self._inner.execute(sql)
+                return self._inner.execute(sql, params)
+
+            def executemany(self, sql, params):
+                return self._inner.executemany(sql, params)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            ops.sync_sqlmesh_snapshot_attribution(
+                _CrashOnRunInsert(con), project="cdsci_lake", model="bugsigdb.signature",
+                target="lake.bugsigdb.signature",
+            )
+        assert ops.get_watermark(con, "sqlmesh:cdsci_lake", "bugsigdb.signature") is None
+        assert con.execute(
+            "SELECT count(*) FROM ops.lake_ops.snapshot_attribution"
+        ).fetchone()[0] == 0
+
+        # Retry (unwrapped) succeeds and attributes the same snapshot the crash lost.
+        run_id = ops.sync_sqlmesh_snapshot_attribution(
+            con, project="cdsci_lake", model="bugsigdb.signature",
+            target="lake.bugsigdb.signature",
+        )
+        assert run_id is not None
+    finally:
+        con.close()
