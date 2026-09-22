@@ -1,0 +1,65 @@
+{
+  "spec_version": "1.0",
+  "dataset": "demo-catalog",
+  "release": "R1",
+  "status": "published",
+  "published_at": "2026-09-22T00:00:00Z",
+  "run_id": "01927c9e-0000-7000-8000-000000000001",
+  "source_asset_versions": [
+    {
+      "ref": "ducklake://lake/demo/events",
+      "version": "snapshot:1"
+    },
+    {
+      "ref": "ducklake://lake/demo/entities",
+      "version": "snapshot:1"
+    }
+  ],
+  "artifacts": {
+    "parquet": {
+      "status": "verified",
+      "required": true,
+      "location": "tables/"
+    },
+    "ducklake": {
+      "status": "verified",
+      "required": true,
+      "location": "catalog.ducklake"
+    }
+  },
+  "tables": [
+    {
+      "name": "demo.events",
+      "description": "Append-only event log.",
+      "grain": "one row per event_id",
+      "primary_key": [
+        "event_id"
+      ],
+      "temporal_model": "append_immutable",
+      "owner": "cdsci-lake",
+      "license": "cc0",
+      "schema": "tables/demo.events/schema.json",
+      "files": "tables/demo.events/files.json",
+      "schema_digest": "sha256:0000000000000000000000000000000000000000000000000000000000e1",
+      "row_count": 3
+    },
+    {
+      "name": "demo.entities",
+      "description": "SCD2-release entity catalog spanning two writer scopes.",
+      "grain": "one row per entity_id and validity interval",
+      "primary_key": [
+        "entity_id",
+        "valid_from"
+      ],
+      "temporal_model": "scd2_release",
+      "owner": "cdsci-lake",
+      "license": "cc0",
+      "schema": "tables/demo.entities/schema.json",
+      "files": "tables/demo.entities/files.json",
+      "schema_digest": "sha256:0000000000000000000000000000000000000000000000000000000000e2",
+      "row_count": 3
+    }
+  ],
+  "provenance": "provenance.json",
+  "lineage": "lineage.json"
+}
