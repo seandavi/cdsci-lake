@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "spec_version": "1.0",
   "table": "demo.entities",
   "release": "R1",
   "materialization": "release_snapshot",

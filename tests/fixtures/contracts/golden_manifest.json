@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "spec_version": "1.0",
   "dataset": "demo-catalog",
   "release": "R1",
   "status": "published",

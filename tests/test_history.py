@@ -8,8 +8,11 @@ local, out of scope here):
 new key, identical row, attribute change, missing from scope, retired key
 reappears, same-release correction, out-of-order release rejected, duplicate
 incoming key rejected, row outside scope rejected, another writer's scope
-untouched, already-published release rejected, and every rejection emptying
-the whole plan.
+untouched, already-published release rejected, every rejection emptying the
+whole plan, a key closed under this writer but currently open under another
+writer (N1), an incoming row for a key open under another writer rejected
+rather than transferred (N1), and another writer's incompatible release
+vocabulary never reaching this writer's ``release_key`` (N1).
 """
 
 from __future__ import annotations
@@ -60,8 +63,9 @@ def _incoming_relation(con: duckdb.DuckDBPyConnection, rows: list[dict]) -> duck
 def _apply(con: duckdb.DuckDBPyConnection, plan: HistoryPlan) -> None:
     for row in plan.to_close:
         con.execute(
-            "UPDATE history SET valid_to = ? WHERE entity_id = ? AND valid_to IS NULL",
-            [row["valid_to"], row["entity_id"]],
+            "UPDATE history SET valid_to = ? WHERE entity_id = ? AND valid_from = ? "
+            "AND valid_to IS NULL",
+            [row["valid_to"], row["entity_id"], row["valid_from"]],
         )
     for row in plan.to_open:
         con.execute(
@@ -310,5 +314,99 @@ def test_null_attribute_and_null_scope_column_are_safe():
         # so it is outside current_in_scope_keys and never a retirement candidate.
         assert plan.retired == 0
         assert plan.to_close == ()
+    finally:
+        c.close()
+
+
+def test_key_closed_under_writer_a_but_open_under_writer_b_is_untouched():
+    """N1: a stale row closed under A must never make A's plan see B's currently open row.
+
+    ``shared`` was closed under writer_a's scope in the past (R0->R1) and is
+    currently open under writer_b (R1->). writer_a plans a release that omits
+    ``shared`` entirely -- it must not be retired, since the only *currently
+    open* row for that key belongs to a different scope.
+    """
+    c = duckdb.connect(":memory:")
+    try:
+        c.execute(
+            "CREATE TABLE h (entity_id VARCHAR, label VARCHAR, source VARCHAR, "
+            "valid_from VARCHAR, valid_to VARCHAR)"
+        )
+        c.execute("INSERT INTO h VALUES ('shared', 'old-a', 'writer_a', 'R0', 'R1')")
+        c.execute("INSERT INTO h VALUES ('shared', 'b-current', 'writer_b', 'R1', NULL)")
+        c.execute("CREATE TEMP TABLE inc AS SELECT entity_id, label, source FROM h LIMIT 0")
+        c.execute("INSERT INTO inc VALUES ('e_new', 'x', 'writer_a')")  # 'shared' omitted
+
+        plan = plan_scd2_release(
+            c, c.table("h"), c.table("inc"),
+            release="R3", scope=SCOPE, policy=POLICY, release_key=fx.release_key,
+        )
+        assert plan.rejections == ()
+        assert plan.to_close == ()  # B's open row is never a retirement candidate for A
+        assert plan.retired == 0
+        b_row = c.execute(
+            "SELECT source, valid_from, valid_to FROM h WHERE entity_id = 'shared' "
+            "AND valid_to IS NULL"
+        ).fetchone()
+        assert b_row == ("writer_b", "R1", None)  # untouched
+    finally:
+        c.close()
+
+
+def test_incoming_key_open_under_another_scope_is_rejected_not_transferred():
+    """N1: an incoming row for a key currently open under another scope is a rejection.
+
+    Even though the incoming row itself declares ``source = 'writer_a'`` (in
+    writer_a's own declared scope), the key ``shared`` is currently open under
+    writer_b -- this is ``key_owned_by_other_scope``, never an ownership
+    transfer.
+    """
+    c = duckdb.connect(":memory:")
+    try:
+        c.execute(
+            "CREATE TABLE h (entity_id VARCHAR, label VARCHAR, source VARCHAR, "
+            "valid_from VARCHAR, valid_to VARCHAR)"
+        )
+        c.execute("INSERT INTO h VALUES ('shared', 'old-a', 'writer_a', 'R0', 'R1')")
+        c.execute("INSERT INTO h VALUES ('shared', 'b-current', 'writer_b', 'R1', NULL)")
+        c.execute("CREATE TEMP TABLE inc AS SELECT entity_id, label, source FROM h LIMIT 0")
+        c.execute("INSERT INTO inc VALUES ('shared', 'a-attempt', 'writer_a')")
+
+        plan = plan_scd2_release(
+            c, c.table("h"), c.table("inc"),
+            release="R3", scope=SCOPE, policy=POLICY, release_key=fx.release_key,
+        )
+        assert len(plan.rejections) == 1
+        assert plan.rejections[0].reason == "key_owned_by_other_scope"
+        assert plan.rejections[0].business_key == ("shared",)
+        assert plan.to_close == plan.to_open == plan.to_replace_draft == ()
+    finally:
+        c.close()
+
+
+def test_writer_b_release_vocabulary_never_reaches_writer_a_release_key():
+    """N1: scope-filtered ``seen`` keeps B's foreign release vocabulary out of A's plan.
+
+    writer_b's ``valid_from`` (``'v5'``) is not parseable by ``fx.release_key``
+    (it expects ``R<int>``). Without scope-filtering the release-ordering
+    query, this would raise inside A's own R3 plan.
+    """
+    c = duckdb.connect(":memory:")
+    try:
+        c.execute(
+            "CREATE TABLE h (entity_id VARCHAR, label VARCHAR, source VARCHAR, "
+            "valid_from VARCHAR, valid_to VARCHAR)"
+        )
+        c.execute("INSERT INTO h VALUES ('e1', 'a1', 'writer_a', 'R1', NULL)")
+        c.execute("INSERT INTO h VALUES ('w1', 'b1', 'writer_b', 'v5', NULL)")
+        c.execute("CREATE TEMP TABLE inc AS SELECT entity_id, label, source FROM h LIMIT 0")
+        c.execute("INSERT INTO inc VALUES ('e1', 'a1', 'writer_a')")
+
+        plan = plan_scd2_release(
+            c, c.table("h"), c.table("inc"),
+            release="R3", scope=SCOPE, policy=POLICY, release_key=fx.release_key,
+        )
+        assert plan.rejections == ()
+        assert plan.unchanged == 1
     finally:
         c.close()

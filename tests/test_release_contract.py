@@ -6,7 +6,7 @@ Two roles share the same fixture files:
   ``golden_manifest.json``'s release/run metadata and checks it matches the
   committed golden JSON byte-for-byte.
 * "DuckDock-style validator" -- loads ``golden_manifest.json`` cold (no
-  producer code) and checks ``schema_version``, that every path is
+  producer code) and checks ``spec_version``, that every path is
   release-relative, and that every table names a temporal model.
 """
 
@@ -93,7 +93,7 @@ def test_producer_manifest_round_trips_through_json():
 def test_duckdock_validator_loads_golden_manifest_cold():
     """No producer code involved -- just JSON parsing + this module's validator."""
     manifest = ReleaseManifest.from_json(GOLDEN_MANIFEST_PATH.read_text())
-    assert manifest.schema_version == "1.0"
+    assert manifest.spec_version == "1.0"
     assert manifest.dataset == "demo-catalog"
     for table in manifest.tables:
         assert isinstance(table.temporal_model, TemporalModel)
@@ -139,6 +139,91 @@ def test_manifest_rejects_credential_bearing_url():
             files_path="tables/demo.events/files.json",
             schema_digest="sha256:x",
         )
+
+
+def test_manifest_description_free_text_accepts_public_url_mention():
+    """N2: prose that mentions a public https URL is not run through the locator allowlist."""
+    table = ManifestTable(
+        name="demo.events",
+        description="Source described at https://ensembl.org/genes for details.",
+        grain="one row per event_id",
+        primary_key=("event_id",),
+        temporal_model=TemporalModel.APPEND_IMMUTABLE,
+        owner="cdsci-lake",
+        license="cc0",
+        schema_path="tables/demo.events/schema.json",
+        files_path="tables/demo.events/files.json",
+        schema_digest="sha256:x",
+    )
+    assert "ensembl.org" in table.description
+
+
+@pytest.mark.parametrize("bad_description", ["lives at /mnt/lake/gene", "backed by s3://x"])
+def test_manifest_description_rejects_embedded_private_path_or_scheme(bad_description: str):
+    """N2: free text still rejects embedded private paths and storage schemes."""
+    with pytest.raises(PublicPathError):
+        ManifestTable(
+            name="demo.events",
+            description=bad_description,
+            grain="one row per event_id",
+            primary_key=("event_id",),
+            temporal_model=TemporalModel.APPEND_IMMUTABLE,
+            owner="cdsci-lake",
+            license="cc0",
+            schema_path="tables/demo.events/schema.json",
+            files_path="tables/demo.events/files.json",
+            schema_digest="sha256:x",
+        )
+
+
+def test_acceptance_check_detail_accepts_business_vocabulary_containing_key():
+    """N2: bare 'key' substring is no longer rejected in free text."""
+    check = AcceptanceCheck(
+        "row_key_uniqueness",
+        passed=True,
+        required=True,
+        detail="row key uniqueness = business key + valid_from",
+    )
+    assert "business key" in check.detail
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "javascript:alert(1)",
+        "data:text/plain;base64,eA==",
+        "mailto:a@b.com",
+        "https:/evil.example/x",
+    ],
+)
+def test_manifest_rejects_non_https_or_malformed_scheme(uri: str):
+    """N3: urlsplit runs unconditionally, so a scheme other than https is always rejected."""
+    with pytest.raises(PublicPathError):
+        FileEntry(uri=uri, size=1, sha256="x", content_type="application/vnd.apache.parquet")
+
+
+def test_manifest_rejects_percent_encoded_traversal_in_https_path():
+    with pytest.raises(PublicPathError, match="traversal"):
+        FileEntry(
+            uri="https://example.org/a/%2e%2e/secret",
+            size=1,
+            sha256="x",
+            content_type="application/vnd.apache.parquet",
+        )
+
+
+def test_manifest_rejects_percent_encoded_traversal_in_relative_path():
+    with pytest.raises(PublicPathError, match="traversal"):
+        FileEntry(
+            uri="a/%2e%2e/secret", size=1, sha256="x", content_type="application/vnd.apache.parquet"
+        )
+
+
+@pytest.mark.parametrize("uri", ["https://2130706433/x", "https://0x7f000001/x"])
+def test_manifest_rejects_decimal_and_hex_ip_host_bypass(uri: str):
+    """N4: a host must look like a hostname (dot + letter); decimal/hex IP spellings fail."""
+    with pytest.raises(PublicPathError):
+        FileEntry(uri=uri, size=1, sha256="x", content_type="application/vnd.apache.parquet")
 
 
 def test_manifest_rejects_secret_shaped_artifact_key():

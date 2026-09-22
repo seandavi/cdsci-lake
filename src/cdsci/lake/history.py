@@ -5,6 +5,10 @@ Computes which rows to close, open, or reject for one release of an
 registered on ``con`` — it makes no writes to any lake; the caller applies the
 returned ``HistoryPlan``.
 
+The planner materialises the filtered current/incoming relations into Python
+``dict``/``set`` objects and does its comparisons there.
+# ponytail: in-memory sets; move to DuckDB anti-joins when a table exceeds ~1e6 current rows
+
 ``CompleteScope.predicate_sql`` is a raw SQL boolean expression supplied by
 the calling producer contract (trusted internal code — the domain repository
 that owns this table's scope), never derived from untrusted/external input;
@@ -117,11 +121,21 @@ def plan_scd2_release(
     incoming.create_view("_scd2_incoming", replace=True)
     key_cols = ", ".join(policy.business_key)
 
+    # Every read of "the current table" below goes through this one scope filter, so a
+    # writer never sees (and never reasons about the release ordering of) another
+    # writer's rows for a shared business key.
+    con.execute(
+        f"CREATE OR REPLACE TEMP VIEW _scd2_current_scope AS "
+        f"SELECT * FROM _scd2_current WHERE ({scope.predicate_sql})"
+    )
+
+    # ponytail: release-ordering state (this `seen` query) is planner-local; it moves to
+    # lake_ops in M1 once release ordering is tracked as operational state, not recomputed here.
     seen = _rows(
         con,
-        f"SELECT {policy.valid_from} AS x FROM _scd2_current "
+        f"SELECT {policy.valid_from} AS x FROM _scd2_current_scope "
         f"WHERE {policy.valid_from} IS NOT NULL "
-        f"UNION ALL SELECT {policy.valid_to} AS x FROM _scd2_current "
+        f"UNION ALL SELECT {policy.valid_to} AS x FROM _scd2_current_scope "
         f"WHERE {policy.valid_to} IS NOT NULL",
     )
     seen_keys = [release_key(r["x"]) for r in seen]
@@ -151,32 +165,46 @@ def plan_scd2_release(
         _key(r, policy.business_key)
         for r in _rows(con, f"SELECT * FROM _scd2_incoming WHERE ({scope.predicate_sql})")
     }
+    # A key currently open under a *different* scope is never an ownership transfer target:
+    # an incoming row for it is rejected outright, even if the incoming row itself is
+    # otherwise in this writer's declared scope.
+    other_scope_open_keys = {
+        _key(r, policy.business_key)
+        for r in _rows(
+            con,
+            f"SELECT * FROM _scd2_current WHERE {policy.valid_to} IS NULL "
+            f"AND NOT ({scope.predicate_sql})",
+        )
+    }
     all_incoming: dict[tuple[Any, ...], dict[str, Any]] = {}
     for row in _rows(con, "SELECT * FROM _scd2_incoming"):
         k = _key(row, policy.business_key)
         all_incoming[k] = row
-        if k not in dup_keys and k not in in_scope_keys:
+        if k in dup_keys:
+            continue
+        if k not in in_scope_keys:
             rejections.append(Rejection("outside_declared_scope", k))
+        elif k in other_scope_open_keys:
+            rejections.append(Rejection("key_owned_by_other_scope", k))
 
     if rejections:
         return HistoryPlan(rejections=tuple(rejections))
-
-    valid_incoming = all_incoming
 
     tracked = policy.tracked_columns or tuple(
         c for c in incoming.columns if c not in policy.business_key
     )
     current_open = {
         _key(r, policy.business_key): r
-        for r in _rows(con, f"SELECT * FROM _scd2_current WHERE {policy.valid_to} IS NULL")
+        for r in _rows(con, f"SELECT * FROM _scd2_current_scope WHERE {policy.valid_to} IS NULL")
     }
     current_closed_keys = {
         _key(r, policy.business_key)
-        for r in _rows(con, f"SELECT * FROM _scd2_current WHERE {policy.valid_to} IS NOT NULL")
+        for r in _rows(
+            con, f"SELECT * FROM _scd2_current_scope WHERE {policy.valid_to} IS NOT NULL"
+        )
     }
     current_in_scope_keys = {
-        _key(r, policy.business_key)
-        for r in _rows(con, f"SELECT * FROM _scd2_current WHERE ({scope.predicate_sql})")
+        _key(r, policy.business_key) for r in _rows(con, "SELECT * FROM _scd2_current_scope")
     }
 
     to_close: list[dict[str, Any]] = []
@@ -184,7 +212,7 @@ def plan_scd2_release(
     to_replace_draft: list[dict[str, Any]] = []
     inserted = changed = retired = reopened = unchanged = same_release_corrections = 0
 
-    for k, row in valid_incoming.items():
+    for k, row in all_incoming.items():
         current = current_open.get(k)
         if current is None:
             to_open.append({**row, policy.valid_from: release, policy.valid_to: None})
@@ -211,7 +239,7 @@ def plan_scd2_release(
         changed += 1
 
     for k, current in current_open.items():
-        if k not in current_in_scope_keys or k in valid_incoming:
+        if k not in current_in_scope_keys or k in all_incoming:
             continue
         if current[policy.valid_from] == release:
             continue  # same-release draft, nothing incoming: leave as-is (not a required scenario)
@@ -234,5 +262,4 @@ def plan_scd2_release(
         reopened=reopened,
         unchanged=unchanged,
         same_release_corrections=same_release_corrections,
-        rejections=tuple(rejections),
     )

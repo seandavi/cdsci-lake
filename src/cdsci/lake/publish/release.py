@@ -1,25 +1,29 @@
 """``cdsci.lake.publish.release`` — release manifest, file index, acceptance, and receipt types.
 
-Design §6.5/§6.6, §5.2/§5.3, §11.5. Every type here carries ``schema_version``
-and round-trips through ``to_json()``/``from_json()``. The design's §5.2
-manifest JSON sketch calls this field ``spec_version``; this module follows
-this task's explicit instruction and names it ``schema_version`` instead — see
-the M0 report for this naming conflict, to reconcile before M1 wire format is
-frozen.
+Design §6.5/§6.6, §5.2/§5.3, §11.5. Every type here carries ``spec_version``
+(design §5.2) and round-trips through ``to_json()``/``from_json()``.
 
 ``ReleaseManifest``, ``TableFileIndex``/``FileEntry``, and ``AcceptanceReport``
 are the types a public consumer (DuckDock, a downloader) reads cold, with no
-private credentials. Every string field on every public type is run through
+private credentials. Fields are split into two classes: a small, explicit set
+of *locator* fields (``_LOCATOR_FIELDS`` -- ``schema_path``, ``files_path``,
+``location``, ``uri``, ``provenance``, ``lineage``) is run through
 ``_check_public_path``, an *allowlist*: only a relative POSIX path or a
-credential-free ``https://`` URL to a non-private host passes; everything
-else (``s3://``, ``postgresql://``, ``file://``, ``gs://``, UNC paths, ``..``
-traversal, leading/trailing whitespace, absolute paths, drive letters) is
-rejected. ``_check_no_secret_keys`` rejects secret-shaped mapping keys (e.g.
-``artifacts``). ``SourceAssetVersion.ref`` is the one exception: it is an
-internal-lake *asset identifier* (design §5.2's ``"ducklake://lake/..."``),
-not a resolvable public location, so it gets its own narrow
-``_check_asset_ref`` instead of the path allowlist -- only the ``ducklake``
-scheme, no userinfo, no private/loopback host, no ``..``.
+credential-free ``https://`` URL to a public host passes; everything else
+(``s3://``, ``postgresql://``, ``file://``, ``gs://``, UNC paths, ``..``
+traversal, leading/trailing whitespace, absolute paths, drive letters, any
+non-``https`` URL scheme) is rejected. Every other string field (prose like
+``description``, ``grain``, ``detail``, identifiers like ``dataset``,
+``run_id``) is free text and only gets a pattern scan
+(``_check_no_unsafe_pattern``) for embedded private-storage schemes, absolute
+private-looking POSIX paths, and secret-shaped substrings -- it is never run
+through the locator allowlist, which would reject ordinary prose that happens
+to mention a public URL. ``_check_no_secret_keys`` rejects secret-shaped
+mapping keys (e.g. ``artifacts``). ``SourceAssetVersion.ref`` is the one
+exception: it is an internal-lake *asset identifier* (design §5.2's
+``"ducklake://lake/..."``), not a resolvable public location, so it gets its
+own narrow ``_check_asset_ref`` instead of the path allowlist -- only the
+``ducklake`` scheme, no userinfo, no private/loopback host, no ``..``.
 ``ReleaseCandidate`` and ``PublicationReceipt`` are internal/staging types
 (design §3.2's "run state, watermarks, asset identity, publication
 receipts" is `lake_ops` territory) and may reference private staging
@@ -31,15 +35,16 @@ from __future__ import annotations
 import dataclasses
 import ipaddress
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from ..contracts import DatasetContract, Materialization, TableContract, TemporalModel
 
-SCHEMA_VERSION = "1.0"
+SPEC_VERSION = "1.0"
 
 
 class PublicPathError(ValueError):
@@ -52,6 +57,25 @@ class RequiredArtifactMissingError(ValueError):
 
 _SECRET_KEY_SUBSTRINGS = ("token", "secret", "password", "key", "credential", "auth", "apikey")
 
+# Fields that name a location -- everything else on a public dataclass is free text and only
+# gets the lighter pattern scan below (``_check_no_unsafe_pattern``), not the locator allowlist.
+_LOCATOR_FIELDS = frozenset(
+    {"schema_path", "files_path", "location", "uri", "provenance", "lineage"}
+)
+
+_UNSAFE_PATTERN = re.compile(
+    r"(?ix)"
+    r"\b(s3|r2|gs|file|postgres(?:ql)?)://"  # private/local storage schemes
+    r"|ducklake://[^/@]*@"  # ducklake ref with userinfo
+    r"|(?<![\w./-])/(mnt|home|tmp|etc|var|opt|data)/"  # absolute POSIX path
+    r"|token="
+    r"|password"
+    r"|secret"
+    r"|api[-_]?key"
+    r"|AKIA[0-9A-Z]{16}"
+    r"|ya29\."
+)
+
 
 def _is_private_or_loopback_host(host: str) -> bool:
     host = host.strip("[]").lower()
@@ -62,6 +86,25 @@ def _is_private_or_loopback_host(host: str) -> bool:
     except ValueError:
         return False
     return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved
+
+
+def _looks_like_a_public_hostname(host: str) -> bool:
+    """Cheaply kills decimal/hex/octal IP spellings: a real hostname has a dot and a letter."""
+    return "." in host and any(c.isalpha() for c in host)
+
+
+def _check_no_unsafe_pattern(value: str, *, field_name: str) -> None:
+    """Free-text scan: reject embedded private-storage schemes, private paths, or secrets.
+
+    Unlike ``_check_public_path`` this is not an allowlist -- prose that happens to mention a
+    public ``https://`` URL is fine; only these specific shapes are rejected.
+    """
+    match = _UNSAFE_PATTERN.search(value)
+    if match:
+        raise PublicPathError(
+            f"{field_name}: looks like it contains a private location or secret "
+            f"({match.group(0)!r}): {value!r}"
+        )
 
 
 def _check_public_path(value: str, *, field_name: str) -> None:
@@ -76,8 +119,8 @@ def _check_public_path(value: str, *, field_name: str) -> None:
         raise PublicPathError(
             f"{field_name}: backslash not allowed in a public artifact: {value!r}"
         )
-    if "://" in value:
-        parts = urlsplit(value)
+    parts = urlsplit(value)
+    if parts.scheme:
         if parts.scheme.lower() != "https":
             raise PublicPathError(
                 f"{field_name}: only https:// URLs are allowed in a public artifact (got scheme "
@@ -87,17 +130,26 @@ def _check_public_path(value: str, *, field_name: str) -> None:
             raise PublicPathError(
                 f"{field_name}: credential-bearing URL not allowed in a public artifact: {value!r}"
             )
-        if not parts.hostname or _is_private_or_loopback_host(parts.hostname):
+        host = parts.hostname or ""
+        if (
+            not host
+            or _is_private_or_loopback_host(host)
+            or not _looks_like_a_public_hostname(host)
+        ):
             raise PublicPathError(
-                f"{field_name}: private or loopback host not allowed in a public artifact: "
-                f"{value!r}"
+                f"{field_name}: private, loopback, or non-hostname address not allowed in a "
+                f"public artifact: {value!r}"
+            )
+        if ".." in unquote(parts.path).split("/"):
+            raise PublicPathError(
+                f"{field_name}: path traversal ('..') not allowed in a public artifact: {value!r}"
             )
         return
     if value.startswith("/") or (len(value) > 1 and value[1] == ":" and value[0].isalpha()):
         raise PublicPathError(
             f"{field_name}: absolute path not allowed in a public artifact: {value!r}"
         )
-    if ".." in value.split("/"):
+    if ".." in unquote(value).split("/"):
         raise PublicPathError(
             f"{field_name}: path traversal ('..') not allowed in a public artifact: {value!r}"
         )
@@ -122,7 +174,7 @@ def _check_asset_ref(value: str, *, field_name: str) -> None:
         raise PublicPathError(f"{field_name}: credential-bearing asset reference: {value!r}")
     if not parts.hostname or _is_private_or_loopback_host(parts.hostname):
         raise PublicPathError(f"{field_name}: private/loopback host in asset reference: {value!r}")
-    if ".." in parts.path.split("/"):
+    if ".." in unquote(parts.path).split("/"):
         raise PublicPathError(f"{field_name}: path traversal ('..') in asset reference: {value!r}")
 
 
@@ -134,26 +186,26 @@ def _check_no_secret_keys(mapping: Mapping[str, Any], *, field_name: str) -> Non
             )
 
 
-def _check_no_secret_value(value: str, *, field_name: str) -> None:
-    lowered = value.lower()
-    if any(s in lowered for s in _SECRET_KEY_SUBSTRINGS):
-        raise PublicPathError(f"{field_name}: looks like it contains a secret: {value!r}")
-
-
 def _check_public_strings(instance: Any, *, exclude: frozenset[str] = frozenset()) -> None:
-    """Run ``_check_public_path`` over every plain ``str`` field on a public dataclass instance.
+    """Run the locator allowlist or the free-text pattern scan over every ``str`` field.
 
-    Nested public dataclasses (tuple/dict members) self-validate in their own
-    ``__post_init__`` at construction time, so this only needs to look at
-    ``instance``'s own fields -- that is the recursion.
+    A field named in ``_LOCATOR_FIELDS`` gets ``_check_public_path``; every other ``str``
+    field is free text and gets ``_check_no_unsafe_pattern`` instead. Nested public
+    dataclasses (tuple/dict members) self-validate in their own ``__post_init__`` at
+    construction time, so this only needs to look at ``instance``'s own fields -- that is
+    the recursion.
     """
     type_name = type(instance).__name__
     for f in dataclasses.fields(instance):
         if f.name in exclude:
             continue
         value = getattr(instance, f.name)
-        if isinstance(value, str):
+        if not isinstance(value, str):
+            continue
+        if f.name in _LOCATOR_FIELDS:
             _check_public_path(value, field_name=f"{type_name}.{f.name}")
+        else:
+            _check_no_unsafe_pattern(value, field_name=f"{type_name}.{f.name}")
 
 
 class ArtifactStatus(StrEnum):
@@ -288,7 +340,7 @@ class ReleaseManifest:
     artifacts: Mapping[str, ArtifactEntry] = field(default_factory=dict)
     provenance: str = "provenance.json"
     lineage: str = "lineage.json"
-    schema_version: str = SCHEMA_VERSION
+    spec_version: str = SPEC_VERSION
 
     def __post_init__(self) -> None:
         _check_public_strings(self)
@@ -296,7 +348,7 @@ class ReleaseManifest:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema_version": self.schema_version,
+            "spec_version": self.spec_version,
             "dataset": self.dataset,
             "release": self.release,
             "status": self.status.value,
@@ -312,7 +364,7 @@ class ReleaseManifest:
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> ReleaseManifest:
         return cls(
-            schema_version=d["schema_version"],
+            spec_version=d["spec_version"],
             dataset=d["dataset"],
             release=d["release"],
             status=ArtifactStatus(d["status"]),
@@ -382,14 +434,14 @@ class TableFileIndex:
     release: str
     materialization: Materialization
     files: tuple[FileEntry, ...]
-    schema_version: str = SCHEMA_VERSION
+    spec_version: str = SPEC_VERSION
 
     def __post_init__(self) -> None:
         _check_public_strings(self)
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema_version": self.schema_version,
+            "spec_version": self.spec_version,
             "table": self.table,
             "release": self.release,
             "materialization": self.materialization.value,
@@ -399,7 +451,7 @@ class TableFileIndex:
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> TableFileIndex:
         return cls(
-            schema_version=d["schema_version"],
+            spec_version=d["spec_version"],
             table=d["table"],
             release=d["release"],
             materialization=Materialization(d["materialization"]),
@@ -423,7 +475,6 @@ class AcceptanceCheck:
 
     def __post_init__(self) -> None:
         _check_public_strings(self)
-        _check_no_secret_value(self.detail, field_name="AcceptanceCheck.detail")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -447,7 +498,7 @@ class AcceptanceReport:
     run_id: str
     checked_at: str
     checks: tuple[AcceptanceCheck, ...]
-    schema_version: str = SCHEMA_VERSION
+    spec_version: str = SPEC_VERSION
 
     def __post_init__(self) -> None:
         _check_public_strings(self)
@@ -459,7 +510,7 @@ class AcceptanceReport:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema_version": self.schema_version,
+            "spec_version": self.spec_version,
             "dataset": self.dataset,
             "release": self.release,
             "run_id": self.run_id,
@@ -470,7 +521,7 @@ class AcceptanceReport:
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> AcceptanceReport:
         return cls(
-            schema_version=d["schema_version"],
+            spec_version=d["spec_version"],
             dataset=d["dataset"],
             release=d["release"],
             run_id=d["run_id"],
@@ -498,11 +549,11 @@ class ReleaseCandidate:
     tables: tuple[str, ...]
     status: ArtifactStatus
     acceptance: AcceptanceReport | None = None
-    schema_version: str = SCHEMA_VERSION
+    spec_version: str = SPEC_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema_version": self.schema_version,
+            "spec_version": self.spec_version,
             "dataset": self.dataset,
             "release": self.release,
             "run_id": self.run_id,
@@ -516,7 +567,7 @@ class ReleaseCandidate:
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> ReleaseCandidate:
         return cls(
-            schema_version=d["schema_version"],
+            spec_version=d["spec_version"],
             dataset=d["dataset"],
             release=d["release"],
             run_id=d["run_id"],
@@ -553,11 +604,11 @@ class PublicationReceipt:
     checksums: Mapping[str, str] = field(default_factory=dict)
     version: str | None = None
     details: Mapping[str, Any] = field(default_factory=dict)
-    schema_version: str = SCHEMA_VERSION
+    spec_version: str = SPEC_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema_version": self.schema_version,
+            "spec_version": self.spec_version,
             "dataset": self.dataset,
             "release": self.release,
             "format": self.format,
@@ -574,7 +625,7 @@ class PublicationReceipt:
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> PublicationReceipt:
         return cls(
-            schema_version=d["schema_version"],
+            spec_version=d["spec_version"],
             dataset=d["dataset"],
             release=d["release"],
             format=d["format"],
