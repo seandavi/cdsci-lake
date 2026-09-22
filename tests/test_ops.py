@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from cdsci.lake import Settings, lake_connect, ops, upsert
+from cdsci.lake.publish.release import ArtifactStatus, PublicationReceipt
 
 
 @pytest.fixture
@@ -414,6 +415,71 @@ def test_record_lineage_is_idempotent_on_src_dst_pair(lake_settings: Settings):
         rows = ops.lineage_for(con, "lake.a.t")
         assert len(rows) == 1  # no duplicate row
         assert rows[0] == first  # edge_type/run_id/discovered_at untouched
+    finally:
+        con.close()
+
+
+def test_record_publication_receipt_round_trips_and_is_idempotent(lake_settings: Settings):
+    """record_publication_receipt writes one row keyed by (release_id, dataset_id, asset_ref);
+    publication_receipts reads it back as a PublicationReceipt; a second record for the same
+    release replaces rather than duplicates (cdsci-lake#100)."""
+    con = lake_connect(lake_settings)
+    try:
+        receipt = PublicationReceipt(
+            dataset="demo-catalog", release="R1", format="parquet",
+            destination="demo-catalog/R1", schema_digest="sha256:abc", run_id="r1",
+            status=ArtifactStatus.PUBLISHED, row_counts={"demo.events": 3},
+        )
+        receipt_id = ops.record_publication_receipt(con, receipt)
+        assert receipt_id
+
+        got = ops.publication_receipts(con, "R1")
+        assert got == [receipt]
+        assert con.execute(
+            "SELECT asset_ref FROM ops.lake_ops.publication_receipt WHERE receipt_id = ?",
+            [receipt_id],
+        ).fetchone()[0] == "release.demo-catalog.R1"
+
+        # Re-recording the same release replaces the one row (new receipt_id, still one row).
+        updated = PublicationReceipt(
+            dataset="demo-catalog", release="R1", format="parquet",
+            destination="demo-catalog/R1", schema_digest="sha256:def", run_id="r2",
+            status=ArtifactStatus.PUBLISHED, row_counts={"demo.events": 4},
+        )
+        ops.record_publication_receipt(con, updated)
+        rows = ops.publication_receipts(con, "R1")
+        assert rows == [updated]
+    finally:
+        con.close()
+
+
+def test_record_publication_receipt_falls_back_to_active_run_id(lake_settings: Settings):
+    """S4: a receipt with no run_id of its own picks up the enclosing run() block's
+    run_id, so it matches register_asset()'s active-run-derived last_run_id."""
+    con = lake_connect(lake_settings)
+    try:
+        src = "SELECT * FROM (VALUES (1,'a')) v(id,val)"
+        with ops.run(con, source="icite", target="lake.icite.t", version="v1") as r:
+            r.rows = upsert(con, "lake.icite.t", src, key="id")
+            ops.register_asset(
+                con, ref="release.demo-catalog.R1", writer="cdsci", asset_type="release",
+                name="demo-catalog R1",
+            )
+            receipt = PublicationReceipt(
+                dataset="demo-catalog", release="R1", format="parquet",
+                destination="demo-catalog/R1", schema_digest="sha256:abc", run_id="",
+                status=ArtifactStatus.PUBLISHED,
+            )
+            ops.record_publication_receipt(con, receipt)
+            active_run_id = r.run_id
+
+        receipt_run_id = con.execute(
+            "SELECT run_id FROM ops.lake_ops.publication_receipt WHERE release_id = 'R1'"
+        ).fetchone()[0]
+        asset_run_id = con.execute(
+            "SELECT last_run_id FROM ops.lake_ops.asset WHERE ref = 'release.demo-catalog.R1'"
+        ).fetchone()[0]
+        assert receipt_run_id == asset_run_id == active_run_id
     finally:
         con.close()
 

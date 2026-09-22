@@ -89,6 +89,41 @@ systemd, jobs); the metadata model is the thing that converges.
 - **Sequencing:** land (or at least stub) this **before** SQLMesh adoption, so its
   lineage feeds the model on day one instead of becoming a second silo.
 
+## Amendment 2026-09-22
+
+Follow-up from cdsci-lake#80/#100 (the M1 release-builder worker hit two gaps this ADR left open).
+
+### 1. Asset `ref` grammar is pinned
+
+`docs/design/metadata_lineage.md`'s open question #2 is resolved for **internal lake table** assets: the canonical ref is the dotted form `lake.<schema>.<table>` — lowercase identifiers only, no scheme, no credentials (e.g. `lake.demo.events`, `lake.ensembl.gene`). `cdsci.lake.contracts.check_lake_asset_ref` is the single validator for this grammar; `publish.release.SourceAssetVersion.ref` (always an internal lake table reference in a release's `source_asset_versions`) is validated against it and no longer accepts the `ducklake://` scheme the M0 worker introduced.
+
+Other asset types the `lake_ops.asset` table already carries (`file`, `postgres`, `duckdb`, and now `release`) are not restricted to this grammar — they keep their own scheme (`r2://...`, `postgres://<db>.<schema>.<table>`, `file://...`) or, for a release-as-asset (§2 below), a distinct dotted form that is not the internal lake grammar. `cdsci.lake.contracts.check_asset_ref` is the shared *baseline* validator both `ops.register_asset`/`ops.record_lineage` and `check_lake_asset_ref` build on: no stray whitespace, no embedded credentials, regardless of scheme. `check_lake_asset_ref` layers the stricter dotted-grammar check on top for the internal-lake-table case specifically.
+
+A release registers as an asset under `release.<dataset_id>.<release_id>` (e.g. `release.demo-catalog.R1`) — not the internal lake grammar, since `dataset_id`/`release_id` are producer-chosen strings (may contain hyphens or uppercase) rather than SQL identifiers. It is validated only by the baseline `check_asset_ref`.
+
+### 2. `lake_ops.publication_receipt`
+
+```sql
+CREATE TABLE IF NOT EXISTS lake_ops.publication_receipt (
+    receipt_id     TEXT,        -- client-generated uuid
+    release_id     TEXT,        -- ReleaseManifest.release / PublicationReceipt.release
+    dataset_id     TEXT,        -- ReleaseManifest.dataset / PublicationReceipt.dataset
+    asset_ref      TEXT,        -- the release-as-asset ref, 'release.<dataset_id>.<release_id>'
+    spec_version   TEXT,
+    status         TEXT,        -- ArtifactStatus value at record time
+    receipt        TEXT,        -- publish.release.PublicationReceipt.to_json()
+    run_id         TEXT,
+    recorded_at    TIMESTAMPTZ
+    -- uniqueness: (release_id, dataset_id, asset_ref), in code (delete-then-insert)
+);
+```
+
+Same portability posture as `asset`/`lineage`: no `SERIAL`/`PK`/`FK`, ids client-generated, uniqueness enforced by the writer (`ops.record_publication_receipt`). One receipt row per release build today (a single `asset_ref` per `(release_id, dataset_id)`); a producer that later publishes distinct per-format receipts for the same release (parquet vs. Iceberg, M6) will need a format-qualified `asset_ref` — not needed yet, so not speculatively built.
+
+### 3. `asset_version` is not added
+
+Per-version detail (snapshot id, schema digest, row count) stays on the `publication_receipt` row itself (its embedded `PublicationReceipt.checksums`/`row_counts`) and on `asset.current_version` plus retained DuckLake snapshots — consistent with this ADR's original §5 "Version is not (yet) its own table" stance. Promote `asset_version` to a first-class table only if per-version history beyond a receipt row plus DuckLake snapshots is actually needed (e.g. querying every schema digest a table has ever published, not just the latest); no such requirement has surfaced as of this amendment.
+
 ## Alternatives considered
 
 - **Keep metadata in the executor** (Dagster/Prefect assets). Rejected — bundles the

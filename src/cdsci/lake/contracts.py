@@ -15,13 +15,69 @@ installed.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import pyarrow as pa
+
+
+# Dotted internal lake ref grammar (ADR-0014 Amendment 2026-09-22): lowercase
+# identifiers, no scheme, no credentials -- e.g. "lake.demo.events". Anchors the
+# leading segment to "lake" and pins exactly three dotted segments
+# ("lake.<schema>.<table>", no deeper) so a release-asset ref
+# ("release.<dataset>.<release>", which may carry uppercase/hyphenated
+# producer-chosen ids) is deliberately NOT matched here -- that ref form goes
+# through the looser :func:`check_asset_ref`.
+_LAKE_REF_PATTERN = re.compile(r"^lake(\.[a-z][a-z0-9_]*){2}$")
+
+_CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
+_CREDENTIAL_WORD_PATTERN = re.compile(r"password|secret|token|credential", re.IGNORECASE)
+
+
+def check_asset_ref(ref: str) -> None:
+    """Reject a malformed or credential-bearing asset ``ref`` (ADR-0014 §5).
+
+    Generic across ref schemes (``lake.<schema>.<table>``, ``r2://...``,
+    ``postgres://...``, ``release.<dataset>.<release>``) -- guards only what matters
+    regardless of scheme: no stray whitespace, no control characters, no embedded
+    credentials (a bare ``@``, anywhere, not just in a URL's netloc -- a scheme-less
+    or ``scheme:``-only ref like ``postgres:user:pass@host`` never populates
+    ``urlsplit().netloc``; and no case-insensitive password/secret/token/credential
+    substring). Shared by :mod:`cdsci.lake.ops` (any asset type) and
+    :mod:`cdsci.lake.publish.release` (layered under the stricter
+    :func:`check_lake_asset_ref`).
+    """
+    if not ref or ref != ref.strip():
+        raise ValueError(f"invalid asset ref: {ref!r}")
+    if _CONTROL_CHAR_PATTERN.search(ref):
+        raise ValueError(f"asset ref must not contain control characters: {ref!r}")
+    if "@" in ref:
+        raise ValueError(f"asset ref must not embed credentials: {ref!r}")
+    if _CREDENTIAL_WORD_PATTERN.search(ref):
+        raise ValueError(f"asset ref must not embed credentials: {ref!r}")
+
+
+def check_lake_asset_ref(ref: str, *, field_name: str = "ref") -> None:
+    """Validate the canonical internal lake asset ref grammar (ADR-0014 Amendment 2026-09-22).
+
+    ``lake.<schema>.<table>`` only -- lowercase dotted identifiers, no scheme, no
+    credentials. Layered on top of :func:`check_asset_ref`'s baseline safety check.
+    A :class:`~cdsci.lake.publish.release.SourceAssetVersion` always names an
+    internal lake table, so it is validated against this stricter grammar rather
+    than the permissive one ``ops.register_asset`` uses for other asset types.
+    """
+    check_asset_ref(ref)
+    if "://" in ref:
+        raise ValueError(f"{field_name}: lake asset ref must not carry a scheme: {ref!r}")
+    if not _LAKE_REF_PATTERN.match(ref):
+        raise ValueError(
+            f"{field_name}: lake asset ref must be the dotted form 'lake.<schema>.<table>' "
+            f"(lowercase identifiers only): {ref!r}"
+        )
 
 
 class TemporalModel(StrEnum):
@@ -110,6 +166,14 @@ class TableContract:
             raise ValueError(f"{self.name}: primary_key column(s) not in columns: {missing}")
         if len(column_names) != len(self.columns):
             raise ValueError(f"{self.name}: duplicate column name(s) in columns")
+        missing_sort = [k for k in self.sort_by if k not in column_names]
+        if missing_sort:
+            raise ValueError(f"{self.name}: sort_by column(s) not in columns: {missing_sort}")
+        missing_partition = [k for k in self.partition_by if k not in column_names]
+        if missing_partition:
+            raise ValueError(
+                f"{self.name}: partition_by column(s) not in columns: {missing_partition}"
+            )
 
     def arrow_schema(self) -> pa.Schema:
         import pyarrow as pa
@@ -120,6 +184,43 @@ class TableContract:
                 for c in self.columns
             ]
         )
+
+    def to_schema_dict(self) -> dict[str, Any]:
+        """Render this contract as the ``tables/<name>/schema.json`` document (design §5).
+
+        Pure dict construction -- no ``pyarrow`` import, so a publish-side caller
+        without the dev/publish extras installed can still render a schema.
+        """
+        # `properties` is deliberately dropped here: it's free-form producer key/value
+        # metadata, not schema-shaped, and unlike `examples` it isn't validated against
+        # the public-artifact secret/path allowlists -- rendering it would let a producer
+        # accidentally publish arbitrary unchecked content through the schema document.
+        return {
+            "name": self.name,
+            "description": self.description,
+            "grain": self.grain,
+            "primary_key": list(self.primary_key),
+            "sort_by": list(self.sort_by),
+            "partition_by": list(self.partition_by),
+            "temporal_model": self.temporal_model.value,
+            "owner": self.owner,
+            "license": self.license,
+            "examples": list(self.examples),
+            "columns": [
+                {
+                    "name": c.name,
+                    "arrow_type": c.arrow_type,
+                    "description": c.description,
+                    "nullable": c.nullable,
+                    "identifier_namespace": c.identifier_namespace,
+                    "units": c.units,
+                    "coordinate_system": c.coordinate_system,
+                    "null_meaning": c.null_meaning,
+                    "enum": list(c.enum),
+                }
+                for c in self.columns
+            ],
+        }
 
     def validate(self, incoming: pa.Schema) -> None:
         """Raise ``ValueError`` unless ``incoming`` matches this contract's schema exactly."""

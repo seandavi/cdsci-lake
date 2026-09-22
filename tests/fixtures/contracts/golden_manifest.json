@@ -7,11 +7,11 @@
   "run_id": "01927c9e-0000-7000-8000-000000000001",
   "source_asset_versions": [
     {
-      "ref": "ducklake://lake/demo/events",
+      "ref": "lake.demo.events",
       "version": "snapshot:1"
     },
     {
-      "ref": "ducklake://lake/demo/entities",
+      "ref": "lake.demo.entities",
       "version": "snapshot:1"
     }
   ],

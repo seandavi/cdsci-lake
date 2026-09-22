@@ -30,13 +30,16 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
-from urllib.parse import urlsplit
+from typing import TYPE_CHECKING, Any
 
 import duckdb
 
 from .connect import LAKE
+from .contracts import check_asset_ref
 from .log import logger
+
+if TYPE_CHECKING:
+    from .publish.release import PublicationReceipt
 
 OPS = "ops"  # the ATTACH alias for the ledger database
 OPS_SCHEMA = "lake_ops"
@@ -209,6 +212,15 @@ def bootstrap(con: duckdb.DuckDBPyConnection) -> None:
         f"""CREATE TABLE IF NOT EXISTS {_t("lineage")} (
             src_ref TEXT, dst_ref TEXT, edge_type TEXT, run_id TEXT,
             discovered_at TIMESTAMPTZ
+        );"""
+    )
+    # ADR-0014 Amendment 2026-09-22 / cdsci-lake#100: lands `PublicationReceipt.to_json()`
+    # keyed by (release_id, dataset_id, asset_ref), attributed to run_id.
+    con.execute(
+        f"""CREATE TABLE IF NOT EXISTS {_t("publication_receipt")} (
+            receipt_id TEXT, release_id TEXT, dataset_id TEXT, asset_ref TEXT,
+            spec_version TEXT, status TEXT, receipt TEXT, run_id TEXT,
+            recorded_at TIMESTAMPTZ
         );"""
     )
 
@@ -654,20 +666,6 @@ def set_watermark(
 # --- Assets + lineage (ADR-0014 §5; docs/design/metadata_lineage.md) ---
 
 
-def _check_asset_ref(ref: str) -> None:
-    """Reject a malformed or credential-bearing asset ``ref``.
-
-    The ref grammar spans several locator kinds (``lake.<schema>.<table>``,
-    ``r2://...``, ``postgres://...``, ``file://...``) and isn't pinned to one
-    scheme yet (metadata_lineage.md open question #2) -- so this only guards what
-    matters regardless of scheme: no stray whitespace, no embedded credentials.
-    """
-    if not ref or ref != ref.strip():
-        raise ValueError(f"invalid asset ref: {ref!r}")
-    if "@" in urlsplit(ref).netloc:
-        raise ValueError(f"asset ref must not embed credentials: {ref!r}")
-
-
 def register_asset(
     con: duckdb.DuckDBPyConnection,
     *,
@@ -683,7 +681,7 @@ def register_asset(
     the active :func:`run`, if any (ADR-0008's attribution convention, applied to the
     ledger rather than a DuckLake snapshot).
     """
-    _check_asset_ref(ref)
+    check_asset_ref(ref)
     active = active_run()
     run_id = active.run_id if active else None
     existing = con.execute(
@@ -707,8 +705,8 @@ def record_lineage(
     Uniqueness is ``(src_ref, dst_ref)`` (metadata_lineage.md) -- a second call for
     the same pair is a no-op, it does not update ``edge_type``/``run_id``.
     """
-    _check_asset_ref(src_ref)
-    _check_asset_ref(dst_ref)
+    check_asset_ref(src_ref)
+    check_asset_ref(dst_ref)
     exists = con.execute(
         f"SELECT 1 FROM {_t('lineage')} WHERE src_ref = ? AND dst_ref = ?", [src_ref, dst_ref]
     ).fetchone()
@@ -764,3 +762,54 @@ def lineage_for(
         raise ValueError(f"direction must be 'upstream' or 'downstream', got {direction!r}")
     rows = con.execute(f"{_LINEAGE_SELECT} FROM {_t('lineage')} WHERE {where}", [ref]).fetchall()
     return [dict(zip(_LINEAGE_COLS, r, strict=True)) for r in rows]
+
+
+# --- Publication receipts (ADR-0014 Amendment 2026-09-22; cdsci-lake#100) ---
+
+
+def record_publication_receipt(con: duckdb.DuckDBPyConnection, receipt: PublicationReceipt) -> str:
+    """Land ``receipt`` under ``(release_id, dataset_id, asset_ref)`` (delete-then-insert).
+
+    ``asset_ref`` is derived, not a separate caller-supplied field -- the receipt's
+    own ``dataset``/``release`` name the release-as-a-whole asset
+    (``release.<dataset>.<release>``, the same ref
+    :func:`cdsci.lake.publish.builder.record_release` registers via
+    :func:`register_asset`), so re-running the same release's build replaces its one
+    receipt rather than accumulating duplicates. Returns the generated ``receipt_id``.
+    """
+    release_id, dataset_id = receipt.release, receipt.dataset
+    asset_ref = f"release.{dataset_id}.{release_id}"
+    receipt_id = str(uuid.uuid4())
+    # Fall back to the enclosing run() block's run_id when the receipt itself doesn't
+    # carry one, so this row and register_asset()'s last_run_id (also active_run()-
+    # derived) attribute to the same run instead of silently diverging.
+    active = active_run()
+    run_id = receipt.run_id or (active.run_id if active else None)
+    con.execute(
+        f"DELETE FROM {_t('publication_receipt')} "
+        "WHERE release_id = ? AND dataset_id = ? AND asset_ref = ?",
+        [release_id, dataset_id, asset_ref],
+    )
+    con.execute(
+        f"INSERT INTO {_t('publication_receipt')} "
+        "(receipt_id, release_id, dataset_id, asset_ref, spec_version, status, receipt, "
+        " run_id, recorded_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)",
+        [receipt_id, release_id, dataset_id, asset_ref, receipt.spec_version,
+         receipt.status.value, receipt.to_json(), run_id],
+    )
+    return receipt_id
+
+
+def publication_receipts(
+    con: duckdb.DuckDBPyConnection, release_id: str
+) -> list[PublicationReceipt]:
+    """Receipts for ``release_id``, oldest first, decoded back to ``PublicationReceipt``."""
+    from .publish.release import PublicationReceipt  # lazy: publish is a downstream import
+
+    rows = con.execute(
+        f"SELECT receipt FROM {_t('publication_receipt')} "
+        "WHERE release_id = ? ORDER BY recorded_at",
+        [release_id],
+    ).fetchall()
+    return [PublicationReceipt.from_json(r[0]) for r in rows]

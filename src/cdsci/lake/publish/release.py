@@ -20,10 +20,11 @@ private-looking POSIX paths, and secret-shaped substrings -- it is never run
 through the locator allowlist, which would reject ordinary prose that happens
 to mention a public URL. ``_check_no_secret_keys`` rejects secret-shaped
 mapping keys (e.g. ``artifacts``). ``SourceAssetVersion.ref`` is the one
-exception: it is an internal-lake *asset identifier* (design §5.2's
-``"ducklake://lake/..."``), not a resolvable public location, so it gets its
-own narrow ``_check_asset_ref`` instead of the path allowlist -- only the
-``ducklake`` scheme, no userinfo, no private/loopback host, no ``..``.
+exception: it is an internal-lake *asset identifier* (ADR-0014 Amendment
+2026-09-22's canonical dotted form, e.g. ``"lake.demo.events"``), not a
+resolvable public location, so it is validated by
+``cdsci.lake.contracts.check_lake_asset_ref`` instead of the path allowlist --
+only the dotted ``lake.<schema>.<table>`` grammar, no scheme, no credentials.
 ``ReleaseCandidate`` and ``PublicationReceipt`` are internal/staging types
 (design §3.2's "run state, watermarks, asset identity, publication
 receipts" is `lake_ops` territory) and may reference private staging
@@ -42,7 +43,13 @@ from enum import StrEnum
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from ..contracts import DatasetContract, Materialization, TableContract, TemporalModel
+from ..contracts import (
+    DatasetContract,
+    Materialization,
+    TableContract,
+    TemporalModel,
+    check_lake_asset_ref,
+)
 
 SPEC_VERSION = "1.0"
 
@@ -66,7 +73,6 @@ _LOCATOR_FIELDS = frozenset(
 _UNSAFE_PATTERN = re.compile(
     r"(?ix)"
     r"\b(s3|r2|gs|file|postgres(?:ql)?)://"  # private/local storage schemes
-    r"|ducklake://[^/@]*@"  # ducklake ref with userinfo
     r"|(?<![\w./-])/(mnt|home|tmp|etc|var|opt|data)/"  # absolute POSIX path
     r"|token="
     r"|password"
@@ -157,27 +163,19 @@ def _check_public_path(value: str, *, field_name: str) -> None:
         )
 
 
-def _check_asset_ref(value: str, *, field_name: str) -> None:
+def _check_lake_asset_ref(value: str, *, field_name: str) -> None:
     """``SourceAssetVersion.ref`` is an internal-lake asset identifier, not a public location.
 
-    Only ``ducklake://`` is accepted -- no userinfo, no private/loopback host, no ``..``.
+    Delegates to :func:`cdsci.lake.contracts.check_lake_asset_ref` (ADR-0014 Amendment
+    2026-09-22: the dotted ``lake.<schema>.<table>`` grammar) and re-raises as
+    :class:`PublicPathError`, the exception type this module's callers already expect.
+    An empty ``ref`` is rejected here too -- ``SourceAssetVersion`` always names a real
+    lake table, so a missing ref is a construction error, not a value to skip.
     """
-    if not value:
-        return
-    if value != value.strip() or "\\" in value:
-        raise PublicPathError(f"{field_name}: malformed asset reference: {value!r}")
-    parts = urlsplit(value)
-    if parts.scheme.lower() != "ducklake":
-        raise PublicPathError(
-            f"{field_name}: only ducklake:// asset references are allowed (got scheme "
-            f"{parts.scheme!r}): {value!r}"
-        )
-    if "@" in parts.netloc:
-        raise PublicPathError(f"{field_name}: credential-bearing asset reference: {value!r}")
-    if not parts.hostname or _is_private_or_loopback_host(parts.hostname):
-        raise PublicPathError(f"{field_name}: private/loopback host in asset reference: {value!r}")
-    if ".." in unquote(parts.path).split("/"):
-        raise PublicPathError(f"{field_name}: path traversal ('..') in asset reference: {value!r}")
+    try:
+        check_lake_asset_ref(value, field_name=field_name)
+    except ValueError as exc:
+        raise PublicPathError(str(exc)) from exc
 
 
 def _check_no_secret_keys(mapping: Mapping[str, Any], *, field_name: str) -> None:
@@ -223,7 +221,7 @@ class SourceAssetVersion:
     version: str
 
     def __post_init__(self) -> None:
-        _check_asset_ref(self.ref, field_name="SourceAssetVersion.ref")
+        _check_lake_asset_ref(self.ref, field_name="SourceAssetVersion.ref")
         _check_public_strings(self, exclude=frozenset({"ref"}))
 
     def to_dict(self) -> dict[str, Any]:
@@ -550,6 +548,10 @@ class ReleaseCandidate:
     destination: str
     tables: tuple[str, ...]
     status: ArtifactStatus
+    # The internal lake tables this release was built from -- threaded into the
+    # published ReleaseManifest by build_release() and read back by record_release()
+    # to write `publishes` lineage edges (design §6.5/§6.6; cdsci-lake#100).
+    source_asset_versions: tuple[SourceAssetVersion, ...] = ()
     acceptance: AcceptanceReport | None = None
     spec_version: str = SPEC_VERSION
 
@@ -563,6 +565,7 @@ class ReleaseCandidate:
             "destination": self.destination,
             "tables": list(self.tables),
             "status": self.status.value,
+            "source_asset_versions": [v.to_dict() for v in self.source_asset_versions],
             "acceptance": self.acceptance.to_dict() if self.acceptance else None,
         }
 
@@ -577,6 +580,9 @@ class ReleaseCandidate:
             destination=d["destination"],
             tables=tuple(d["tables"]),
             status=ArtifactStatus(d["status"]),
+            source_asset_versions=tuple(
+                SourceAssetVersion.from_dict(v) for v in d.get("source_asset_versions", ())
+            ),
             acceptance=AcceptanceReport.from_dict(d["acceptance"]) if d.get("acceptance") else None,
         )
 
