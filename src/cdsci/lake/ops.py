@@ -31,6 +31,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import duckdb
 
@@ -194,6 +195,20 @@ def bootstrap(con: duckdb.DuckDBPyConnection) -> None:
         f"""CREATE TABLE IF NOT EXISTS {_t("dataset_contract")} (
             lake_schema TEXT, view_name TEXT, contract_version INTEGER, columns TEXT,
             backing_table TEXT, status TEXT, published_at TIMESTAMPTZ
+        );"""
+    )
+    # ADR-0014 §5 / docs/design/metadata_lineage.md: the asset + lineage skeleton.
+    # No SERIAL/PK/FK (ADR-0006 portability note) -- uniqueness enforced in code.
+    con.execute(
+        f"""CREATE TABLE IF NOT EXISTS {_t("asset")} (
+            ref TEXT, writer TEXT, asset_type TEXT, name TEXT,
+            first_seen TIMESTAMPTZ, last_run_id TEXT, current_version TEXT
+        );"""
+    )
+    con.execute(
+        f"""CREATE TABLE IF NOT EXISTS {_t("lineage")} (
+            src_ref TEXT, dst_ref TEXT, edge_type TEXT, run_id TEXT,
+            discovered_at TIMESTAMPTZ
         );"""
     )
 
@@ -634,3 +649,118 @@ def set_watermark(
         "VALUES (?, ?, ?, current_timestamp, ?)",
         [source, name, payload, run_id],
     )
+
+
+# --- Assets + lineage (ADR-0014 §5; docs/design/metadata_lineage.md) ---
+
+
+def _check_asset_ref(ref: str) -> None:
+    """Reject a malformed or credential-bearing asset ``ref``.
+
+    The ref grammar spans several locator kinds (``lake.<schema>.<table>``,
+    ``r2://...``, ``postgres://...``, ``file://...``) and isn't pinned to one
+    scheme yet (metadata_lineage.md open question #2) -- so this only guards what
+    matters regardless of scheme: no stray whitespace, no embedded credentials.
+    """
+    if not ref or ref != ref.strip():
+        raise ValueError(f"invalid asset ref: {ref!r}")
+    if "@" in urlsplit(ref).netloc:
+        raise ValueError(f"asset ref must not embed credentials: {ref!r}")
+
+
+def register_asset(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    ref: str,
+    writer: str,
+    asset_type: str,
+    name: str,
+    current_version: str | None = None,
+) -> None:
+    """Register/refresh an asset (delete-then-insert on ``(writer, ref)``; ADR-0006 style).
+
+    ``first_seen`` is preserved across re-registration; ``last_run_id`` is taken from
+    the active :func:`run`, if any (ADR-0008's attribution convention, applied to the
+    ledger rather than a DuckLake snapshot).
+    """
+    _check_asset_ref(ref)
+    active = active_run()
+    run_id = active.run_id if active else None
+    existing = con.execute(
+        f"SELECT first_seen FROM {_t('asset')} WHERE writer = ? AND ref = ?", [writer, ref]
+    ).fetchone()
+    first_seen = existing[0] if existing else None
+    con.execute(f"DELETE FROM {_t('asset')} WHERE writer = ? AND ref = ?", [writer, ref])
+    con.execute(
+        f"INSERT INTO {_t('asset')} "
+        "(ref, writer, asset_type, name, first_seen, last_run_id, current_version) "
+        "VALUES (?, ?, ?, ?, COALESCE(?, current_timestamp), ?, ?)",
+        [ref, writer, asset_type, name, first_seen, run_id, current_version],
+    )
+
+
+def record_lineage(
+    con: duckdb.DuckDBPyConnection, *, src_ref: str, dst_ref: str, edge_type: str
+) -> None:
+    """Record a lineage edge (``dst_ref`` built from ``src_ref``); idempotent.
+
+    Uniqueness is ``(src_ref, dst_ref)`` (metadata_lineage.md) -- a second call for
+    the same pair is a no-op, it does not update ``edge_type``/``run_id``.
+    """
+    _check_asset_ref(src_ref)
+    _check_asset_ref(dst_ref)
+    exists = con.execute(
+        f"SELECT 1 FROM {_t('lineage')} WHERE src_ref = ? AND dst_ref = ?", [src_ref, dst_ref]
+    ).fetchone()
+    if exists is not None:
+        return
+    active = active_run()
+    run_id = active.run_id if active else None
+    con.execute(
+        f"INSERT INTO {_t('lineage')} (src_ref, dst_ref, edge_type, run_id, discovered_at) "
+        "VALUES (?, ?, ?, ?, current_timestamp)",
+        [src_ref, dst_ref, edge_type, run_id],
+    )
+
+
+_ASSET_COLS = ("ref", "writer", "asset_type", "name", "first_seen", "last_run_id",
+               "current_version")
+_ASSET_SELECT = (
+    "SELECT ref, writer, asset_type, name, first_seen::VARCHAR, last_run_id, current_version"
+)
+
+
+def list_assets(con: duckdb.DuckDBPyConnection, *, writer: str | None = None) -> list[dict]:
+    """Registered assets, optionally filtered to one ``writer``."""
+    where = ""
+    params: list[Any] = []
+    if writer is not None:
+        where = "WHERE writer = ?"
+        params.append(writer)
+    rows = con.execute(
+        f"{_ASSET_SELECT} FROM {_t('asset')} {where} ORDER BY ref", params
+    ).fetchall()
+    return [dict(zip(_ASSET_COLS, r, strict=True)) for r in rows]
+
+
+_LINEAGE_COLS = ("src_ref", "dst_ref", "edge_type", "run_id", "discovered_at")
+_LINEAGE_SELECT = "SELECT src_ref, dst_ref, edge_type, run_id, discovered_at::VARCHAR"
+
+
+def lineage_for(
+    con: duckdb.DuckDBPyConnection, ref: str, *, direction: str = "upstream"
+) -> list[dict]:
+    """Lineage edges touching ``ref``.
+
+    ``direction='upstream'`` (default): edges where ``ref`` is ``dst_ref`` -- what it
+    was built from. ``direction='downstream'``: edges where ``ref`` is ``src_ref`` --
+    what it feeds.
+    """
+    if direction == "upstream":
+        where = "dst_ref = ?"
+    elif direction == "downstream":
+        where = "src_ref = ?"
+    else:
+        raise ValueError(f"direction must be 'upstream' or 'downstream', got {direction!r}")
+    rows = con.execute(f"{_LINEAGE_SELECT} FROM {_t('lineage')} WHERE {where}", [ref]).fetchall()
+    return [dict(zip(_LINEAGE_COLS, r, strict=True)) for r in rows]

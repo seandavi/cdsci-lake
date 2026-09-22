@@ -315,3 +315,124 @@ def test_dashboard_read_surface(lake_settings: Settings):
         assert ops.get_run(con, "no-such-run") is None
     finally:
         con.close()
+
+
+def test_bootstrap_asset_lineage_tables_idempotent(lake_settings: Settings):
+    """asset + lineage land alongside the existing four tables; a second bootstrap is a no-op."""
+    con = lake_connect(lake_settings)
+    try:
+        ops.bootstrap(con)  # already ran once via lake_connect; must not error/duplicate
+        tables = {
+            r[0]
+            for r in con.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_catalog='ops' AND table_schema='lake_ops'"
+            ).fetchall()
+        }
+        assert {"asset", "lineage"} <= tables
+        assert con.execute("SELECT count(*) FROM ops.lake_ops.asset").fetchone()[0] == 0
+        assert con.execute("SELECT count(*) FROM ops.lake_ops.lineage").fetchone()[0] == 0
+    finally:
+        con.close()
+
+
+def test_register_asset_and_lineage_round_trip(lake_settings: Settings):
+    """register_asset + record_lineage write rows the read helpers can see; run_id attributed."""
+    con = lake_connect(lake_settings)
+    try:
+        src = "SELECT * FROM (VALUES (1,'a')) v(id,val)"
+        with ops.run(con, source="icite", target="lake.icite.t", version="v1") as r:
+            r.rows = upsert(con, "lake.icite.t", src, key="id")
+            ops.register_asset(
+                con, ref="lake.icite.t", writer="cdsci", asset_type="lake_table",
+                name="icite.t", current_version=str(r.snapshot_after),
+            )
+            ops.register_asset(
+                con, ref="r2://raw/icite/t.csv", writer="cdsci", asset_type="file",
+                name="icite raw",
+            )
+            ops.record_lineage(
+                con, src_ref="r2://raw/icite/t.csv", dst_ref="lake.icite.t", edge_type="declared",
+            )
+
+        assets = {a["ref"]: a for a in ops.list_assets(con)}
+        assert set(assets) == {"lake.icite.t", "r2://raw/icite/t.csv"}
+        assert assets["lake.icite.t"]["last_run_id"] == r.run_id
+        assert assets["lake.icite.t"]["first_seen"] is not None
+
+        upstream = ops.lineage_for(con, "lake.icite.t", direction="upstream")
+        assert len(upstream) == 1
+        assert upstream[0]["src_ref"] == "r2://raw/icite/t.csv"
+        assert upstream[0]["edge_type"] == "declared"
+        assert upstream[0]["run_id"] == r.run_id
+
+        downstream = ops.lineage_for(con, "r2://raw/icite/t.csv", direction="downstream")
+        assert len(downstream) == 1
+        assert downstream[0]["dst_ref"] == "lake.icite.t"
+
+        assert ops.lineage_for(con, "lake.icite.t", direction="downstream") == []
+        with pytest.raises(ValueError, match="direction"):
+            ops.lineage_for(con, "lake.icite.t", direction="sideways")
+    finally:
+        con.close()
+
+
+def test_register_asset_preserves_first_seen_on_re_register(lake_settings: Settings):
+    """Re-registering the same (writer, ref) refreshes fields but keeps first_seen."""
+    con = lake_connect(lake_settings)
+    try:
+        ops.register_asset(
+            con, ref="lake.icite.t", writer="cdsci", asset_type="lake_table", name="icite.t",
+            current_version="1",
+        )
+        first_seen = ops.list_assets(con)[0]["first_seen"]
+
+        ops.register_asset(
+            con, ref="lake.icite.t", writer="cdsci", asset_type="lake_table", name="icite.t",
+            current_version="2",
+        )
+        rows = ops.list_assets(con)
+        assert len(rows) == 1
+        assert rows[0]["current_version"] == "2"
+        assert rows[0]["first_seen"] == first_seen
+    finally:
+        con.close()
+
+
+def test_record_lineage_is_idempotent_on_src_dst_pair(lake_settings: Settings):
+    """A second record_lineage for the same (src_ref, dst_ref) is a full no-op."""
+    con = lake_connect(lake_settings)
+    try:
+        ops.record_lineage(
+            con, src_ref="r2://raw/a.csv", dst_ref="lake.a.t", edge_type="declared",
+        )
+        first = ops.lineage_for(con, "lake.a.t")[0]
+
+        ops.record_lineage(
+            con, src_ref="r2://raw/a.csv", dst_ref="lake.a.t", edge_type="sqlmesh",
+        )
+        rows = ops.lineage_for(con, "lake.a.t")
+        assert len(rows) == 1  # no duplicate row
+        assert rows[0] == first  # edge_type/run_id/discovered_at untouched
+    finally:
+        con.close()
+
+
+def test_asset_ref_validation_rejects_a_private_dsn(lake_settings: Settings):
+    """A credential-bearing DSN is rejected before it reaches the ledger."""
+    con = lake_connect(lake_settings)
+    try:
+        with pytest.raises(ValueError, match="credentials"):
+            ops.register_asset(
+                con, ref="postgresql://user:hunter2@internal-db:5432/lake",
+                writer="cdsci", asset_type="postgres", name="leaky",
+            )
+        with pytest.raises(ValueError, match="invalid asset ref"):
+            ops.register_asset(
+                con, ref="  lake.a.t  ", writer="cdsci", asset_type="lake_table", name="a.t",
+            )
+        with pytest.raises(ValueError, match="invalid asset ref"):
+            ops.register_asset(con, ref="", writer="cdsci", asset_type="lake_table", name="a.t")
+        assert ops.list_assets(con) == []
+    finally:
+        con.close()
