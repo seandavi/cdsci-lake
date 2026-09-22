@@ -62,6 +62,11 @@ DATASET_CONTRACT = DatasetContract(
 BUSINESS_KEY = ("entity_id",)
 WRITER_A_SCOPE_SQL = "source = 'writer_a'"
 
+
+def release_key(value: str) -> int:
+    """This fixture's own release ordering: ``"R9"`` -> ``9``, never a raw string compare."""
+    return int(value.removeprefix("R"))
+
 # Pre-existing writer_b row, seeded directly (as if written by writer_b's own
 # earlier release) before writer_a's R1 plan runs -- must stay untouched
 # through every writer_a release below (§11.4 "another writer's scope").
@@ -73,12 +78,18 @@ SEED_WRITER_B_ROW = {
     "valid_to": None,
 }
 
-# New key (e1, e2, e3); duplicate incoming key (e_dup x2, rejected); row
-# outside declared scope (e_out, source=writer_c, rejected).
+# New key (e1, e2, e3).
 R1_INCOMING = [
     {"entity_id": "e1", "label": "alpha", "source": "writer_a"},
     {"entity_id": "e2", "label": "beta", "source": "writer_a"},
     {"entity_id": "e3", "label": "gamma", "source": "writer_a"},
+]
+
+# Same shape as R1_INCOMING plus a duplicate incoming key (e_dup x2) and a row
+# outside declared scope (e_out, source=writer_c) -- used only to prove ANY
+# rejection empties the whole plan (cdsci-lake#96 review F1); never chained
+# into the R1->R2->R3 narrative, since a rejected release writes nothing.
+R1_INCOMING_WITH_REJECTIONS = R1_INCOMING + [
     {"entity_id": "e_dup", "label": "x", "source": "writer_a"},
     {"entity_id": "e_dup", "label": "y", "source": "writer_a"},
     {"entity_id": "e_out", "label": "q", "source": "writer_c"},

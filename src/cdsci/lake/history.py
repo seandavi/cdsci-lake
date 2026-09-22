@@ -14,6 +14,7 @@ rule).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,6 +28,13 @@ class CompleteScope:
     Says incoming rows are a complete accounting of this writer's declared
     scope — a current row failing this predicate belongs to another writer
     and must never be touched by this plan.
+
+    SQL's three-valued logic makes this null-safe already: a current row with
+    ``NULL`` in a predicate column makes ``predicate_sql`` evaluate to
+    ``NULL`` (not ``TRUE``), so ``WHERE (predicate_sql)`` excludes it from
+    ``current_in_scope_keys`` and it is never a retirement candidate — a
+    ``NULL`` scope column is never retired, by construction, not by an
+    explicit ``IS NOT NULL`` guard.
     """
 
     predicate_sql: str
@@ -79,27 +87,54 @@ def plan_scd2_release(
     release: str,
     scope: CompleteScope,
     policy: SCD2Policy,
+    release_key: Callable[[str], Any],
+    published_releases: frozenset[str] = frozenset(),
 ) -> HistoryPlan:
     """Plan an ``scd2_release`` publish of ``incoming`` as release ``release``.
 
-    ``current_history`` and ``incoming`` must be relations on ``con``.
+    ``current_history`` and ``incoming`` must be relations on ``con``. ``release_key`` maps a
+    release identifier to a comparable, ordered key (e.g. ``int``, a ``(year, month)`` tuple) --
+    release identifiers are opaque to this module and must never be compared as raw strings
+    (``"R10" < "R9"`` and ``"2026.10" < "2026.9"`` are both wrong under a string ordering).
+
+    Any rejection (already-published release, out-of-order release, duplicate incoming key,
+    incoming row outside declared scope) makes the whole plan a no-op: rejected keys must never
+    flow into retirement, and a rejected release must never partially write.
+
+    Replanning the *same* release is legal on its own (same-release correction, §11.4) --
+    ``out_of_order_release`` only rejects a release strictly older than the latest seen key.
+    ``published_releases`` is the complementary guard: once a release is published, replanning it
+    again (same key, not older) is rejected there instead.
     """
+    if release in published_releases:
+        return HistoryPlan(
+            rejections=(
+                Rejection("release_already_published", None, f"{release!r} is already published"),
+            )
+        )
+
     current_history.create_view("_scd2_current", replace=True)
     incoming.create_view("_scd2_incoming", replace=True)
     key_cols = ", ".join(policy.business_key)
 
-    max_seen = con.execute(
-        f"SELECT max(x) FROM ("
+    seen = _rows(
+        con,
         f"SELECT {policy.valid_from} AS x FROM _scd2_current "
-        f"UNION ALL SELECT {policy.valid_to} AS x FROM _scd2_current)"
-    ).fetchone()[0]
-    if max_seen is not None and release < max_seen:
+        f"WHERE {policy.valid_from} IS NOT NULL "
+        f"UNION ALL SELECT {policy.valid_to} AS x FROM _scd2_current "
+        f"WHERE {policy.valid_to} IS NOT NULL",
+    )
+    seen_keys = [release_key(r["x"]) for r in seen]
+    max_seen_key = max(seen_keys) if seen_keys else None
+    release_idx = release_key(release)
+    if max_seen_key is not None and release_idx < max_seen_key:
         return HistoryPlan(
             rejections=(
                 Rejection(
                     "out_of_order_release",
                     None,
-                    f"{release!r} is older than latest seen {max_seen!r}",
+                    f"{release!r} (key {release_idx!r}) is older than latest seen key "
+                    f"{max_seen_key!r}",
                 ),
             )
         )
@@ -112,20 +147,21 @@ def plan_scd2_release(
     }
     rejections: list[Rejection] = [Rejection("duplicate_incoming_key", k) for k in sorted(dup_keys)]
 
-    valid_incoming: dict[tuple[Any, ...], dict[str, Any]] = {}
-    for row in _rows(con, "SELECT * FROM _scd2_incoming"):
-        k = _key(row, policy.business_key)
-        if k not in dup_keys:
-            valid_incoming[k] = row
-
     in_scope_keys = {
         _key(r, policy.business_key)
         for r in _rows(con, f"SELECT * FROM _scd2_incoming WHERE ({scope.predicate_sql})")
     }
-    for k in list(valid_incoming):
-        if k not in in_scope_keys:
+    all_incoming: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for row in _rows(con, "SELECT * FROM _scd2_incoming"):
+        k = _key(row, policy.business_key)
+        all_incoming[k] = row
+        if k not in dup_keys and k not in in_scope_keys:
             rejections.append(Rejection("outside_declared_scope", k))
-            del valid_incoming[k]
+
+    if rejections:
+        return HistoryPlan(rejections=tuple(rejections))
+
+    valid_incoming = all_incoming
 
     tracked = policy.tracked_columns or tuple(
         c for c in incoming.columns if c not in policy.business_key
@@ -164,7 +200,13 @@ def plan_scd2_release(
         if all(current.get(c) == row.get(c) for c in tracked):
             unchanged += 1
             continue
-        to_close.append({**{c: current[c] for c in policy.business_key}, policy.valid_to: release})
+        to_close.append(
+            {
+                **{c: current[c] for c in policy.business_key},
+                policy.valid_from: current[policy.valid_from],
+                policy.valid_to: release,
+            }
+        )
         to_open.append({**row, policy.valid_from: release, policy.valid_to: None})
         changed += 1
 
@@ -173,7 +215,13 @@ def plan_scd2_release(
             continue
         if current[policy.valid_from] == release:
             continue  # same-release draft, nothing incoming: leave as-is (not a required scenario)
-        to_close.append({**{c: current[c] for c in policy.business_key}, policy.valid_to: release})
+        to_close.append(
+            {
+                **{c: current[c] for c in policy.business_key},
+                policy.valid_from: current[policy.valid_from],
+                policy.valid_to: release,
+            }
+        )
         retired += 1
 
     return HistoryPlan(

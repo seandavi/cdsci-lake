@@ -8,7 +8,8 @@ local, out of scope here):
 new key, identical row, attribute change, missing from scope, retired key
 reappears, same-release correction, out-of-order release rejected, duplicate
 incoming key rejected, row outside scope rejected, another writer's scope
-untouched.
+untouched, already-published release rejected, and every rejection emptying
+the whole plan.
 """
 
 from __future__ import annotations
@@ -74,21 +75,22 @@ def _apply(con: duckdb.DuckDBPyConnection, plan: HistoryPlan) -> None:
         )
 
 
-def _plan(con, rows, release) -> HistoryPlan:
+def _plan(con, rows, release, **kwargs) -> HistoryPlan:
     incoming = _incoming_relation(con, rows)
     current = con.table("history")
-    return plan_scd2_release(con, current, incoming, release=release, scope=SCOPE, policy=POLICY)
+    return plan_scd2_release(
+        con, current, incoming, release=release, scope=SCOPE, policy=POLICY,
+        release_key=fx.release_key, **kwargs,
+    )
 
 
-def test_r1_new_keys_duplicate_and_out_of_scope_rejected(con):
+def test_r1_new_keys(con):
     plan = _plan(con, fx.R1_INCOMING, "R1")
     assert plan.inserted == 3
     assert plan.changed == plan.retired == plan.reopened == plan.unchanged == 0
+    assert plan.rejections == ()
     assert {r["entity_id"] for r in plan.to_open} == {"e1", "e2", "e3"}
     assert all(r["valid_from"] == "R1" and r["valid_to"] is None for r in plan.to_open)
-    reasons = {(r.reason, r.business_key) for r in plan.rejections}
-    assert ("duplicate_incoming_key", ("e_dup",)) in reasons
-    assert ("outside_declared_scope", ("e_out",)) in reasons
     _apply(con, plan)
 
     # writer_b's pre-existing row is untouched by writer_a's R1 plan.
@@ -96,11 +98,25 @@ def test_r1_new_keys_duplicate_and_out_of_scope_rejected(con):
         "SELECT label, source, valid_from, valid_to FROM history WHERE entity_id = 'w1'"
     ).fetchone()
     assert w1 == ("zed", "writer_b", "R0", None)
-    # rejected rows were never written.
-    rejected_count = con.execute(
-        "SELECT count(*) FROM history WHERE entity_id IN ('e_dup', 'e_out')"
-    ).fetchone()[0]
-    assert rejected_count == 0
+
+
+def test_any_rejection_empties_the_whole_plan(con):
+    """cdsci-lake#96 review F1: a duplicate key or an out-of-scope row rejects the whole release.
+
+    Rejected keys must never flow into retirement, and valid keys in the same
+    batch (e1, e2, e3) must not be partially written either -- exactly like
+    ``out_of_order_release`` already empties the plan.
+    """
+    plan = _plan(con, fx.R1_INCOMING_WITH_REJECTIONS, "R1")
+    reasons = {(r.reason, r.business_key) for r in plan.rejections}
+    assert ("duplicate_incoming_key", ("e_dup",)) in reasons
+    assert ("outside_declared_scope", ("e_out",)) in reasons
+    assert plan.to_close == plan.to_open == plan.to_replace_draft == ()
+    assert plan.inserted == plan.changed == plan.retired == plan.reopened == plan.unchanged == 0
+
+    _apply(con, plan)
+    written = con.execute("SELECT count(*) FROM history WHERE entity_id != 'w1'").fetchone()[0]
+    assert written == 0  # nothing from the rejected batch was written, not even the valid keys
 
 
 def test_r2_identical_change_missing_and_new(con):
@@ -115,6 +131,7 @@ def test_r2_identical_change_missing_and_new(con):
 
     close_keys = {r["entity_id"] for r in plan.to_close}
     assert close_keys == {"e2", "e3"}
+    assert all(r["valid_from"] == "R1" for r in plan.to_close)  # F5: closing row's own valid_from
     open_keys = {r["entity_id"] for r in plan.to_open}
     assert open_keys == {"e3", "e4"}
 
@@ -182,6 +199,25 @@ def test_r3_reappear_missing_then_same_release_correction(con):
     w1 = con.execute("SELECT valid_from, valid_to FROM history WHERE entity_id = 'w1'").fetchone()
     assert w1 == ("R0", None)
 
+    # F10: as-of-release join gives exactly one version per business key, at
+    # each release actually planned above (single-digit ids -- string compare
+    # is fine for this test-local as-of predicate, unlike history.py itself).
+    for as_of in ("R1", "R2", "R3"):
+        dupes = con.execute(
+            "SELECT entity_id FROM history "
+            "WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to > ?) "
+            "GROUP BY entity_id HAVING count(*) > 1",
+            [as_of, as_of],
+        ).fetchall()
+        assert dupes == []
+
+    # F10: business_key + valid_from is a unique row key.
+    dup_rows = con.execute(
+        "SELECT entity_id, valid_from FROM history "
+        "GROUP BY entity_id, valid_from HAVING count(*) > 1"
+    ).fetchall()
+    assert dup_rows == []
+
 
 def test_out_of_order_release_rejected(con):
     _apply(con, _plan(con, fx.R1_INCOMING, "R1"))
@@ -194,3 +230,85 @@ def test_out_of_order_release_rejected(con):
     assert plan.rejections[0].reason == "out_of_order_release"
     assert plan.to_close == plan.to_open == plan.to_replace_draft == ()
     assert plan.inserted == plan.changed == plan.retired == plan.reopened == plan.unchanged == 0
+
+
+@pytest.mark.parametrize(
+    ("seen", "incoming"),
+    [
+        (["R9"], "R10"),  # string compare says "R10" < "R9" -- wrong, R10 is newer.
+        (["2026.9"], "2026.10"),  # string compare says "2026.10" < "2026.9" -- wrong.
+    ],
+)
+def test_release_key_avoids_string_comparison_bugs(seen: list[str], incoming: str):
+    def key(value: str):
+        return tuple(int(p) for p in value.split(".")) if "." in value else int(value.lstrip("R"))
+
+    c = duckdb.connect(":memory:")
+    try:
+        c.execute(
+            "CREATE TABLE h (entity_id VARCHAR, label VARCHAR, valid_from VARCHAR, "
+            "valid_to VARCHAR)"
+        )
+        c.execute("INSERT INTO h VALUES ('e1', 'x', ?, NULL)", [seen[0]])
+        c.execute("CREATE TEMP TABLE inc AS SELECT entity_id, label FROM h")
+        scope = CompleteScope("1=1")
+        policy = SCD2Policy(business_key=("entity_id",), tracked_columns=("label",))
+        plan = plan_scd2_release(
+            c, c.table("h"), c.table("inc"),
+            release=incoming, scope=scope, policy=policy, release_key=key,
+        )
+        assert plan.rejections == ()  # a numerically-later release is never rejected out-of-order
+    finally:
+        c.close()
+
+
+def test_already_published_release_is_rejected(con):
+    """F4: same-release planning against a release already marked published is a no-op."""
+    plan = _plan(con, fx.R1_INCOMING, "R1", published_releases=frozenset({"R1"}))
+    assert len(plan.rejections) == 1
+    assert plan.rejections[0].reason == "release_already_published"
+    assert plan.to_close == plan.to_open == plan.to_replace_draft == ()
+    assert plan.inserted == plan.changed == plan.retired == plan.reopened == plan.unchanged == 0
+
+
+def test_out_of_order_and_already_published_guards_are_complementary(con):
+    """Replanning the same release (R3) is legal for correction, but rejected once published."""
+    _apply(con, _plan(con, fx.R1_INCOMING, "R1"))
+    _apply(con, _plan(con, fx.R2_INCOMING, "R2"))
+    _apply(con, _plan(con, fx.R3_PASS1_INCOMING, "R3"))
+
+    # same-release correction: out_of_order_release does not fire for an equal key.
+    correction = _plan(con, fx.R3_PASS2_INCOMING, "R3")
+    assert correction.rejections == ()
+
+    # once R3 is published, replanning it again is rejected by published_releases instead.
+    replan = _plan(con, fx.R3_PASS2_INCOMING, "R3", published_releases=frozenset({"R3"}))
+    assert replan.rejections[0].reason == "release_already_published"
+
+
+def test_null_attribute_and_null_scope_column_are_safe():
+    """F10/F16: a NULL tracked attribute round-trips; a NULL scope column is never retired."""
+    c = duckdb.connect(":memory:")
+    try:
+        c.execute(
+            "CREATE TABLE h (entity_id VARCHAR, label VARCHAR, source VARCHAR, "
+            "valid_from VARCHAR, valid_to VARCHAR)"
+        )
+        c.execute("INSERT INTO h VALUES ('e_null_scope', 'unrelated', NULL, 'R0', NULL)")
+        c.execute("CREATE TEMP TABLE inc AS SELECT entity_id, label, source FROM h LIMIT 0")
+        c.execute("INSERT INTO inc VALUES ('e_new', NULL, 'writer_a')")  # NULL tracked attribute
+
+        plan = plan_scd2_release(
+            c, c.table("h"), c.table("inc"),
+            release="R1", scope=SCOPE, policy=POLICY, release_key=fx.release_key,
+        )
+        assert plan.rejections == ()
+        assert plan.inserted == 1
+        assert plan.to_open[0]["entity_id"] == "e_new"
+        assert plan.to_open[0]["label"] is None  # NULL attribute round-trips, not coerced/rejected
+        # e_null_scope's NULL source never satisfies "source = 'writer_a'" (SQL 3-valued logic),
+        # so it is outside current_in_scope_keys and never a retirement candidate.
+        assert plan.retired == 0
+        assert plan.to_close == ()
+    finally:
+        c.close()

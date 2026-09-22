@@ -30,12 +30,15 @@ from cdsci.lake.publish.release import (
     PublicPathError,
     ReleaseCandidate,
     ReleaseManifest,
+    RequiredArtifactMissingError,
     SourceAssetVersion,
     TableFileIndex,
+    check_required_artifacts,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "contracts"
 GOLDEN_MANIFEST_PATH = FIXTURES / "golden_manifest.json"
+GOLDEN_FILE_INDEX_PATH = FIXTURES / "golden_file_index.json"
 
 
 def _build_manifest_from_contract() -> ReleaseManifest:
@@ -101,6 +104,12 @@ def test_duckdock_validator_loads_golden_manifest_cold():
     assert not manifest.provenance.startswith("/")
     assert not manifest.lineage.startswith("/")
 
+    file_index = TableFileIndex.from_json(GOLDEN_FILE_INDEX_PATH.read_text())
+    assert file_index.table == "demo.entities"
+    assert file_index.release == manifest.release
+    for entry in file_index.files:
+        assert not entry.uri.startswith("/")
+
 
 def test_manifest_rejects_absolute_schema_path():
     with pytest.raises(PublicPathError, match="absolute path"):
@@ -113,12 +122,12 @@ def test_manifest_rejects_absolute_schema_path():
 
 
 def test_manifest_rejects_s3_uri():
-    with pytest.raises(PublicPathError, match="private storage scheme"):
+    with pytest.raises(PublicPathError, match="only https"):
         FileEntry(
             uri="s3://private-bucket/part-0.parquet",
             size=1,
             sha256="x",
-            content_type="application/x-parquet",
+            content_type="application/vnd.apache.parquet",
         )
 
 
@@ -146,6 +155,79 @@ def test_manifest_rejects_secret_shaped_artifact_key():
         )
 
 
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "../../../x.parquet",
+        "postgresql://u:p@10.0.0.5/db",
+        "file:///x",
+        "gs://x",
+        "\\\\server\\share",
+        "  /etc/passwd",
+    ],
+)
+def test_manifest_rejects_every_known_public_path_bypass(uri: str):
+    with pytest.raises(PublicPathError):
+        FileEntry(uri=uri, size=1, sha256="x", content_type="application/vnd.apache.parquet")
+
+
+def test_source_asset_version_accepts_ducklake_ref():
+    SourceAssetVersion(ref="ducklake://lake/demo/events", version="snapshot:1")
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "postgresql://u:p@10.0.0.5/db",
+        "https://example.org/events",
+        "ducklake://u:p@lake/demo/events",
+        "ducklake://10.0.0.5/demo/events",
+        "ducklake://lake/../etc/passwd",
+    ],
+)
+def test_source_asset_version_rejects_non_ducklake_or_unsafe_ref(ref: str):
+    with pytest.raises(PublicPathError):
+        SourceAssetVersion(ref=ref, version="snapshot:1")
+
+
+def test_acceptance_check_detail_rejects_embedded_secret_or_private_location():
+    with pytest.raises(PublicPathError):
+        AcceptanceCheck("probe", passed=False, required=True, detail="see s3://bucket/x")
+    with pytest.raises(PublicPathError):
+        AcceptanceCheck("probe", passed=False, required=True, detail="failed with token=abc123")
+
+
+def test_secret_key_denylist_covers_key_credential_auth_apikey():
+    for bad_key in ("api_key", "credential_ref", "auth_header", "apikey"):
+        with pytest.raises(PublicPathError, match="secret-shaped key"):
+            ReleaseManifest(
+                dataset="d",
+                release="R1",
+                status=ArtifactStatus.STAGED,
+                run_id="r1",
+                tables=(),
+                artifacts={bad_key: ArtifactEntry(status=ArtifactStatus.STAGED, required=False)},
+            )
+
+
+def test_check_required_artifacts_rejects_missing_artifact():
+    manifest = ReleaseManifest(
+        dataset="demo-catalog",
+        release="R1",
+        status=ArtifactStatus.PUBLISHED,
+        run_id="r1",
+        tables=(),
+        artifacts={"parquet": ArtifactEntry(status=ArtifactStatus.VERIFIED, required=True)},
+    )
+    with pytest.raises(RequiredArtifactMissingError, match="ducklake"):
+        check_required_artifacts(manifest, fx.DATASET_CONTRACT)
+
+
+def test_check_required_artifacts_passes_for_golden_manifest():
+    manifest = _build_manifest_from_contract()
+    check_required_artifacts(manifest, fx.DATASET_CONTRACT)
+
+
 def test_file_index_round_trips():
     idx = TableFileIndex(
         table="demo.entities",
@@ -156,7 +238,7 @@ def test_file_index_round_trips():
                 uri="data/part-00000.parquet",
                 size=123,
                 sha256="abc",
-                content_type="application/x-parquet",
+                content_type="application/vnd.apache.parquet",
                 rows=3,
             ),
         ),

@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "table": "demo.entities",
+  "release": "R1",
+  "materialization": "release_snapshot",
+  "files": [
+    {
+      "uri": "data/part-00000.parquet",
+      "size": 123,
+      "sha256": "abc",
+      "rows": 3,
+      "content_type": "application/vnd.apache.parquet"
+    }
+  ]
+}

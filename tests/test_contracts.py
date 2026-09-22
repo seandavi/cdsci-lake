@@ -1,8 +1,9 @@
 """Offline tests for ``cdsci.lake.contracts`` (cdsci-lake#96, M0).
 
-No pyarrow installed in this environment (not a base dependency) --
-``arrow_schema()``/``validate()`` tests are skipped via ``importorskip`` and
-exercised only when pyarrow happens to be present.
+``pyarrow`` is not a base dependency of this package, only a dev dependency
+(pyproject.toml) -- ``arrow_schema()``/``validate()`` tests use
+``importorskip`` so they still degrade gracefully for a consumer running
+against the base install only.
 """
 
 from __future__ import annotations
@@ -68,6 +69,19 @@ def test_validate_rejects_type_mismatch_with_pyarrow():
     )
     with pytest.raises(ValueError, match="event_id"):
         fx.EVENTS_TABLE.validate(bad)
+
+
+def test_validate_rejects_order_only_mismatch_with_explicit_message():
+    pa = pytest.importorskip("pyarrow")
+    reordered = pa.schema(
+        [
+            pa.field("occurred_at", pa.string(), nullable=False),
+            pa.field("event_id", pa.string(), nullable=False),
+            pa.field("payload", pa.string(), nullable=True),
+        ]
+    )
+    with pytest.raises(ValueError, match="column order differs"):
+        fx.EVENTS_TABLE.validate(reordered)
 
 
 def test_arrow_schema_without_pyarrow_raises_import_error(monkeypatch):

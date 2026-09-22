@@ -144,6 +144,8 @@ class TableContract:
                 problems.append(
                     f"{name}: expected nullable={exp_field.nullable}, got {inc_field.nullable}"
                 )
+        if not problems:
+            problems.append(f"column order differs, expected: {list(expected.names)}")
         raise ValueError(f"{self.name}: schema does not match contract: {'; '.join(problems)}")
 
 
