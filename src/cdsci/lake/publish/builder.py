@@ -42,6 +42,7 @@ from typing import Protocol
 import duckdb
 
 from ..contracts import DatasetContract, Materialization, TableContract, TemporalModel
+from ..contracts_render import render_dataset_markdown, render_table_markdown
 from ..log import event
 from .release import (
     AcceptanceReport,
@@ -58,6 +59,7 @@ from .release import (
 
 _PARQUET_CONTENT_TYPE = "application/vnd.apache.parquet"
 _JSON_CONTENT_TYPE = "application/json"
+_MARKDOWN_CONTENT_TYPE = "text/markdown"
 # DuckDB's own default -- pinned explicitly rather than left implicit, so a future
 # DuckDB version changing its default can't silently change release byte content.
 _ROW_GROUP_SIZE = 122_880
@@ -236,6 +238,13 @@ def build_release(
             out.put_if_absent(
                 table_dir / "schema.json", schema_bytes, content_type=_JSON_CONTENT_TYPE
             )
+            # Docs, not data -- deliberately not named in files.json/the manifest, so
+            # verify_release's file-index walk never expects or checks them.
+            out.put_if_absent(
+                table_dir / "README.md",
+                render_table_markdown(table_contract).encode(),
+                content_type=_MARKDOWN_CONTENT_TYPE,
+            )
 
             manifest_tables.append(
                 ManifestTable.from_contract(
@@ -264,6 +273,12 @@ def build_release(
         prefix / "provenance.json", _provenance_bytes(manifest), content_type=_JSON_CONTENT_TYPE
     )
     out.put_if_absent(prefix / "lineage.json", b'{"edges": []}', content_type=_JSON_CONTENT_TYPE)
+    # Docs, not data -- deliberately not named in files.json/the manifest (see the
+    # per-table README.md above).
+    out.put_if_absent(
+        prefix / "README.md", render_dataset_markdown(contract).encode(),
+        content_type=_MARKDOWN_CONTENT_TYPE,
+    )
     event(
         "build_release_completed",
         run_id=manifest.run_id,
