@@ -49,13 +49,23 @@ class DuckDBDashboardRepository:
         return [RunModel(**r) for r in rows]
 
     async def get_snapshots(self, limit: int = 50) -> list[SnapshotModel]:
+        # Two independent reads -- an absent `snapshot_attribution` side table (a
+        # lake never synced through SQLMesh) must not blank the snapshot rows too.
         rows = await self._read(lambda con: snapshot_log(con, limit=limit), [])
+        attributed = await self._read(
+            lambda con: ops.snapshot_run_ids(con, [r[0] for r in rows]), {}
+        )
         results = []
         for snapshot_id, ts, author, message, extra_info, changes in rows:
             run_id = None
             if extra_info:
                 with contextlib.suppress(Exception):
                     run_id = json.loads(extra_info).get("run_id")
+            # SQLMesh writes DuckLake directly (no `commit_extra_info`) -- fall
+            # back to the `lake_ops` side table a sync step populates for it
+            # (ADR-0008 Amendment, cdsci-lake#89).
+            if run_id is None:
+                run_id = attributed.get(snapshot_id)
             changes_dict = dict(changes) if changes else None
             results.append(SnapshotModel(
                 snapshot_id=snapshot_id, timestamp=ts, author=author,
