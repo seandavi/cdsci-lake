@@ -66,10 +66,14 @@ Extend the operations dashboard (`backend/`) from `runs`+`snapshots` to
    (`sqlmesh lineage`), reading its state DB, or a plan hook? At what cadence? This is
    the biggest unknown and blocks nothing until SQLMesh adoption starts — decide it
    *as part of* that adoption (ADR-0014 sequencing).
-2. **Asset `ref` scheme.** One canonical locator grammar across types
-   (`lake.<schema>.<table>`, `r2://...`, `postgres://<db>.<schema>.<table>`,
-   `file://.../omicidx.duckdb`) so edges join cleanly. Needs pinning before edges are
-   written.
+2. **Asset `ref` scheme.** ~~One canonical locator grammar across types...~~ Pinned
+   for internal lake tables by ADR-0014's "Amendment 2026-09-22": the dotted form
+   `lake.<schema>.<table>` (lowercase identifiers, no scheme, no credentials),
+   validated by `cdsci.lake.contracts.check_lake_asset_ref`. Other asset types
+   (`r2://...`, `postgres://<db>.<schema>.<table>`, `file://.../omicidx.duckdb`, and
+   the release-as-asset `release.<dataset_id>.<release_id>` form) keep their own
+   scheme/grammar and only get the baseline `check_asset_ref` safety check -- see
+   the amendment for the full rationale.
 3. **Version as its own entity?** Currently folded into `asset.current_version` +
    `run` snapshots. Promote to a `lake_ops.version` table only if per-version history
    beyond DuckLake snapshots is needed (e.g. published `vN` retention).

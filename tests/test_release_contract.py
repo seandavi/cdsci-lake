@@ -65,8 +65,8 @@ def _build_manifest_from_contract() -> ReleaseManifest:
         tables=(events_table, entities_table),
         published_at="2026-09-22T00:00:00Z",
         source_asset_versions=(
-            SourceAssetVersion(ref="ducklake://lake/demo/events", version="snapshot:1"),
-            SourceAssetVersion(ref="ducklake://lake/demo/entities", version="snapshot:1"),
+            SourceAssetVersion(ref="lake.demo.events", version="snapshot:1"),
+            SourceAssetVersion(ref="lake.demo.entities", version="snapshot:1"),
         ),
         artifacts={
             "parquet": ArtifactEntry(
@@ -258,8 +258,8 @@ def test_manifest_rejects_every_known_public_path_bypass(uri: str):
         FileEntry(uri=uri, size=1, sha256="x", content_type="application/vnd.apache.parquet")
 
 
-def test_source_asset_version_accepts_ducklake_ref():
-    SourceAssetVersion(ref="ducklake://lake/demo/events", version="snapshot:1")
+def test_source_asset_version_accepts_dotted_lake_ref():
+    SourceAssetVersion(ref="lake.demo.events", version="snapshot:1")
 
 
 @pytest.mark.parametrize(
@@ -267,12 +267,15 @@ def test_source_asset_version_accepts_ducklake_ref():
     [
         "postgresql://u:p@10.0.0.5/db",
         "https://example.org/events",
-        "ducklake://u:p@lake/demo/events",
-        "ducklake://10.0.0.5/demo/events",
-        "ducklake://lake/../etc/passwd",
+        "ducklake://lake/demo/events",
+        "lake.demo..events",
+        "lake.Demo.Events",
+        "lake.demo",
+        "  lake.demo.events  ",
+        "lake.demo.events/../etc/passwd",
     ],
 )
-def test_source_asset_version_rejects_non_ducklake_or_unsafe_ref(ref: str):
+def test_source_asset_version_rejects_non_dotted_or_unsafe_ref(ref: str):
     with pytest.raises(PublicPathError):
         SourceAssetVersion(ref=ref, version="snapshot:1")
 
