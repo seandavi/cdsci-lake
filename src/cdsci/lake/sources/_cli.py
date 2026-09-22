@@ -45,8 +45,13 @@ def base_app(help: str) -> typer.Typer:  # noqa: A002 - matches typer.Typer's ow
     app = typer.Typer(help=help, add_completion=False)
 
     @app.callback()
-    def _main(log_level: str = typer.Option("INFO", "--log-level", help="loguru level.")) -> None:
-        configure(log_level)
+    def _main(
+        log_level: str = typer.Option("INFO", "--log-level", help="loguru level."),
+        log_json: bool = typer.Option(
+            False, "--log-json", help="Emit structured JSON log events (design §8.2)."
+        ),
+    ) -> None:
+        configure(log_level, json=log_json)
 
     return app
 

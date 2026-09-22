@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import socket
+import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -36,7 +37,7 @@ import duckdb
 
 from .connect import LAKE
 from .contracts import check_asset_ref
-from .log import logger
+from .log import event, logger
 
 if TYPE_CHECKING:
     from .publish.release import PublicationReceipt
@@ -530,6 +531,8 @@ def run(
         "start → {} (version={}, snapshot_before={}, run_id={})",
         target, version, before, rid,
     )
+    event("run_started", run_id=rid, writer=writer, job=source, status="running")
+    t0 = time.monotonic()
     r = Run(con, rid, source, target, version, before, writer=writer, extra=extra)
     token = _ACTIVE_RUN.set(r)
     try:
@@ -546,6 +549,10 @@ def run(
             bound.error(
                 "ERROR after {} rows (snapshot {}→{}, run_id={}): {}",
                 r.rows, before, after, rid, exc,
+            )
+            event(
+                "run_error", run_id=rid, writer=writer, job=source, rows=r.rows,
+                status="error", duration_ms=(time.monotonic() - t0) * 1000,
             )
             raise
         else:
@@ -573,6 +580,11 @@ def run(
             bound.success(
                 "{} → {} (rows={}, snapshot {}→{}, run_id={})",
                 status, target, r.rows, before, after, rid,
+            )
+            event(
+                "run_succeeded" if status == "success" else "run_idempotent",
+                run_id=rid, writer=writer, job=source, rows=r.rows,
+                status=status, duration_ms=(time.monotonic() - t0) * 1000,
             )
     finally:
         _ACTIVE_RUN.reset(token)
