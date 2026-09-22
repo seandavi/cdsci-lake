@@ -502,3 +502,121 @@ def test_asset_ref_validation_rejects_a_private_dsn(lake_settings: Settings):
         assert ops.list_assets(con) == []
     finally:
         con.close()
+
+
+# --- sync_sqlmesh_snapshot_attribution (ADR-0008 Amendment; cdsci-lake#89) ---
+
+
+def _create_unattributed_table(con, schema: str, table: str) -> None:
+    """A raw DuckLake write bypassing `ops.run`/`upsert` -- stands in for a
+    SQLMesh apply, whose snapshots likewise carry no `commit_extra_info`."""
+    con.execute(f"CREATE SCHEMA IF NOT EXISTS lake.{schema};")
+    con.execute(f"CREATE TABLE lake.{schema}.{table} AS SELECT 1 AS id")
+
+
+def test_sync_sqlmesh_snapshot_attribution_brackets_exactly_the_matched_snapshots(
+    lake_settings: Settings,
+):
+    """Attributes only the snapshot(s) that touch the target model's own table,
+    not a neighbour model's snapshot created in the same bracketed window."""
+    con = lake_connect(lake_settings)
+    try:
+        _create_unattributed_table(con, "bugsigdb", "signature")
+        _create_unattributed_table(con, "ensembl", "gene")  # the neighbour
+
+        run_id = ops.sync_sqlmesh_snapshot_attribution(
+            con, project="cdsci_lake", model="bugsigdb.signature",
+            target="lake.bugsigdb.signature", version="v1",
+        )
+        assert run_id is not None
+
+        attributed = con.execute(
+            "SELECT snapshot_id, run_id, source FROM ops.lake_ops.snapshot_attribution"
+        ).fetchall()
+        assert {r[1] for r in attributed} == {run_id}
+        assert {r[2] for r in attributed} == {"sqlmesh_sync"}
+
+        # Exactly the bugsigdb.signature snapshot -- confirm by cross-checking
+        # against the catalog's own `changes` map, not just trusting our count.
+        changed = dict(
+            con.execute("SELECT snapshot_id, changes FROM lake.snapshots()").fetchall()
+        )
+        attributed_ids = {r[0] for r in attributed}
+        for sid in attributed_ids:
+            assert "bugsigdb.signature" in (changed[sid].get("tables_created") or [])
+        assert all(
+            "ensembl.gene" not in (changed[sid].get("tables_created") or [])
+            for sid in attributed_ids
+        )
+
+        run = con.execute(
+            "SELECT source, target, version, status FROM ops.lake_ops.run WHERE run_id = ?",
+            [run_id],
+        ).fetchone()
+        assert run == ("bugsigdb.signature", "lake.bugsigdb.signature", "v1", "success")
+    finally:
+        con.close()
+
+
+def test_sync_sqlmesh_snapshot_attribution_is_idempotent_on_rerun(lake_settings: Settings):
+    con = lake_connect(lake_settings)
+    try:
+        _create_unattributed_table(con, "bugsigdb", "signature")
+        first = ops.sync_sqlmesh_snapshot_attribution(
+            con, project="cdsci_lake", model="bugsigdb.signature",
+            target="lake.bugsigdb.signature",
+        )
+        assert first is not None
+
+        second = ops.sync_sqlmesh_snapshot_attribution(
+            con, project="cdsci_lake", model="bugsigdb.signature",
+            target="lake.bugsigdb.signature",
+        )
+        assert second is None  # nothing new since the watermark -- a true no-op
+
+        run_count = con.execute(
+            "SELECT count(*) FROM ops.lake_ops.run WHERE source = 'bugsigdb.signature'"
+        ).fetchone()[0]
+        attribution_count = con.execute(
+            "SELECT count(*) FROM ops.lake_ops.snapshot_attribution"
+        ).fetchone()[0]
+        assert run_count == 1
+        assert attribution_count == 1
+    finally:
+        con.close()
+
+
+def test_sync_sqlmesh_snapshot_attribution_rejects_a_non_cdsci_lake_project(
+    lake_settings: Settings,
+):
+    con = lake_connect(lake_settings)
+    try:
+        _create_unattributed_table(con, "bugsigdb", "signature")
+        with pytest.raises(ValueError, match="cdsci_lake-only"):
+            ops.sync_sqlmesh_snapshot_attribution(
+                con, project="omicidx", model="sradb.study", target="lake.sradb.study",
+            )
+        assert con.execute(
+            "SELECT count(*) FROM ops.lake_ops.snapshot_attribution"
+        ).fetchone()[0] == 0
+    finally:
+        con.close()
+
+
+def test_snapshot_run_ids_reads_back_the_side_table(lake_settings: Settings):
+    con = lake_connect(lake_settings)
+    try:
+        _create_unattributed_table(con, "bugsigdb", "signature")
+        run_id = ops.sync_sqlmesh_snapshot_attribution(
+            con, project="cdsci_lake", model="bugsigdb.signature",
+            target="lake.bugsigdb.signature",
+        )
+        attributed_id = con.execute(
+            "SELECT snapshot_id FROM ops.lake_ops.snapshot_attribution"
+        ).fetchone()[0]
+
+        result = ops.snapshot_run_ids(con, [attributed_id, 999999])
+        assert result == {attributed_id: run_id}
+        assert ops.snapshot_run_ids(con, []) == {}
+    finally:
+        con.close()

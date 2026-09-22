@@ -223,6 +223,16 @@ def bootstrap(con: duckdb.DuckDBPyConnection) -> None:
             recorded_at TIMESTAMPTZ
         );"""
     )
+    # ADR-0008 Amendment 2026-09-22 / cdsci-lake#89: SQLMesh writes DuckLake
+    # directly (no `run()`/`attribute()` wrapper), so its snapshots carry no
+    # `commit_extra_info` and ADR-0008's in-catalog guarantee doesn't reach them.
+    # This side table restores attribution from `lake_ops` instead of the commit
+    # metadata -- see `sync_sqlmesh_snapshot_attribution`.
+    con.execute(
+        f"""CREATE TABLE IF NOT EXISTS {_t("snapshot_attribution")} (
+            snapshot_id BIGINT, run_id TEXT, source TEXT
+        );"""
+    )
 
 
 def register_sources(
@@ -762,6 +772,113 @@ def lineage_for(
         raise ValueError(f"direction must be 'upstream' or 'downstream', got {direction!r}")
     rows = con.execute(f"{_LINEAGE_SELECT} FROM {_t('lineage')} WHERE {where}", [ref]).fetchall()
     return [dict(zip(_LINEAGE_COLS, r, strict=True)) for r in rows]
+
+
+# --- SQLMesh snapshot attribution (ADR-0008 Amendment 2026-09-22; cdsci-lake#89) ---
+
+
+def _changed_tables(changes: dict | None) -> set[str]:
+    """The ``schema.table`` names touched by a snapshot's ``changes`` map.
+
+    ``changes`` (from ``lake.snapshots()``) is a map of change-kind ->
+    list-of-names/ids, e.g. ``{"tables_created": ["bugsigdb.signature"],
+    "tables_dropped": ["2"], "inlined_insert": ["4"]}``. Table names carry a dot
+    (``schema.table``); dropped-table and inlined-insert/-delete entries are bare
+    internal ids and never match a qualified name, so scanning every list for
+    dotted strings is enough -- no need to special-case ``tables_created`` alone
+    (SQLMesh's ``CREATE OR REPLACE TABLE`` on a full-refresh apply reports there
+    every time, including when only the data changed).
+    """
+    names: set[str] = set()
+    for values in (changes or {}).values():
+        if not isinstance(values, list):
+            continue
+        names.update(v for v in values if isinstance(v, str) and "." in v)
+    return names
+
+
+def sync_sqlmesh_snapshot_attribution(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    project: str,
+    model: str,
+    target: str,
+    version: str | None = None,
+) -> str | None:
+    """Attribute ``model``'s most recent SQLMesh apply (ADR-0008 Amendment; #89).
+
+    SQLMesh writes DuckLake directly -- no :func:`run`/:meth:`Run.attribute`
+    wrapper -- so its snapshots carry no ``commit_extra_info`` and ADR-0008's
+    in-catalog guarantee never reaches them. This restores attribution from the
+    other side: a per-model watermark (under ``source=f"sqlmesh:{project}"``)
+    tracks the last DuckLake snapshot id this model was synced through; every
+    call brackets ``(watermark, current_max]`` and keeps only the snapshots in
+    that range whose ``changes`` actually touch ``target``'s ``schema.table`` --
+    a concurrent write to a *different* model in the same window is never
+    attributed here. One ``lake_ops.run`` row and one
+    ``lake_ops.snapshot_attribution`` row per matched snapshot are written; the
+    watermark advances regardless, so a re-run with nothing new is a no-op.
+
+    ``project`` must be ``"cdsci_lake"`` -- this is cdsci-lake's own sync path and
+    must never attribute a model injected from another producer's SQLMesh
+    project (e.g. omicidx).
+
+    Returns the new run's ``run_id``, or ``None`` if there was nothing to sync.
+    """
+    if project != "cdsci_lake":
+        raise ValueError(
+            f"sync_sqlmesh_snapshot_attribution is cdsci_lake-only, got project={project!r} "
+            "-- never sync a model belonging to another producer's SQLMesh project"
+        )
+    watermark_source = f"sqlmesh:{project}"
+    since = get_watermark(con, watermark_source, model) or 0
+    upto = _max_snapshot(con)
+    if upto is None or upto <= since:
+        return None
+
+    _, schema, table = target.split(".", 2)
+    qualified = f"{schema}.{table}"
+    rows = con.execute(
+        f"SELECT snapshot_id, changes FROM {LAKE}.snapshots() "
+        "WHERE snapshot_id > ? AND snapshot_id <= ? ORDER BY snapshot_id",
+        [since, upto],
+    ).fetchall()
+    matched = [sid for sid, changes in rows if qualified in _changed_tables(changes)]
+    set_watermark(con, watermark_source, model, upto)
+    if not matched:
+        return None
+
+    run_id = str(uuid.uuid4())
+    con.execute(
+        f"INSERT INTO {_t('run')} "
+        "(run_id, source, target, version, status, snapshot_before, snapshot_after, "
+        " started_at, finished_at, host) "
+        "VALUES (?, ?, ?, ?, 'success', ?, ?, current_timestamp, current_timestamp, ?)",
+        [run_id, model, target, version, since, matched[-1], "sqlmesh-sync"],
+    )
+    con.executemany(
+        f"INSERT INTO {_t('snapshot_attribution')} (snapshot_id, run_id, source) "
+        "VALUES (?, ?, 'sqlmesh_sync')",
+        [(sid, run_id) for sid in matched],
+    )
+    return run_id
+
+
+def snapshot_run_ids(con: duckdb.DuckDBPyConnection, snapshot_ids: list[int]) -> dict[int, str]:
+    """``{snapshot_id: run_id}`` from the side table, for the ids given.
+
+    The dashboard's fallback when a snapshot's own ``commit_extra_info`` carries
+    no ``run_id`` (a SQLMesh-written snapshot, attributed by
+    :func:`sync_sqlmesh_snapshot_attribution` rather than by the commit itself).
+    """
+    if not snapshot_ids:
+        return {}
+    rows = con.execute(
+        f"SELECT snapshot_id, run_id FROM {_t('snapshot_attribution')} "
+        f"WHERE snapshot_id IN ({','.join('?' * len(snapshot_ids))})",
+        snapshot_ids,
+    ).fetchall()
+    return dict(rows)
 
 
 # --- Publication receipts (ADR-0014 Amendment 2026-09-22; cdsci-lake#100) ---
