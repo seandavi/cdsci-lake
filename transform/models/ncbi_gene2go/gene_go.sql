@@ -1,23 +1,14 @@
-MODEL (
-  name ncbi_gene2go.gene_go,
-  kind FULL,
-  cron '@daily',
-  tags ('license:us-public-domain'),
-  description 'Direct GO annotations per Entrez gene, all taxa, resolved against the GO release in lake.ontology (cdsci-lake#39).',
-  column_descriptions (
-    gene_id = 'NCBI Gene identifier (bioregistry prefix `ncbigene`). Bare local id.',
-    taxon_id = 'NCBI Taxonomy id (bioregistry prefix `ncbitaxon`), from each row''s own tax_id.',
-    go_id = 'GO term CURIE, e.g. `GO:0006099` — joins lake.ontology.terms on (ontology=''go'', curie).',
-    evidence = 'GO evidence code (IEA, IDA, IMP, …). Part of the business key.',
-    qualifier = 'The GO relation NCBI asserts (enables, involved_in, located_in, part_of, NOT|…). Part of the business key.',
-    go_term = 'The term label as gene2go itself shipped it, i.e. as of NCBI''s own GO snapshot.',
-    category = 'GO aspect — Process, Function or Component.',
-    go_label = 'The term''s CURRENT label in this lake''s GO release; NULL when go_id is absent from that release (obsoleted-and-removed, or the two snapshots have drifted).',
-    go_obsolete = 'TRUE when GO marks the term obsolete; NULL when go_id is not in this lake''s GO release at all — never conflate "not obsolete" with "not found".'
-  ),
-  audits (ncbi_gene2go_gene_go_one_row_per_taxon_gene_term, ncbi_gene2go_gene_go_no_null_identifiers_or_key_parts, ncbi_gene2go_gene_go_category_is_one_of_go_s, ncbi_gene2go_gene_go_go_id_is_a_go_curie)
-);
-
+-- description: Direct GO annotations per Entrez gene, all taxa, resolved against the GO release in lake.ontology (cdsci-lake#39).
+-- license: us-public-domain
+-- column gene_id: NCBI Gene identifier (bioregistry prefix `ncbigene`). Bare local id.
+-- column taxon_id: NCBI Taxonomy id (bioregistry prefix `ncbitaxon`), from each row's own tax_id.
+-- column go_id: GO term CURIE, e.g. `GO:0006099` — joins lake.ontology.terms on (ontology='go', curie).
+-- column evidence: GO evidence code (IEA, IDA, IMP, …). Part of the business key.
+-- column qualifier: The GO relation NCBI asserts (enables, involved_in, located_in, part_of, NOT|…). Part of the business key.
+-- column go_term: The term label as gene2go itself shipped it, i.e. as of NCBI's own GO snapshot.
+-- column category: GO aspect — Process, Function or Component.
+-- column go_label: The term's CURRENT label in this lake's GO release; NULL when go_id is absent from that release (obsoleted-and-removed, or the two snapshots have drifted).
+-- column go_obsolete: TRUE when GO marks the term obsolete; NULL when go_id is not in this lake's GO release at all — never conflate "not obsolete" with "not found".
 -- ncbi_gene2go.gene_go: DIRECT annotations only. The GOALL-style closure over
 -- ancestor terms is a recursive walk of lake.ontology.edges and belongs in its
 -- own model — computing it here would bake one ontology snapshot invisibly

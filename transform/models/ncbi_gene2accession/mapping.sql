@@ -1,20 +1,11 @@
-MODEL (
-  name ncbi_gene2accession.mapping,
-  kind FULL,
-  cron '@daily',
-  tags ('license:us-public-domain'),
-  description 'Entrez↔accession cross-references from NCBI gene2accession — RefSeq RNA/protein + GenBank genomic, all taxa (cdsci-lake#37).',
-  column_descriptions (
-    source_namespace = 'Vocabulary of `source_id`. Always ENTREZ here — gene2accession has exactly one gene identifier per row.',
-    source_id = 'NCBI Gene identifier (bioregistry prefix `ncbigene`) as text, to match `ncbi_gene.mapping`''s column type.',
-    target_namespace = 'Vocabulary of `target_id` — REFSEQ_RNA, REFSEQ_PROTEIN, or GENBANK_GENOMIC.',
-    target_id = 'The accession **with its version suffix** exactly as NCBI ships it (NM_000546.6). Strip with split_part(target_id, ''.'', 1) if an unversioned form is wanted.',
-    taxon_id = 'NCBI Taxonomy id (bioregistry prefix `ncbitaxon`), from each row''s own tax_id.',
-    source = 'Writer scope, always NCBI_ACCESSION — deliberately not ''NCBI'', which is `ncbi_gene.mapping`''s scope (bioc-on-ice ADR-0004''s one-writer-one-scope rule).'
-  ),
-  audits (ncbi_gene2accession_mapping_no_empty_or_null_identifiers_on, ncbi_gene2accession_mapping_the_whole_tuple_is_distinct_select, ncbi_gene2accession_mapping_the_discriminator_actually_separated_refseq_from, ncbi_gene2accession_mapping_every_refseq_target_carries_a_known, ncbi_gene2accession_mapping_only_entrez_on_the_source_side)
-);
-
+-- description: Entrez↔accession cross-references from NCBI gene2accession — RefSeq RNA/protein + GenBank genomic, all taxa (cdsci-lake#37).
+-- license: us-public-domain
+-- column source_namespace: Vocabulary of `source_id`. Always ENTREZ here — gene2accession has exactly one gene identifier per row.
+-- column source_id: NCBI Gene identifier (bioregistry prefix `ncbigene`) as text, to match `ncbi_gene.mapping`'s column type.
+-- column target_namespace: Vocabulary of `target_id` — REFSEQ_RNA, REFSEQ_PROTEIN, or GENBANK_GENOMIC.
+-- column target_id: The accession **with its version suffix** exactly as NCBI ships it (NM_000546.6). Strip with split_part(target_id, '.', 1) if an unversioned form is wanted.
+-- column taxon_id: NCBI Taxonomy id (bioregistry prefix `ncbitaxon`), from each row's own tax_id.
+-- column source: Writer scope, always NCBI_ACCESSION — deliberately not 'NCBI', which is `ncbi_gene.mapping`'s scope (bioc-on-ice ADR-0004's one-writer-one-scope rule).
 -- ncbi_gene2accession.mapping: the lake-side cross-reference table, ported from
 -- bioc-on-ice's ncbi_accession.transform() — with its discriminator corrected.
 --

@@ -1,17 +1,8 @@
-MODEL (
-  name ncbi_gene2pubmed.gene_publication,
-  kind FULL,
-  cron '@daily',
-  tags ('license:us-public-domain'),
-  description 'Gene↔publication edge from NCBI gene2pubmed — one row per (gene, PMID), all taxa (cdsci-lake#38).',
-  column_descriptions (
-    gene_id = 'NCBI Gene identifier (bioregistry prefix `ncbigene`). Bare local id, no embedded prefix.',
-    pmid = 'PubMed identifier (bioregistry prefix `pubmed`). Join key to `icite.metadata` (doi), `pmc.documents` (pmcid), `reporter.publink` (grants), `ctgov.references` (trials).',
-    taxon_id = 'NCBI Taxonomy id (bioregistry prefix `ncbitaxon`), from each row''s own tax_id.'
-  ),
-  audits (ncbi_gene2pubmed_gene_publication_gene_id_pmid_is_unique_the, ncbi_gene2pubmed_gene_publication_no_incomplete_edges)
-);
-
+-- description: Gene↔publication edge from NCBI gene2pubmed — one row per (gene, PMID), all taxa (cdsci-lake#38).
+-- license: us-public-domain
+-- column gene_id: NCBI Gene identifier (bioregistry prefix `ncbigene`). Bare local id, no embedded prefix.
+-- column pmid: PubMed identifier (bioregistry prefix `pubmed`). Join key to `icite.metadata` (doi), `pmc.documents` (pmcid), `reporter.publink` (grants), `ctgov.references` (trials).
+-- column taxon_id: NCBI Taxonomy id (bioregistry prefix `ncbitaxon`), from each row's own tax_id.
 -- ncbi_gene2pubmed.gene_publication: the tidy projection of the raw gene2pubmed
 -- landing table. Deliberately the lightest model in the NCBI family — the raw
 -- file is already the edge, so there is nothing to derive beyond dropping

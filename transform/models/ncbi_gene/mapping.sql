@@ -1,17 +1,8 @@
-MODEL (
-  name ncbi_gene.mapping,
-  kind FULL,
-  cron '@daily',
-  tags ('license:us-public-domain'),
-  description 'NCBI Gene cross-references — Entrez ↔ Ensembl/symbol/alias/dbXref authority, all taxa (cdsci-lake#36).',
-  column_descriptions (
-    source_namespace = 'Vocabulary of `source_id` (ENTREZ, ENSEMBL). Uppercase, matching the namespace names bioc-on-ice''s annotation.identifier_mapping already uses.',
-    target_namespace = 'Vocabulary of `target_id` — SYMBOL, ALIAS, ENTREZ, or a dbXrefs authority (HGNC, OMIM, Ensembl, AllianceGenome, …).',
-    taxon_id = 'NCBI Taxonomy id (bioregistry prefix `ncbitaxon`), from each row''s own tax_id.'
-  ),
-  audits (ncbi_gene_mapping_no_empty_or_null_identifiers_on, ncbi_gene_mapping_mim_is_always_remapped_to_omim, ncbi_gene_mapping_the_whole_tuple_is_distinct)
-);
-
+-- description: NCBI Gene cross-references — Entrez ↔ Ensembl/symbol/alias/dbXref authority, all taxa (cdsci-lake#36).
+-- license: us-public-domain
+-- column source_namespace: Vocabulary of `source_id` (ENTREZ, ENSEMBL). Uppercase, matching the namespace names bioc-on-ice's annotation.identifier_mapping already uses.
+-- column target_namespace: Vocabulary of `target_id` — SYMBOL, ALIAS, ENTREZ, or a dbXrefs authority (HGNC, OMIM, Ensembl, AllianceGenome, …).
+-- column taxon_id: NCBI Taxonomy id (bioregistry prefix `ncbitaxon`), from each row's own tax_id.
 -- ncbi_gene.mapping: the lake-side cross-reference table, ported from
 -- bioc-on-ice's ncbi.transform() `mapping` derivation.
 --

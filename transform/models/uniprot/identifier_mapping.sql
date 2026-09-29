@@ -1,12 +1,5 @@
-MODEL (
-  name uniprot.identifier_mapping,
-  kind FULL,
-  cron '@daily',
-  tags ('license:cc-by-4.0'),
-  description 'UniProt accession<->Entrez gene ID mapping, shaped for bioc-on-ice''s annotation.identifier_mapping (cdsci-lake#32).',
-  audits (uniprot_identifier_mapping_source_id_target_id_is_unique)
-);
-
+-- description: UniProt accession<->Entrez gene ID mapping, shaped for bioc-on-ice's annotation.identifier_mapping (cdsci-lake#32).
+-- license: cc-by-4.0
 -- uniprot.identifier_mapping: reshapes lake.uniprot.idmapping's (accession,
 -- gene_id) pairs into the (source_namespace, source_id, target_namespace,
 -- target_id, taxon_id, source, confidence, valid_from, valid_to) tuple

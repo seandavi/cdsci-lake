@@ -1,17 +1,8 @@
-MODEL (
-  name ncbi_gene.gene,
-  kind FULL,
-  cron '@daily',
-  tags ('license:us-public-domain'),
-  description 'NCBI''s view of a gene — one row per GeneID, all taxa (cdsci-lake#36).',
-  column_descriptions (
-    gene_id = 'NCBI Gene identifier (bioregistry prefix `ncbigene`). Bare local id, no embedded prefix.',
-    taxon_id = 'NCBI Taxonomy id (bioregistry prefix `ncbitaxon`). Bare local id.',
-    gene_type = 'NCBI''s `type_of_gene` (protein-coding, pseudo, ncRNA, biological-region, …).'
-  ),
-  audits (ncbi_gene_gene_gene_id_is_unique, ncbi_gene_gene_no_newentry_placeholder_rows_survive)
-);
-
+-- description: NCBI's view of a gene — one row per GeneID, all taxa (cdsci-lake#36).
+-- license: us-public-domain
+-- column gene_id: NCBI Gene identifier (bioregistry prefix `ncbigene`). Bare local id, no embedded prefix.
+-- column taxon_id: NCBI Taxonomy id (bioregistry prefix `ncbitaxon`). Bare local id.
+-- column gene_type: NCBI's `type_of_gene` (protein-coding, pseudo, ncRNA, biological-region, …).
 -- ncbi_gene.gene: the tidy projection of the raw gene_info landing table.
 -- Unlike bioc-on-ice's annotation.ncbi__gene, this is NOT scoped to a taxon --
 -- raw is landed whole here (every organism NCBI knows), and per-species scoping

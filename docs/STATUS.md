@@ -165,31 +165,18 @@ The join is on a state-name ↔ 2-letter map built inline; `scp` keys geography 
 FIPS/state-name while `reporter` uses `org_state` (2-letter), so a durable FIPS ↔
 state-abbrev crosswalk belongs in the planned `ref` schema (see `docs/design/scp.md`).
 
-## Transform layer — SQLMesh migration (ADR-0019, PR #92 open)
+## Transform layer — plain SQL runner (ADR-0021)
 
-`main` still runs the old SQL-files-plus-`sqlglot` runner (`cdsci.lake.transform`,
-659 LOC). Branch `sqlmesh-transform` (PR #92, CI green) ports it to SQLMesh per
-ADR-0019 — **not yet merged**:
-
-- `transform/config.py` — SQLMesh config reusing `cdsci.lake` `Settings` +
-  `resolve_lake_credentials()`; `project="cdsci_lake"`, `default_target_environment`
-  pinned off `prod`. State shared with omicidx in the lake Postgres `sqlmesh`
-  schema (prerequisite `project="omicidx"` is live on omicidx `main`).
-- 15 of 32 candidate models ported to `MODEL (...)` DDL under `transform/models/`;
-  `.test.sql` → native `AUDIT` blocks. **Applied and verified in the `cdsci_lake`
-  environment**: `bugsigdb.{experiment,signature,signature_taxon,study}` and
-  `uniprot.identifier_mapping` build, audits pass, row counts match the old
-  tables exactly. The other 10 ported models (ensembl, ncbi_gene*) can't build —
-  blocked on EL sources never loaded to prod, pre-existing gap.
-- `ref.id_crosswalk` (ADR-0015 pilot, 40.8M rows, never read) retired rather
-  than ported.
-- Old runner untouched — deliberate rollback path until #82 retires it.
-
-**Known gaps, tracked in #81** (SQLMesh state → `lake_ops` map): every SQLMesh
-apply writes snapshots with no run attribution (`run_id` NULL, #89); model runs
-don't appear in `/api/runs` (#86); `lake_ops` has no `asset`/`lineage` tables
-yet (#80, #87, #88). Nothing schedules an apply — it only runs when typed.
-ADR-0019 itself is still `Status: proposed`.
+ADR-0021 (2026-09-29) reverted the SQLMesh port (ADR-0019 decisions 3/6
+superseded). The 15 models live in `transform/models/<schema>/<table>.sql` as
+plain `SELECT`s with `-- description:`/`-- license:`/`-- column` directives and
+sibling `.test.sql` assertions (35 total), run by `python -m cdsci.lake.transform
+run-all`. Order comes from stdlib `graphlib`; sqlglot extracts table- and
+column-level lineage (#113), stored in `lake_ops` per model run (#114).
+`bugsigdb.*` and `uniprot.identifier_mapping` have built in prod; the ensembl and
+ncbi_gene* models are still blocked on EL sources never loaded to prod.
+Historic SQLMesh snapshot attribution stays readable in
+`lake_ops.snapshot_attribution`; nothing writes it now.
 
 ## Next steps (not yet done)
 

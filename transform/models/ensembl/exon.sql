@@ -1,18 +1,9 @@
-MODEL (
-  name ensembl.exon,
-  kind FULL,
-  cron '@daily',
-  tags ('license:ensembl-no-restrictions'),
-  description 'One row per (exon, transcript) per release, with the coding bounds and phase of the CDS lying in it.',
-  column_descriptions (
-    exon_id = 'Ensembl stable exon id (ENSE…). Not unique on its own — one exon is shared by every transcript that contains it, so the key is (exon_id, transcript_id, ncbitaxon_id, ensembl_release).',
-    rank = 'The exon''s 1-based position within its transcript (GTF `exon_number`), counted 5''→3'' on the transcript''s own strand.',
-    cds_start = 'Start of the coding sequence within this exon, or NULL for a wholly non-coding exon. From the CDS line joined on (transcript_id, exon_number).',
-    cds_phase = 'GTF `frame` of the joined CDS line — bases to skip before the first whole codon (0/1/2). NULL for a non-coding exon.'
-  ),
-  audits (ensembl_exon_exon_id_transcript_id_ncbitaxon_id, ensembl_exon_the_joined_cds_lies_inside_its, ensembl_exon_cds_phase_is_a_real_gtf, ensembl_exon_ranks_within_a_transcript_are_a)
-);
-
+-- description: One row per (exon, transcript) per release, with the coding bounds and phase of the CDS lying in it.
+-- license: ensembl-no-restrictions
+-- column exon_id: Ensembl stable exon id (ENSE…). Not unique on its own — one exon is shared by every transcript that contains it, so the key is (exon_id, transcript_id, ncbitaxon_id, ensembl_release).
+-- column rank: The exon's 1-based position within its transcript (GTF `exon_number`), counted 5'→3' on the transcript's own strand.
+-- column cds_start: Start of the coding sequence within this exon, or NULL for a wholly non-coding exon. From the CDS line joined on (transcript_id, exon_number).
+-- column cds_phase: GTF `frame` of the joined CDS line — bases to skip before the first whole codon (0/1/2). NULL for a non-coding exon.
 -- ensembl.exon (ADR-0015): the one genuinely non-trivial model in this source.
 -- A GTF writes the coding sub-interval of an exon as a *separate* `CDS` line
 -- carrying the same transcript_id and exon_number as the exon it lies in, so a

@@ -42,42 +42,6 @@ from typing import Literal
 _DIRECTIVE = re.compile(r"^--\s*(description|license|materialized):\s*(.+?)\s*$", re.MULTILINE)
 _COLUMN_DIRECTIVE = re.compile(r"^--\s*column\s+(\w+):\s*(.+?)\s*$", re.MULTILINE)
 _TEST_BLOCK = re.compile(r"^--\s*test:\s*(.+?)\s*$", re.MULTILINE)
-def _strip_model_ddl(sql: str) -> str:
-    """Drop a leading SQLMesh ``MODEL (...);`` block, returning the SELECT body.
-
-    A ported model file opens with that block (ADR-0019); this loader keeps
-    working through the migration by skipping it — which is what makes Phase 1–3
-    rollback "stop planning, resume running the runner" rather than a revert.
-    Retires with this module (#82).
-
-    Paren-counting rather than a regex because descriptions legitimately contain
-    parentheses inside quoted strings (``'... (ENTREZ, ENSEMBL) ...'``), which a
-    nesting regex miscounts.
-    """
-    if not sql.lstrip().upper().startswith("MODEL"):
-        return sql
-    depth, in_string, i = 0, False, sql.index("(")
-    while i < len(sql):
-        c = sql[i]
-        if in_string:
-            if c == "'":
-                if sql[i + 1 : i + 2] == "'":  # doubled quote = escaped literal
-                    i += 1
-                else:
-                    in_string = False
-        elif c == "'":
-            in_string = True
-        elif c == "(":
-            depth += 1
-        elif c == ")":
-            depth -= 1
-            if depth == 0:
-                rest = sql[i + 1 :].lstrip()
-                return rest[1:].lstrip() if rest.startswith(";") else rest
-        i += 1
-    return sql
-
-
 _UNSET_LICENSE = "UNSPECIFIED -- no `-- license:` directive in the model file, verify"
 _UNSET_DESCRIPTION = "no `-- description:` directive"
 
@@ -153,7 +117,7 @@ def load_models(models_dir: Path | str) -> dict[str, Model]:
                 f"duplicate transform model target {target!r}: "
                 f"{models[target].path} and {path}"
             )
-        sql = _strip_model_ddl(path.read_text().strip()).strip()
+        sql = path.read_text().strip()
         if not sql:
             raise ValueError(f"empty transform model: {path}")
         description, license_, materialized = _directives(sql, target)

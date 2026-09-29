@@ -1,12 +1,5 @@
-MODEL (
-  name bugsigdb.signature,
-  kind FULL,
-  cron '@daily',
-  tags ('license:cc-by-4.0'),
-  description 'BugSigDB signature-level fields (curation metadata, description, taxon-member lists), one row per bsdb_id.',
-  audits (bugsigdb_signature_bsdb_id_is_unique)
-);
-
+-- description: BugSigDB signature-level fields (curation metadata, description, taxon-member lists), one row per bsdb_id.
+-- license: cc-by-4.0
 -- bugsigdb.signature (ADR-0015): one row per bsdb_id, same grain as
 -- lake.bugsigdb.signatures itself but narrowed to the columns that actually
 -- vary at signature grain -- curation/review metadata, the two taxon-member

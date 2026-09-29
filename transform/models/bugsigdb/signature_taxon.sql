@@ -1,15 +1,6 @@
-MODEL (
-  name bugsigdb.signature_taxon,
-  kind FULL,
-  cron '@daily',
-  tags ('license:cc-by-4.0'),
-  description 'BugSigDB signature<->NCBI-taxon bridge table, one row per taxon member of a signature.',
-  column_descriptions (
-    ncbitaxon_id = 'NCBI Taxonomy id (bioregistry prefix `ncbitaxon`, not `ncbi_taxon` -- verified against bioregistry.io / lake.ref.bioregistry 2026-08-10). Bare local id, no embedded prefix -- this column is single-vocabulary.'
-  ),
-  audits (bugsigdb_signature_taxon_bsdb_id_member_index_is_unique)
-);
-
+-- description: BugSigDB signature<->NCBI-taxon bridge table, one row per taxon member of a signature.
+-- license: cc-by-4.0
+-- column ncbitaxon_id: NCBI Taxonomy id (bioregistry prefix `ncbitaxon`, not `ncbi_taxon` -- verified against bioregistry.io / lake.ref.bioregistry 2026-08-10). Bare local id, no embedded prefix -- this column is single-vocabulary.
 -- bugsigdb.signature_taxon (cdsci-lake#31, ADR-0015 pilot model #2): explodes
 -- lake.bugsigdb.signatures' two nested member-list columns into one row per
 -- signature member. `metaphlan_taxon_names` (comma-separated) and
