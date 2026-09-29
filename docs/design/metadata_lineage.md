@@ -1,7 +1,12 @@
 # Unified metadata & lineage — design
 
-Detail behind **ADR-0014**. This doc is expected to churn as SQLMesh and reverse-ETL
-land; the ADR holds the settled decision, this holds the mechanics + open questions.
+Detail behind **ADR-0014**. This doc is expected to churn as reverse-ETL lands; the
+ADR holds the settled decision, this holds the mechanics + open questions.
+
+> **ADR-0021 (2026-09-29):** SQLMesh is out of cdsci-lake. The plain-SQL runner
+> writes transform lineage itself: table-level edges to `lineage` (`edge_type =
+> 'sqlglot'`) and column-level edges to `column_lineage`, replaced per model on each
+> run. SQLMesh references below are historical.
 
 ## The five entities → `lake_ops` skeleton (proposed DDL)
 
@@ -47,7 +52,7 @@ against DuckLake snapshots at the view.
 | Backend | Populates | How |
 |---|---|---|
 | **EL loaders** | `run`, `asset` (lake_table), `lineage` (raw→lake, declared) | `ops.run` (already) + a small asset/edge write |
-| **SQLMesh** | `asset` (sqlmesh_model), `lineage` (asset-level), transform `run`s | a **sync step** ingests SQLMesh lineage; column-level stays federated |
+| **Transform runner** (ADR-0021) | `asset` (lake_table), `lineage` (sqlglot), `column_lineage`, transform `run`s | written inside each model's `ops.run`; replaced per model |
 | **Reverse-ETL** | `run`, `asset` (parquet/postgres/duckdb), `lineage` (lake/model→published) | wrap each publish/serve step in `ops.run` + declare its edge |
 | **DuckLake catalog** | Version detail, snapshot attribution | already linked: `run.snapshot_after` + `commit_extra_info->>'run_id'` (ADR-0008) |
 | **ClickHouse** | Logs | **federated** — referenced by `run_id`, never copied into the hub |
@@ -57,7 +62,7 @@ against DuckLake snapshots at the view.
 Extend the operations dashboard (`backend/`) from `runs`+`snapshots` to
 **asset catalog + lineage graph + run timeline**, fanning out by id:
 - run/asset detail → ClickHouse `structured_logs` for logs;
-- transform asset → SQLMesh for column-level lineage on drill-down.
+- transform asset → `lake_ops.column_lineage` for column-level drill-down.
 
 ## Open questions (flagged, not settled)
 

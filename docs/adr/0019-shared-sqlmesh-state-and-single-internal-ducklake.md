@@ -1,6 +1,7 @@
 # 0019. One internal DuckLake, one shared SQLMesh state: transform unification across producers
 
 - Status: accepted
+- Decisions 3 and 6 superseded by ADR-0021 (2026-09-29); decisions 1 and 2 stand.
 - Date: 2026-08-15
 - Accepted: 2026-09-22. The omicidx `project=` prerequisite landed on omicidx
   main (see commit 1b2d9a6) and the port shipped in PR #92. Accepted on the

@@ -1,6 +1,7 @@
 # 0014. Unified metadata & lineage: one model over heterogeneous backends
 
 - Status: accepted
+- Decision 4 (column-level lineage federated to SQLMesh) superseded by ADR-0021 (2026-09-29).
 - Date: 2026-07-11
 
 > The metadata analogue of the write contract (ADR-0011). Detail + DDL live in

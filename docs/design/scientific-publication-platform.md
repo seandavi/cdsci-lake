@@ -1240,7 +1240,7 @@ Reject or stop a consolidation change if:
 5. **Frozen DuckLake layout:** one catalog per dataset release versus smaller catalogs per namespace/product.
 6. **Metadata standards:** custom JSON only versus mapping selected fields to DCAT, DataCite, Frictionless, or another external vocabulary.
 7. **Statistics:** which statistics are safe, useful, deterministic, and affordable to publish.
-8. **SQLMesh:** accept/reject ADR-0019 and settle project naming and cross-project rebuild ownership.
+8. **SQLMesh:** settled by ADR-0021: no SQLMesh in cdsci-lake; plain-SQL runner with sqlglot lineage in `lake_ops`.
 9. **Public lineage retention:** every release versus current projection plus immutable provenance.
 10. **Current-state defaults:** how R, Python, DuckDB examples, and future clients enforce current versus history intentionally.
 11. **Artifact signing:** whether manifests and checksum indexes require signatures in addition to TLS and SHA-256.
