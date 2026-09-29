@@ -13,7 +13,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from cdsci.lake import Settings, lake_connect
+from cdsci.lake import Settings, lake_connect, ops
 from cdsci.lake.transform.graph import build_graph, topological_order
 from cdsci.lake.transform.models import Model, load_models
 from cdsci.lake.transform.runner import run_all, run_model
@@ -91,29 +91,71 @@ def test_run_model_creates_table_and_records_run(lake_settings: Settings):
         con.close()
 
 
-def test_run_model_logs_lineage(lake_settings: Settings):
-    """run_model logs every resolvable lineage edge -- no lake_ops.lineage table
-    yet (ADR-0014) to persist into, so the log line is the only record today."""
-    from loguru import logger as loguru_logger
-
+def test_run_model_records_and_replaces_lineage(lake_settings: Settings):
+    """ADR-0021 / #114: table + column lineage land in lake_ops under the run's
+    run_id, SELECT * resolves via the catalog, and a re-run with changed SQL
+    drops the stale edges."""
     con = lake_connect(lake_settings)
     try:
         con.execute(
             "CREATE SCHEMA lake.src; "
-            "CREATE TABLE lake.src.t AS SELECT 1 AS id, 'x' AS val"
+            "CREATE TABLE lake.src.t AS SELECT 1 AS id, 'x' AS val; "
+            "CREATE TABLE lake.src.u AS SELECT 1 AS id, 2 AS n"
         )
-        model = Model("xf.derived", "SELECT id, val FROM lake.src.t", Path("xf/derived.sql"))
+        base = Model("xf.base", "SELECT * FROM lake.src.t", Path("xf/base.sql"))
+        joined = Model(
+            "xf.joined",
+            "SELECT b.id, b.val, u.n FROM lake.xf.base b JOIN lake.src.u u USING (id)",
+            Path("xf/joined.sql"),
+        )
+        run_all(con, {"xf.base": base, "xf.joined": joined})
 
-        lines: list[str] = []
-        sink_id = loguru_logger.add(lambda msg: lines.append(msg.record["message"]), level="INFO")
-        try:
-            run_model(con, model)
-        finally:
-            loguru_logger.remove(sink_id)
+        def run_id(source: str) -> str:
+            return con.execute(
+                "SELECT run_id FROM ops.lake_ops.run WHERE source = ? "
+                "ORDER BY started_at DESC LIMIT 1", [source]
+            ).fetchone()[0]
 
-        lineage_lines = [line for line in lines if line.startswith("lineage:")]
-        assert "lineage: xf.derived.id <- src.t.id" in lineage_lines
-        assert "lineage: xf.derived.val <- src.t.val" in lineage_lines
+        assert {(e["src_ref"], e["edge_type"], e["run_id"])
+                for e in ops.lineage_for(con, "lake.xf.joined")} == {
+            ("lake.xf.base", "sqlglot", run_id("xf.joined")),
+            ("lake.src.u", "sqlglot", run_id("xf.joined")),
+        }
+        base_cols = ops.column_lineage_for(con, "lake.xf.base")
+        assert [(c["dst_column"], c["src_ref"], c["src_column"]) for c in base_cols] == [
+            ("id", "lake.src.t", "id"), ("val", "lake.src.t", "val"),
+        ]
+        assert {c["run_id"] for c in base_cols} == {run_id("xf.base")}
+        assert [(c["dst_ref"], c["dst_column"]) for c in
+                ops.column_lineage_for(con, "lake.xf.base", direction="downstream")] == [
+            ("lake.xf.joined", "id"), ("lake.xf.joined", "val"),
+        ]
+        assert {a["ref"] for a in ops.list_assets(con)} >= {"lake.xf.base", "lake.xf.joined"}
+
+        # Drop the join: the lake.src.u edges must disappear, not linger.
+        run_model(con, Model("xf.joined", "SELECT id, val FROM lake.xf.base",
+                             Path("xf/joined.sql")))
+        assert {e["src_ref"] for e in ops.lineage_for(con, "lake.xf.joined")} == {
+            "lake.xf.base"
+        }
+        assert {c["src_ref"] for c in ops.column_lineage_for(con, "lake.xf.joined")} == {
+            "lake.xf.base"
+        }
+    finally:
+        con.close()
+
+
+def test_lineage_failure_never_fails_the_run(lake_settings: Settings, monkeypatch):
+    con = lake_connect(lake_settings)
+    try:
+        def boom(*a, **kw):
+            raise RuntimeError("lineage store down")
+
+        monkeypatch.setattr(ops, "replace_model_lineage", boom)
+        run_model(con, Model("xf.t1", "SELECT 1 AS x", Path("xf/t1.sql")))
+        assert con.execute(
+            "SELECT status FROM ops.lake_ops.run WHERE source = 'xf.t1'"
+        ).fetchone() == ("success",)
     finally:
         con.close()
 

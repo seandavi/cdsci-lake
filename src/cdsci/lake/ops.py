@@ -27,7 +27,7 @@ import json
 import socket
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -213,6 +213,14 @@ def bootstrap(con: duckdb.DuckDBPyConnection) -> None:
         f"""CREATE TABLE IF NOT EXISTS {_t("lineage")} (
             src_ref TEXT, dst_ref TEXT, edge_type TEXT, run_id TEXT,
             discovered_at TIMESTAMPTZ
+        );"""
+    )
+    # ADR-0021 §4: column-level lineage, current state per dst_ref (replaced each
+    # model run). Uniqueness (dst_ref, dst_column, src_ref, src_column) in code.
+    con.execute(
+        f"""CREATE TABLE IF NOT EXISTS {_t("column_lineage")} (
+            dst_ref TEXT, dst_column TEXT, src_ref TEXT, src_column TEXT,
+            run_id TEXT, recorded_at TIMESTAMPTZ
         );"""
     )
     # ADR-0014 Amendment 2026-09-22 / cdsci-lake#100: lands `PublicationReceipt.to_json()`
@@ -739,6 +747,78 @@ def record_lineage(
         "VALUES (?, ?, ?, ?, current_timestamp)",
         [src_ref, dst_ref, edge_type, run_id],
     )
+
+
+def replace_model_lineage(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    dst_ref: str,
+    src_refs: Iterable[str],
+    columns: Iterable[tuple[str, str, str]],
+) -> None:
+    """Replace ``dst_ref``'s sqlglot-derived lineage with the given edges (ADR-0021 §4).
+
+    ``src_refs`` become ``lineage`` rows with ``edge_type='sqlglot'``; ``columns``
+    are ``(dst_column, src_ref, src_column)`` rows in ``column_lineage``. Both
+    levels are deleted for ``dst_ref`` first, so a dependency the model no longer
+    reads disappears. Other edge types (``publishes``, ...) are untouched. Rows
+    carry the active :func:`run`'s ``run_id``. One transaction: a failure leaves
+    the previous lineage in place.
+    """
+    src_refs = sorted(set(src_refs))
+    columns = sorted(set(columns))
+    for ref in (dst_ref, *src_refs, *(c[1] for c in columns)):
+        check_asset_ref(ref)
+    active = active_run()
+    run_id = active.run_id if active else None
+    con.begin()
+    try:
+        con.execute(
+            f"DELETE FROM {_t('lineage')} WHERE dst_ref = ? AND edge_type = 'sqlglot'",
+            [dst_ref],
+        )
+        con.execute(f"DELETE FROM {_t('column_lineage')} WHERE dst_ref = ?", [dst_ref])
+        if src_refs:
+            con.executemany(
+                f"INSERT INTO {_t('lineage')} "
+                "(src_ref, dst_ref, edge_type, run_id, discovered_at) "
+                "VALUES (?, ?, 'sqlglot', ?, current_timestamp)",
+                [(src, dst_ref, run_id) for src in src_refs],
+            )
+        if columns:
+            con.executemany(
+                f"INSERT INTO {_t('column_lineage')} "
+                "(dst_ref, dst_column, src_ref, src_column, run_id, recorded_at) "
+                "VALUES (?, ?, ?, ?, ?, current_timestamp)",
+                [(dst_ref, dc, sr, sc, run_id) for dc, sr, sc in columns],
+            )
+        con.commit()
+    except BaseException:
+        con.rollback()
+        raise
+
+
+_COLUMN_LINEAGE_COLS = ("dst_ref", "dst_column", "src_ref", "src_column", "run_id",
+                        "recorded_at")
+
+
+def column_lineage_for(
+    con: duckdb.DuckDBPyConnection, ref: str, *, direction: str = "upstream"
+) -> list[dict]:
+    """Column-lineage rows touching ``ref``; ``direction`` as in :func:`lineage_for`."""
+    if direction == "upstream":
+        where = "dst_ref = ?"
+    elif direction == "downstream":
+        where = "src_ref = ?"
+    else:
+        raise ValueError(f"direction must be 'upstream' or 'downstream', got {direction!r}")
+    rows = con.execute(
+        f"SELECT {', '.join(_COLUMN_LINEAGE_COLS[:-1])}, recorded_at::VARCHAR "
+        f"FROM {_t('column_lineage')} WHERE {where} "
+        "ORDER BY dst_ref, dst_column, src_ref, src_column",
+        [ref],
+    ).fetchall()
+    return [dict(zip(_COLUMN_LINEAGE_COLS, r, strict=True)) for r in rows]
 
 
 _ASSET_COLS = ("ref", "writer", "asset_type", "name", "first_seen", "last_run_id",
