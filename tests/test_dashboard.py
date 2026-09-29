@@ -39,10 +39,10 @@ def test_get_logs_nonexistent():
     assert response.json() == []
 
 
-def test_get_snapshots_shows_run_id_for_a_sqlmesh_synced_snapshot(tmp_path, monkeypatch):
-    """A SQLMesh-written snapshot carries no `commit_extra_info` -- the endpoint
-    falls back to the `lake_ops.snapshot_attribution` side table a sync step
-    populates for it (ADR-0008 Amendment, cdsci-lake#89)."""
+def test_get_snapshots_shows_run_id_for_a_historic_side_table_snapshot(tmp_path, monkeypatch):
+    """A historic SQLMesh-written snapshot carries no `commit_extra_info` -- the
+    endpoint falls back to its `lake_ops.snapshot_attribution` row
+    (ADR-0008 Amendment, cdsci-lake#89; writer retired by ADR-0021)."""
     import asyncio
 
     import repository
@@ -51,12 +51,14 @@ def test_get_snapshots_shows_run_id_for_a_sqlmesh_synced_snapshot(tmp_path, monk
     con = lake_connect(settings)
     con.execute("CREATE SCHEMA lake.bugsigdb;")
     con.execute("CREATE TABLE lake.bugsigdb.signature AS SELECT 1 AS id")
-    run_id = ops.sync_sqlmesh_snapshot_attribution(
-        con, project="cdsci_lake", model="bugsigdb.signature",
-        target="lake.bugsigdb.signature",
+    run_id = "historic-run"
+    snapshot_id = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+    con.execute(
+        "INSERT INTO ops.lake_ops.snapshot_attribution (snapshot_id, run_id, source) "
+        "VALUES (?, ?, 'sqlmesh_sync')",
+        [snapshot_id, run_id],
     )
     con.close()
-    assert run_id is not None
 
     monkeypatch.setattr(repository, "get_settings", lambda: settings)
     test_repo = repository.DuckDBDashboardRepository()

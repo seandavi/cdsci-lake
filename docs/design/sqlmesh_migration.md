@@ -1,5 +1,8 @@
 # Migrating cdsci-lake's transform layer to SQLMesh
 
+> **Superseded by ADR-0021 (2026-09-29).** cdsci-lake reverted to the plain-SQL
+> runner; kept for the record.
+
 Execution plan behind **ADR-0019**. Covers the model port, the lineage
 transition, and what happens to `lake_ops`. Assumes ADR-0019 is accepted; the
 phases are gated so an early phase can be abandoned without stranding work.

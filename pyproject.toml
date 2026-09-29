@@ -33,14 +33,11 @@ dashboard = [
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0",
 ]
-# The transform + reverse-ETL layer. SQLMesh is the transform engine as of
-# ADR-0019 (it replaces the sqlglot DAG/lineage runner); DuckDB (base) stays the
-# sole execution engine and `targets.py` still owns reverse-ETL. `psycopg2` is
-# for SQLMesh's Postgres state connection; typer is the CLI, same floor as
-# [ingest].
+# The transform + reverse-ETL layer (ADR-0015, ADR-0021): plain SQL files run by
+# the in-repo runner; sqlglot parses them for the DAG and lineage. DuckDB (base)
+# is the execution engine; typer is the CLI, same floor as [ingest].
 transform = [
-    "sqlmesh>=0.236",
-    "psycopg2-binary>=2.9",
+    "sqlglot>=30.0",
     "typer>=0.26.7",
 ]
 

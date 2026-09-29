@@ -1,15 +1,6 @@
-MODEL (
-  name bugsigdb.experiment,
-  kind FULL,
-  cron '@daily',
-  tags ('license:cc-by-4.0'),
-  description 'BugSigDB experiment-level fields (subject groups, sequencing method, diversity metrics), one row per (study, experiment).',
-  column_descriptions (
-    experiment_id = 'Reconstructs BugSigDB''s own study/experiment_num numbering (from bsdb_id''s shape) -- this lake''s synthesized join key, not a citable external identifier.'
-  ),
-  audits (bugsigdb_experiment_experiment_id_is_unique)
-);
-
+-- description: BugSigDB experiment-level fields (subject groups, sequencing method, diversity metrics), one row per (study, experiment).
+-- license: cc-by-4.0
+-- column experiment_id: Reconstructs BugSigDB's own study/experiment_num numbering (from bsdb_id's shape) -- this lake's synthesized join key, not a citable external identifier.
 -- bugsigdb.experiment (ADR-0015): one row per (study, experiment) -- BugSigDB
 -- nests experiments under a study, and the raw "Experiment N" label is only
 -- unique within its study, not globally (two different studies both have an

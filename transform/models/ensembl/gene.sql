@@ -1,18 +1,9 @@
-MODEL (
-  name ensembl.gene,
-  kind FULL,
-  cron '@daily',
-  tags ('license:ensembl-no-restrictions'),
-  description 'One row per Ensembl gene per release — the GTF''s `gene` feature lines.',
-  column_descriptions (
-    gene_id = 'Ensembl stable gene id (ENSG…, or the species'' native id for non-Ensembl genebuilds — yeast carries SGD ids such as YDL246C). External and citable; unversioned, with the version in its own column.',
-    symbol = 'The gene''s official symbol (GTF `gene_name`). NULL where Ensembl has no symbol for the gene — common outside the well-annotated genomes.',
-    gene_type = 'GTF `gene_biotype` (protein_coding, lncRNA, …).',
-    curation_source = 'GTF `gene_source` — which genebuild annotated the gene (ensembl, havana, ensembl_havana, sgd, …), not this lake''s `source`.'
-  ),
-  audits (ensembl_gene_gene_id_ncbitaxon_id_ensembl_release, ensembl_gene_no_null_key_part_and_coordinates)
-);
-
+-- description: One row per Ensembl gene per release — the GTF's `gene` feature lines.
+-- license: ensembl-no-restrictions
+-- column gene_id: Ensembl stable gene id (ENSG…, or the species' native id for non-Ensembl genebuilds — yeast carries SGD ids such as YDL246C). External and citable; unversioned, with the version in its own column.
+-- column symbol: The gene's official symbol (GTF `gene_name`). NULL where Ensembl has no symbol for the gene — common outside the well-annotated genomes.
+-- column gene_type: GTF `gene_biotype` (protein_coding, lncRNA, …).
+-- column curation_source: GTF `gene_source` — which genebuild annotated the gene (ensembl, havana, ensembl_havana, sgd, …), not this lake's `source`.
 -- ensembl.gene (ADR-0015): a straight projection of the `gene` lines from
 -- ensembl.feature, keyed (gene_id, ncbitaxon_id, ensembl_release). Column names
 -- follow bioc-on-ice's annotation.gene shape (symbol/gene_type/curation_source)

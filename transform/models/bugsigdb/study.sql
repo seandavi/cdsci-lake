@@ -1,15 +1,6 @@
-MODEL (
-  name bugsigdb.study,
-  kind FULL,
-  cron '@daily',
-  tags ('license:cc-by-4.0'),
-  description 'BugSigDB study-level fields (bibliographic), one row per study.',
-  column_descriptions (
-    study_id = 'This lake''s synthesized join key (a stringified PMID, verified 1:1 with `pmid`) -- not a citable external identifier, see the note below on why it''s `study_id` and not bare `study`.'
-  ),
-  audits (bugsigdb_study_study_id_is_unique)
-);
-
+-- description: BugSigDB study-level fields (bibliographic), one row per study.
+-- license: cc-by-4.0
+-- column study_id: This lake's synthesized join key (a stringified PMID, verified 1:1 with `pmid`) -- not a citable external identifier, see the note below on why it's `study_id` and not bare `study`.
 -- bugsigdb.study (ADR-0015): one row per BugSigDB study, dedup'd from
 -- lake.bugsigdb.signatures' study-level columns. `study_id` is the natural
 -- key -- it's a stringified PMID in BugSigDB's own scheme, verified 1:1 with

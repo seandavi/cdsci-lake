@@ -180,9 +180,8 @@ def resolve_lake_credentials(settings: Settings | None = None) -> tuple[str, str
     """Resolve ``(r2_key, r2_secret, r2_account, pg_password)`` for the shared lake.
 
     GSM by default, the env-backed settings when ``cred_source == "env"`` (ADR-0011
-    §6 — omicidx's Prefect workers have no gcloud). Public because the SQLMesh
-    transform config (ADR-0019) needs the same four secrets to build its own
-    connection, and duplicating the resolution there would let the two drift.
+    §6 — omicidx's Prefect workers have no gcloud). Public so any other process
+    that builds its own lake connection resolves the same four secrets the same way.
     """
     s = settings or get_settings()
     if s.cred_source == "env":

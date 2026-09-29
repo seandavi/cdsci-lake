@@ -1,14 +1,12 @@
 """CLI: ``python -m cdsci.lake.transform`` — run SQL-file transform models (ADR-0015).
 
 Mirrors ``maintenance_cli.py``'s shape: a typer app, ``--log-level`` via loguru,
-``lake_connect()`` per command. ``--models-dir`` (default ``models``, the repo's
-top-level SQL-file directory) is the one piece of shared state, threaded through
+``lake_connect()`` per command. ``--models-dir`` (default ``transform/models``, the repo's
+SQL-file directory) is the one piece of shared state, threaded through
 ``typer.Context``.
 """
 
 from __future__ import annotations
-
-import json
 
 import typer
 
@@ -31,7 +29,9 @@ def _main(
     log_json: bool = typer.Option(
         False, "--log-json", help="Emit structured JSON log events (design §8.2)."
     ),
-    models_dir: str = typer.Option("models", "--models-dir", help="Directory of *.sql models."),
+    models_dir: str = typer.Option(
+        "transform/models", "--models-dir", help="Directory of *.sql models."
+    ),
 ) -> None:
     configure(log_level, json=log_json)
     ctx.obj = models_dir
@@ -85,29 +85,6 @@ def run_all_cmd(ctx: typer.Context) -> None:
         con.close()
     for target, rows in results.items():
         typer.echo(f"  {target}: {rows} rows")
-
-
-@app.command("sync")
-def sync_cmd() -> None:
-    """Sync SQLMesh state into ``lake_ops`` (the transform sync seam, cdsci-lake#85).
-
-    Builds the SQLMesh ``Context`` from ``transform/config.py`` (relative to the
-    working directory, same convention the ``sqlmesh`` CLI itself uses) and opens
-    the lake read-only -- this command only writes ``lake_ops``, never the lake
-    catalog. ``sqlmesh`` stays behind the ``[transform]`` extra: imported here,
-    not at module load, so ``list``/``graph``/``run``/``run-all`` don't need it.
-    """
-    from sqlmesh.core.context import Context
-
-    from .sync import sync
-
-    context = Context(paths="transform")
-    con = lake_connect(read_only=True, with_ops=True)
-    try:
-        report = sync(con, context)
-    finally:
-        con.close()
-    typer.echo(json.dumps(report.to_dict()))
 
 
 if __name__ == "__main__":
