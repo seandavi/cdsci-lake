@@ -33,10 +33,22 @@ CREATE TABLE IF NOT EXISTS lake_ops.asset (
 CREATE TABLE IF NOT EXISTS lake_ops.lineage (
     src_ref      TEXT,        -- upstream asset ref
     dst_ref      TEXT,        -- downstream asset ref
-    edge_type    TEXT,        -- declared | sqlmesh
+    edge_type    TEXT,        -- declared | sqlglot | publishes
     run_id       TEXT,        -- run that (re)established the edge, if applicable
     discovered_at TIMESTAMPTZ
     -- uniqueness: (src_ref, dst_ref), in code
+);
+
+-- ColumnLineage (ADR-0021): `dst_ref.dst_column` built from `src_ref.src_column`.
+-- Current state per dst_ref: `ops.replace_model_lineage` swaps a model's rows each run.
+CREATE TABLE IF NOT EXISTS lake_ops.column_lineage (
+    dst_ref      TEXT,
+    dst_column   TEXT,
+    src_ref      TEXT,
+    src_column   TEXT,
+    run_id       TEXT,
+    recorded_at  TIMESTAMPTZ
+    -- uniqueness: (dst_ref, dst_column, src_ref, src_column), in code
 );
 ```
 

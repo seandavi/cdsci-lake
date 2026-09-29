@@ -14,7 +14,7 @@ from .. import ops
 from ..connect import LAKE
 from ..log import logger
 from .graph import build_graph, topological_order
-from .lineage import column_lineage
+from .lineage import catalog_schema, column_lineage, table_dependencies
 from .models import Model
 
 
@@ -34,7 +34,8 @@ def run_model(con: duckdb.DuckDBPyConnection, model: Model) -> int:
     Any declared ``model.tests`` run after the write commits, still inside
     ``ops.run``'s block — a failing test raises :class:`ModelTestFailure`,
     which ``ops.run`` catches and records as a normal ``error`` run, same
-    treatment as a write that raised.
+    treatment as a write that raised. Once tests pass, the model is registered
+    as an asset and its lineage recorded under the same ``run_id`` (ADR-0021).
     """
     schema, table = model.target.split(".", 1)
     target = f"{LAKE}.{model.target}"
@@ -56,7 +57,10 @@ def run_model(con: duckdb.DuckDBPyConnection, model: Model) -> int:
         r.rows = con.execute(f"SELECT count(*) FROM {target}").fetchone()[0]
         ops.ensure_column_comments(con, target, model.column_comments)
         _run_tests(con, model, target)
-    _log_lineage(model)
+        ops.register_asset(
+            con, ref=target, writer="cdsci", asset_type="lake_table", name=model.target
+        )
+        _record_lineage(con, model, target)
     return r.rows
 
 
@@ -73,24 +77,27 @@ def _run_tests(con: duckdb.DuckDBPyConnection, model: Model, target: str) -> Non
         logger.bind(ctx=f"transform:{model.target}").info("test {!r}: pass", name)
 
 
-def _log_lineage(model: Model) -> None:
-    """Log every best-effort lineage edge for ``model`` (ADR-0015 §2).
+def _record_lineage(con: duckdb.DuckDBPyConnection, model: Model, target: str) -> None:
+    """Replace ``model``'s table + column lineage in ``lake_ops`` (ADR-0021 §3-4).
 
-    No ``lake_ops.lineage`` table exists yet (ADR-0014) to persist these into
-    — the log line *is* the record for now, so every edge is logged, not a
-    summary count. Lineage computation can't fail a run (see
-    :func:`cdsci.lake.transform.lineage.column_lineage`'s own try/except), so
-    this always runs after a successful write.
+    Input schemas come from the lake catalog so ``SELECT *`` resolves. Lineage
+    is observability: any failure here logs and never fails the model run.
     """
     bound = logger.bind(ctx=f"transform:{model.target}")
-    edges = column_lineage(model)
-    for edge in edges:
-        bound.info(
-            "lineage: {}.{} <- {}.{}",
-            edge.target, edge.target_column, edge.source_table, edge.source_column,
+    try:
+        deps = table_dependencies(model)
+        edges = column_lineage(model, catalog_schema(con, deps, catalog=LAKE))
+        ops.replace_model_lineage(
+            con,
+            dst_ref=target,
+            src_refs=(f"{LAKE}.{d}" for d in deps),
+            columns=((e.target_column, f"{LAKE}.{e.source_table}", e.source_column)
+                     for e in edges),
         )
-    if not edges:
-        bound.info("lineage: no resolvable edges")
+    except Exception as exc:
+        bound.warning("lineage: not recorded: {}", exc)
+        return
+    bound.info("lineage: {} table(s), {} column edge(s)", len(deps), len(edges))
 
 
 def run_all(con: duckdb.DuckDBPyConnection, models: dict[str, Model]) -> dict[str, int]:
