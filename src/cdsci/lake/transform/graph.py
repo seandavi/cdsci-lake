@@ -11,6 +11,8 @@ a model reading an external Parquet file has no model dependency to record.
 
 from __future__ import annotations
 
+from graphlib import CycleError, TopologicalSorter
+
 import sqlglot
 from sqlglot import exp
 
@@ -42,31 +44,20 @@ def build_graph(models: dict[str, Model]) -> dict[str, set[str]]:
 
 
 def topological_order(graph: dict[str, set[str]]) -> list[str]:
-    """Kahn's algorithm: an execution order where every dependency runs first.
+    """An execution order where every dependency runs first (stdlib ``graphlib``).
 
-    Deterministic (ties broken alphabetically) so runs and tests are
-    reproducible. Raises ``ValueError`` on a cycle — a transform DAG must be
+    Deterministic (each ready batch sorted alphabetically) so runs and tests are
+    reproducible. Raises ``ValueError`` on a cycle -- a transform DAG must be
     acyclic by construction; there's no valid order to fall back to.
     """
-    in_degree = dict.fromkeys(graph, 0)
-    children: dict[str, list[str]] = {n: [] for n in graph}
-    for target, deps in graph.items():
-        for dep in deps:
-            children[dep].append(target)
-            in_degree[target] += 1
-
-    ready = sorted(n for n, d in in_degree.items() if d == 0)
+    ts = TopologicalSorter(graph)
+    try:
+        ts.prepare()
+    except CycleError as exc:
+        raise ValueError(f"cycle detected among transform models: {exc.args[1]}") from exc
     order: list[str] = []
-    while ready:
-        node = ready.pop(0)
-        order.append(node)
-        for child in children[node]:
-            in_degree[child] -= 1
-            if in_degree[child] == 0:
-                ready.append(child)
-        ready.sort()
-
-    if len(order) != len(graph):
-        remaining = sorted(set(graph) - set(order))
-        raise ValueError(f"cycle detected among transform models: {remaining}")
+    while ts.is_active():
+        ready = sorted(ts.get_ready())
+        order.extend(ready)
+        ts.done(*ready)
     return order

@@ -59,6 +59,11 @@ def test_topological_order_raises_on_cycle():
         topological_order(graph)
 
 
+def test_topological_order_is_deterministic_by_level():
+    graph = {"z": set(), "a": set(), "m": {"z", "a"}, "b": {"a"}}
+    assert topological_order(graph) == ["a", "z", "b", "m"]
+
+
 def test_unresolved_reference_is_a_leaf_not_a_dependency(tmp_path: Path):
     """A read_parquet(...)/external-table ref never matches a known model target."""
     (tmp_path / "t.sql").write_text("SELECT * FROM read_parquet('s3://bucket/f.parquet')")
