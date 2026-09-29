@@ -14,7 +14,7 @@ from .. import ops
 from ..connect import LAKE
 from ..log import logger
 from .graph import build_graph, topological_order
-from .lineage import model_lineage
+from .lineage import column_lineage
 from .models import Model
 
 
@@ -79,11 +79,11 @@ def _log_lineage(model: Model) -> None:
     No ``lake_ops.lineage`` table exists yet (ADR-0014) to persist these into
     — the log line *is* the record for now, so every edge is logged, not a
     summary count. Lineage computation can't fail a run (see
-    :func:`cdsci.lake.transform.lineage.model_lineage`'s own try/except), so
+    :func:`cdsci.lake.transform.lineage.column_lineage`'s own try/except), so
     this always runs after a successful write.
     """
     bound = logger.bind(ctx=f"transform:{model.target}")
-    edges = model_lineage(model)
+    edges = column_lineage(model)
     for edge in edges:
         bound.info(
             "lineage: {}.{} <- {}.{}",

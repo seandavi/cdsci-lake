@@ -13,9 +13,7 @@ from __future__ import annotations
 
 from graphlib import CycleError, TopologicalSorter
 
-import sqlglot
-from sqlglot import exp
-
+from .lineage import table_dependencies
 from .models import Model
 
 
@@ -26,15 +24,7 @@ def _model_dependencies(model: Model, known_targets: set[str]) -> set[str]:
     catalog prefix like ``lake.``) must match a target in ``known_targets`` to
     count — anything else is an input, not a DAG edge.
     """
-    deps: set[str] = set()
-    for table in sqlglot.parse_one(model.sql, read="duckdb").find_all(exp.Table):
-        parts = [p for p in (table.catalog, table.db, table.name) if p]
-        if len(parts) < 2:
-            continue  # a bare name or a table-valued function call — nothing to match
-        candidate = ".".join(parts[-2:])
-        if candidate in known_targets and candidate != model.target:
-            deps.add(candidate)
-    return deps
+    return table_dependencies(model) & known_targets
 
 
 def build_graph(models: dict[str, Model]) -> dict[str, set[str]]:
