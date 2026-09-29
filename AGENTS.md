@@ -48,7 +48,7 @@ When code, documentation, and an accepted ADR disagree, stop and surface the con
 ## Operations and lineage
 
 - `lake_ops` is the operational authority for runs, watermarks, assets, versions, asset-level lineage, and publication receipts.
-- SQLMesh and SQLGlot are lineage providers; normalize their output rather than inventing incompatible stores.
+- Transforms are plain SQL run by the in-repo runner; SQLGlot extracts table- and column-level lineage into `lake_ops` (ADR-0021). Normalize any other provider's output into the same tables rather than inventing incompatible stores.
 - Public provenance/lineage is a release-scoped projection and must exclude private operational detail.
 - Structured event logs must carry stable `run_id`; publication traces and later public-query traces are separate domains.
 - Actual scheduling stays with the owning repository/systemd/cloud scheduler until several jobs prove a shared non-trivial scheduler abstraction.
