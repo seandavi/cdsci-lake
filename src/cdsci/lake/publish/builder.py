@@ -30,18 +30,21 @@ release + its lineage edges (design §13 M1's "record receipts in lake_ops").
 from __future__ import annotations
 
 import dataclasses
+import functools
 import hashlib
 import json
+import os
+import shutil
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Protocol
+from typing import BinaryIO, Protocol
 
 import duckdb
 
-from ..contracts import DatasetContract, Materialization, TableContract, TemporalModel
+from ..contracts import DatasetContract, TableContract, _split_canonical
 from ..contracts_render import render_dataset_markdown, render_table_markdown
 from ..log import event
 from .release import (
@@ -64,20 +67,6 @@ _MARKDOWN_CONTENT_TYPE = "text/markdown"
 # DuckDB version changing its default can't silently change release byte content.
 _ROW_GROUP_SIZE = 122_880
 
-# The single canonical materialization per temporal model -- the "cross-check deferred
-# from #96" the M1 builder must enforce (a TableFileIndex.materialization that
-# disagrees with its table's temporal_model fails verify_release). scd2_release ->
-# release_snapshot per design §5.3's own annotation.gene example; scd2_bitemporal ->
-# history, since collapsing it to one interval loses the bitemporal dimension.
-# ponytail: one fixed mapping, not a per-producer choice; extend if scd2_release-as-
-# full-history publication is ever needed.
-_MATERIALIZATION_FOR_TEMPORAL_MODEL: dict[TemporalModel, Materialization] = {
-    TemporalModel.APPEND_IMMUTABLE: Materialization.APPEND_IMMUTABLE,
-    TemporalModel.UPSERT_LATEST_SNAPSHOT: Materialization.RELEASE_SNAPSHOT,
-    TemporalModel.SCD2_RELEASE: Materialization.RELEASE_SNAPSHOT,
-    TemporalModel.SCD2_BITEMPORAL: Materialization.HISTORY,
-}
-
 # Canonical arrow-type string (contracts.ColumnContract.arrow_type) -> the DuckDB
 # DESCRIBE type name it must round-trip through. Parallels contracts._parse_arrow_type's
 # pyarrow mapping, but targets DuckDB's own type vocabulary so schema verification
@@ -91,46 +80,69 @@ _DUCKDB_TYPE_BY_CANONICAL = {
 
 
 def _expected_duckdb_type(canonical: str) -> str:
-    if canonical in _DUCKDB_TYPE_BY_CANONICAL:
-        return _DUCKDB_TYPE_BY_CANONICAL[canonical]
-    if canonical.startswith("timestamp["):
-        return "TIMESTAMPTZ" if "tz=" in canonical else "TIMESTAMP"
-    raise ValueError(f"unsupported canonical arrow type string: {canonical!r}")
+    kind, args = _split_canonical(canonical)
+    if kind == "list":
+        return f"{_expected_duckdb_type(args[0])}[]"
+    if kind == "struct":
+        return "STRUCT(" + ", ".join(f'"{n}" {_expected_duckdb_type(t)}' for n, t in args) + ")"
+    text = args[0]
+    if text in _DUCKDB_TYPE_BY_CANONICAL:
+        return _DUCKDB_TYPE_BY_CANONICAL[text]
+    return "TIMESTAMPTZ" if "tz=" in text else "TIMESTAMP"
+
+
+@functools.cache
+def _normalize_duckdb_type(type_sql: str) -> str:
+    """DuckDB's own rendering of ``type_sql`` -- so comparisons never depend on how a
+    type was spelled (struct field quoting, ``LIST`` vs ``[]``)."""
+    return str(duckdb.sql(f"SELECT CAST(NULL AS {type_sql}) AS x").types[0])
 
 
 def _check_parquet_matches_contract(contract: TableContract, parquet_path: Path) -> None:
-    """``DESCRIBE`` the just-written file and compare column names/order/types to ``contract``."""
-    described = duckdb.execute(
-        "DESCRIBE SELECT * FROM read_parquet(?)", [str(parquet_path)]
-    ).fetchall()
-    actual = {name: col_type for name, col_type, *_ in described}
+    """Read the just-written file's schema via DuckDB and compare column names/order/types
+    to ``contract``."""
+    rel = duckdb.read_parquet(str(parquet_path))
+    actual = dict(zip(rel.columns, rel.types, strict=True))
     expected_names = [c.name for c in contract.columns]
     if list(actual) != expected_names:
         raise ValueError(
             f"{contract.name}: parquet columns {list(actual)} != contract {expected_names}"
         )
     for c in contract.columns:
-        expected_type = _expected_duckdb_type(c.arrow_type)
-        if actual[c.name] != expected_type:
+        expected_type = _normalize_duckdb_type(_expected_duckdb_type(c.arrow_type))
+        if str(actual[c.name]) != expected_type:
             raise ValueError(
-                f"{contract.name}.{c.name}: parquet type {actual[c.name]!r} != "
+                f"{contract.name}.{c.name}: parquet type {str(actual[c.name])!r} != "
                 f"contract-expected {expected_type!r}"
             )
 
 
+def _file_sha256(path: Path) -> str:
+    with path.open("rb") as f:
+        return hashlib.file_digest(f, "sha256").hexdigest()
+
+
 class ObjectStore(Protocol):
-    """Design §6.7, simplified to plain ``bytes`` in/out (not ``BinaryIO``) -- every M1
-    object is small enough to hold in memory; add streaming when a table needs it."""
+    """Design §6.7. Small objects go in/out as ``bytes``; data files stream by path
+    (``put_file_if_absent``) or handle (``open``) so a release never holds a table in memory."""
 
     def put_if_absent(self, path: PurePosixPath, body: bytes, *, content_type: str) -> None: ...
 
+    def put_file_if_absent(self, path: PurePosixPath, src: Path, *, content_type: str) -> None: ...
+
     def get(self, path: PurePosixPath) -> bytes: ...
+
+    def open(self, path: PurePosixPath) -> BinaryIO: ...
+
+    def replace(self, path: PurePosixPath, body: bytes, *, content_type: str) -> None: ...
+
+    def delete_tree(self, prefix: PurePosixPath) -> None: ...
 
 
 @dataclass(frozen=True)
 class LocalDirStore:
-    """The one M1 :class:`ObjectStore` adapter -- a local directory tree (no S3/R2
-    adapter yet; that's M4). Enough for the local-HTTP-server acceptance path (§11.7)."""
+    """The one :class:`ObjectStore` adapter -- a local directory tree (no S3/R2 adapter
+    yet). Enough for the local-HTTP-server acceptance path (§11.7)."""
 
     root: Path
 
@@ -144,11 +156,41 @@ class LocalDirStore:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(body)
 
+    def put_file_if_absent(self, path: PurePosixPath, src: Path, *, content_type: str) -> None:
+        dest = self._abs(path)
+        if dest.exists():
+            if _file_sha256(dest) != _file_sha256(src):
+                raise FileExistsError(
+                    f"release object already exists with different content: {path}"
+                )
+            return
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(src, dest)
+
     def get(self, path: PurePosixPath) -> bytes:
         dest = self._abs(path)
         if not dest.is_file():
             raise FileNotFoundError(str(path))
         return dest.read_bytes()
+
+    def open(self, path: PurePosixPath) -> BinaryIO:
+        dest = self._abs(path)
+        if not dest.is_file():
+            raise FileNotFoundError(str(path))
+        return dest.open("rb")
+
+    def replace(self, path: PurePosixPath, body: bytes, *, content_type: str) -> None:
+        """Atomically overwrite ``path`` -- used only for dataset pointer files."""
+        dest = self._abs(path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_name(dest.name + ".tmp")
+        tmp.write_bytes(body)
+        os.replace(tmp, dest)
+
+    def delete_tree(self, prefix: PurePosixPath) -> None:
+        dest = self._abs(prefix)
+        if dest.exists():
+            shutil.rmtree(dest)
 
 
 def build_release(
@@ -203,23 +245,23 @@ def build_release(
             row_count = duckdb.execute(
                 "SELECT count(*) FROM read_parquet(?)", [str(tmp_path)]
             ).fetchone()[0]
-            data = tmp_path.read_bytes()
-            sha256 = hashlib.sha256(data).hexdigest()
+            size = tmp_path.stat().st_size
+            sha256 = _file_sha256(tmp_path)
 
             table_dir = prefix / "tables" / name
-            out.put_if_absent(
-                table_dir / "data" / "part-00000.parquet", data, content_type=_PARQUET_CONTENT_TYPE
+            out.put_file_if_absent(
+                table_dir / "data" / "part-00000.parquet",
+                tmp_path,
+                content_type=_PARQUET_CONTENT_TYPE,
             )
 
-            materialization = _MATERIALIZATION_FOR_TEMPORAL_MODEL[table_contract.temporal_model]
             file_index = TableFileIndex(
                 table=name,
                 release=candidate.release,
-                materialization=materialization,
                 files=(
                     FileEntry(
                         uri="data/part-00000.parquet",
-                        size=len(data),
+                        size=size,
                         sha256=sha256,
                         content_type=_PARQUET_CONTENT_TYPE,
                         rows=row_count,

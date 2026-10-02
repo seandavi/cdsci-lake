@@ -15,6 +15,7 @@ import dataclasses
 import functools
 import hashlib
 import http.server
+import io
 import threading
 import time
 from pathlib import Path
@@ -35,7 +36,7 @@ from cdsci.lake.publish.release import ArtifactStatus
 from cdsci.lake.publish.verify import verify_release
 
 
-def _build_frozen(tmp_path: Path, release: str = "R1"):
+def _build_frozen(tmp_path: Path, release: str = "2026-01-01"):
     con = duckdb.connect()
     store = LocalDirStore(root=tmp_path)
     manifest = build_release(_candidate(release), _tables(con), store, contract=fx.DATASET_CONTRACT)
@@ -43,7 +44,7 @@ def _build_frozen(tmp_path: Path, release: str = "R1"):
     return store, frozen_manifest
 
 
-def _release_dir(tmp_path: Path, release: str = "R1") -> Path:
+def _release_dir(tmp_path: Path, release: str = "2026-01-01") -> Path:
     return tmp_path / "demo-catalog" / release
 
 
@@ -139,7 +140,9 @@ def test_verify_release_fails_on_tampered_parquet_with_frozen_ducklake_built(tmp
     data[-1] ^= 0xFF
     events_path.write_bytes(bytes(data))
 
-    report = verify_release(store, "demo-catalog", "R1", manifest, contract=fx.DATASET_CONTRACT)
+    report = verify_release(
+        store, "demo-catalog", "2026-01-01", manifest, contract=fx.DATASET_CONTRACT
+    )
     assert report.passed is False
     failing = [c.name for c in report.checks if not c.passed]
     assert any("demo.events" in name and "checksum" in name for name in failing)
@@ -147,7 +150,9 @@ def test_verify_release_fails_on_tampered_parquet_with_frozen_ducklake_built(tmp
 
 def test_verify_release_passes_frozen_ducklake_checks_on_a_clean_build(tmp_path: Path):
     store, manifest = _build_frozen(tmp_path)
-    report = verify_release(store, "demo-catalog", "R1", manifest, contract=fx.DATASET_CONTRACT)
+    report = verify_release(
+        store, "demo-catalog", "2026-01-01", manifest, contract=fx.DATASET_CONTRACT
+    )
     assert report.passed is True
     check_names = {c.name for c in report.checks}
     assert "required_artifacts_present" in check_names
@@ -166,7 +171,9 @@ def test_verify_release_fails_when_required_ducklake_artifact_is_missing(tmp_pat
     manifest = build_release(_candidate(), _tables(con), store, contract=fx.DATASET_CONTRACT)
     assert manifest.artifacts.keys() == {"parquet"}
 
-    report = verify_release(store, "demo-catalog", "R1", manifest, contract=fx.DATASET_CONTRACT)
+    report = verify_release(
+        store, "demo-catalog", "2026-01-01", manifest, contract=fx.DATASET_CONTRACT
+    )
     assert report.passed is False
     failing = [c.name for c in report.checks if not c.passed]
     assert "required_artifacts_present" in failing
@@ -247,7 +254,9 @@ def test_verify_release_ducklake_sample_query_fails_when_parquet_deleted(tmp_pat
     )
     events_path.unlink()
 
-    report = verify_release(store, "demo-catalog", "R1", manifest, contract=fx.DATASET_CONTRACT)
+    report = verify_release(
+        store, "demo-catalog", "2026-01-01", manifest, contract=fx.DATASET_CONTRACT
+    )
     assert report.passed is False
     failing = {c.name for c in report.checks if not c.passed}
     assert "demo.events.ducklake_sample_readable" in failing
@@ -287,7 +296,9 @@ def test_verify_release_reports_no_private_paths_and_single_snapshot_checks(tmp_
     """P1 #3/#7: the private-path scan and the single-snapshot collapse are both
     ``verify_release``-visible required checks, not just build-time side effects."""
     store, manifest = _build_frozen(tmp_path)
-    report = verify_release(store, "demo-catalog", "R1", manifest, contract=fx.DATASET_CONTRACT)
+    report = verify_release(
+        store, "demo-catalog", "2026-01-01", manifest, contract=fx.DATASET_CONTRACT
+    )
     by_name = {c.name: c for c in report.checks}
     assert by_name["ducklake.no_private_paths"].passed is True
     assert by_name["ducklake.no_private_paths"].required is True
@@ -318,7 +329,7 @@ def test_relativize_catalog_derives_relative_path_from_recorded_absolute_path(tm
     absolute path DuckLake recorded, not reconstructed as ``part-00000.parquet`` --
     proven with two registered files for one table (``build_frozen_ducklake`` itself
     only ever writes/registers one; this registers a second manually)."""
-    release_prefix = tmp_path / "demo-catalog" / "R1"
+    release_prefix = tmp_path / "demo-catalog" / "2026-01-01"
     data_dir = release_prefix / "tables" / "demo.events" / "data"
     data_dir.mkdir(parents=True)
     first = data_dir / "part-00000.parquet"
@@ -359,7 +370,9 @@ def test_verify_release_attach_failure_returns_failed_report_not_public_path_err
     catalog_path = _release_dir(tmp_path) / CATALOG_FILENAME
     catalog_path.write_bytes(b"not a valid duckdb database file")
 
-    report = verify_release(store, "demo-catalog", "R1", manifest, contract=fx.DATASET_CONTRACT)
+    report = verify_release(
+        store, "demo-catalog", "2026-01-01", manifest, contract=fx.DATASET_CONTRACT
+    )
     assert report.passed is False
     by_name = {c.name: c for c in report.checks}
     assert by_name["ducklake.attach_succeeds"].passed is False
@@ -373,7 +386,9 @@ def test_verify_release_checks_read_only_mutation_fails(tmp_path: Path):
     The non-read-only mutation path is deliberately not tested here since it would
     mutate this immutable release directory."""
     store, manifest = _build_frozen(tmp_path)
-    report = verify_release(store, "demo-catalog", "R1", manifest, contract=fx.DATASET_CONTRACT)
+    report = verify_release(
+        store, "demo-catalog", "2026-01-01", manifest, contract=fx.DATASET_CONTRACT
+    )
     by_name = {c.name: c for c in report.checks}
     assert by_name["ducklake.read_only_enforced"].passed is True
     assert by_name["ducklake.read_only_enforced"].required is True
@@ -386,7 +401,9 @@ def test_build_frozen_ducklake_stages_and_finalize_release_verifies_artifacts(tm
     assert manifest.artifacts["ducklake"].status == ArtifactStatus.STAGED
     assert manifest.artifacts["parquet"].status == ArtifactStatus.STAGED
 
-    report = verify_release(store, "demo-catalog", "R1", manifest, contract=fx.DATASET_CONTRACT)
+    report = verify_release(
+        store, "demo-catalog", "2026-01-01", manifest, contract=fx.DATASET_CONTRACT
+    )
     assert report.passed is True
     published = finalize_release(store, manifest, report, contract=fx.DATASET_CONTRACT)
     assert published.artifacts["ducklake"].status == ArtifactStatus.VERIFIED
@@ -404,8 +421,20 @@ class _UnsupportedStore:
     def put_if_absent(self, path, body: bytes, *, content_type: str) -> None:
         self._objects[str(path)] = body
 
+    def put_file_if_absent(self, path, src, *, content_type: str) -> None:
+        raise NotImplementedError
+
     def get(self, path) -> bytes:
         return self._objects[str(path)]
+
+    def open(self, path):
+        return io.BytesIO(self._objects[str(path)])
+
+    def replace(self, path, body: bytes, *, content_type: str) -> None:
+        raise NotImplementedError
+
+    def delete_tree(self, prefix) -> None:
+        raise NotImplementedError
 
 
 def test_verify_release_fails_closed_for_unsupported_store_with_ducklake_artifact(
@@ -443,7 +472,7 @@ def test_verify_release_fails_closed_for_unsupported_store_with_ducklake_artifac
     )
 
     report = verify_release(
-        fake_store, "demo-catalog", "R1", manifest, contract=fx.DATASET_CONTRACT
+        fake_store, "demo-catalog", "2026-01-01", manifest, contract=fx.DATASET_CONTRACT
     )
     by_name = {c.name: c for c in report.checks}
     assert "ducklake.acceptance_supported" in by_name

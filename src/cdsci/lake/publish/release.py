@@ -23,8 +23,8 @@ mapping keys (e.g. ``artifacts``). ``SourceAssetVersion.ref`` is the one
 exception: it is an internal-lake *asset identifier* (ADR-0014 Amendment
 2026-09-22's canonical dotted form, e.g. ``"lake.demo.events"``), not a
 resolvable public location, so it is validated by
-``cdsci.lake.contracts.check_lake_asset_ref`` instead of the path allowlist --
-only the dotted ``lake.<schema>.<table>`` grammar, no scheme, no credentials.
+``cdsci.lake.contracts.check_source_ref`` instead of the path allowlist --
+only the dotted ``<catalog>.<schema>.<table>`` grammar, no scheme, no credentials.
 ``ReleaseCandidate`` and ``PublicationReceipt`` are internal/staging types
 (design §3.2's "run state, watermarks, asset identity, publication
 receipts" is `lake_ops` territory) and may reference private staging
@@ -39,19 +39,48 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import date
 from enum import StrEnum
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from ..contracts import (
     DatasetContract,
-    Materialization,
     TableContract,
     TemporalModel,
-    check_lake_asset_ref,
+    check_source_ref,
 )
 
-SPEC_VERSION = "1.0"
+SPEC_VERSION = "2.0"
+
+# Release id: the UTC build date ``YYYY-MM-DD``; a second release on the same day is
+# ``YYYY-MM-DD.2``, then ``.3`` ... (``.1`` is never written -- the bare date is rank 1).
+_RELEASE_ID_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:\.([2-9]|[1-9]\d+))?$")
+
+
+def check_release_id(release: str) -> None:
+    """Raise ``ValueError`` unless ``release`` is ``YYYY-MM-DD`` or ``YYYY-MM-DD.N`` (N >= 2)."""
+    m = _RELEASE_ID_PATTERN.match(release)
+    if m is None:
+        raise ValueError(f"release id must be 'YYYY-MM-DD' or 'YYYY-MM-DD.N' (N>=2): {release!r}")
+    try:
+        date.fromisoformat(m.group(1))
+    except ValueError as exc:
+        raise ValueError(f"release id has an invalid calendar date: {release!r}") from exc
+
+
+def release_sort_key(release: str) -> tuple[str, int]:
+    """Ordering key for release ids -- the only ordering ever used (never raw strings:
+    ``"2026-02-02.10" < "2026-02-02.2"`` lexically)."""
+    check_release_id(release)
+    day, _, n = release.partition(".")
+    return (day, int(n) if n else 1)
+
+
+def release_date(release: str) -> str:
+    """The ``YYYY-MM-DD`` part of a release id."""
+    check_release_id(release)
+    return release.partition(".")[0]
 
 
 class PublicPathError(ValueError):
@@ -163,17 +192,17 @@ def _check_public_path(value: str, *, field_name: str) -> None:
         )
 
 
-def _check_lake_asset_ref(value: str, *, field_name: str) -> None:
-    """``SourceAssetVersion.ref`` is an internal-lake asset identifier, not a public location.
+def _check_source_ref(value: str, *, field_name: str) -> None:
+    """``SourceAssetVersion.ref`` is a source table identifier, not a public location.
 
-    Delegates to :func:`cdsci.lake.contracts.check_lake_asset_ref` (ADR-0014 Amendment
-    2026-09-22: the dotted ``lake.<schema>.<table>`` grammar) and re-raises as
+    Delegates to :func:`cdsci.lake.contracts.check_source_ref` (the dotted
+    ``<catalog>.<schema>.<table>`` grammar) and re-raises as
     :class:`PublicPathError`, the exception type this module's callers already expect.
     An empty ``ref`` is rejected here too -- ``SourceAssetVersion`` always names a real
-    lake table, so a missing ref is a construction error, not a value to skip.
+    source table, so a missing ref is a construction error, not a value to skip.
     """
     try:
-        check_lake_asset_ref(value, field_name=field_name)
+        check_source_ref(value, field_name=field_name)
     except ValueError as exc:
         raise PublicPathError(str(exc)) from exc
 
@@ -221,7 +250,7 @@ class SourceAssetVersion:
     version: str
 
     def __post_init__(self) -> None:
-        _check_lake_asset_ref(self.ref, field_name="SourceAssetVersion.ref")
+        _check_source_ref(self.ref, field_name="SourceAssetVersion.ref")
         _check_public_strings(self, exclude=frozenset({"ref"}))
 
     def to_dict(self) -> dict[str, Any]:
@@ -367,6 +396,7 @@ class ReleaseManifest:
     spec_version: str = SPEC_VERSION
 
     def __post_init__(self) -> None:
+        check_release_id(self.release)
         _check_public_strings(self)
         _check_no_secret_keys(self.artifacts, field_name="ReleaseManifest.artifacts")
 
@@ -375,6 +405,7 @@ class ReleaseManifest:
             "spec_version": self.spec_version,
             "dataset": self.dataset,
             "release": self.release,
+            "release_date": release_date(self.release),
             "status": self.status.value,
             "published_at": self.published_at,
             "run_id": self.run_id,
@@ -456,11 +487,11 @@ class FileEntry:
 class TableFileIndex:
     table: str
     release: str
-    materialization: Materialization
     files: tuple[FileEntry, ...]
     spec_version: str = SPEC_VERSION
 
     def __post_init__(self) -> None:
+        check_release_id(self.release)
         _check_public_strings(self)
 
     def to_dict(self) -> dict[str, Any]:
@@ -468,7 +499,6 @@ class TableFileIndex:
             "spec_version": self.spec_version,
             "table": self.table,
             "release": self.release,
-            "materialization": self.materialization.value,
             "files": [f.to_dict() for f in self.files],
         }
 
@@ -478,7 +508,6 @@ class TableFileIndex:
             spec_version=d["spec_version"],
             table=d["table"],
             release=d["release"],
-            materialization=Materialization(d["materialization"]),
             files=tuple(FileEntry.from_dict(f) for f in d["files"]),
         )
 
@@ -578,6 +607,9 @@ class ReleaseCandidate:
     source_asset_versions: tuple[SourceAssetVersion, ...] = ()
     acceptance: AcceptanceReport | None = None
     spec_version: str = SPEC_VERSION
+
+    def __post_init__(self) -> None:
+        check_release_id(self.release)
 
     def to_dict(self) -> dict[str, Any]:
         return {

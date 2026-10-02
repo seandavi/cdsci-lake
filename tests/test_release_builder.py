@@ -77,7 +77,7 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
         return io.BytesIO(chunk)
 
 
-def _candidate(release: str = "R1") -> ReleaseCandidate:
+def _candidate(release: str = "2026-01-01") -> ReleaseCandidate:
     return ReleaseCandidate(
         dataset="demo-catalog",
         release=release,
@@ -103,28 +103,28 @@ def _tables(con: duckdb.DuckDBPyConnection) -> dict[str, duckdb.DuckDBPyRelation
     )
     entities = con.sql(
         "SELECT * FROM (VALUES "
-        "('e1', 'alpha', 'writer_a', 'R1', NULL::VARCHAR), "
-        "('e2', 'beta', 'writer_a', 'R1', NULL::VARCHAR), "
-        "('w1', 'zed', 'writer_b', 'R0', NULL::VARCHAR) "
-        ") v(entity_id, label, source, valid_from, valid_to)"
+        "('e1', 'alpha', 'writer_a'), "
+        "('e2', 'beta', 'writer_a'), "
+        "('w1', 'zed', 'writer_b') "
+        ") v(entity_id, label, source)"
     )
     return {"demo.events": events, "demo.entities": entities}
 
 
-def _events_parquet_path(dataset_root: Path, release: str = "R1") -> Path:
+def _events_parquet_path(dataset_root: Path, release: str = "2026-01-01") -> Path:
     return (
         dataset_root / "demo-catalog" / release / "tables" / "demo.events" / "data"
         / "part-00000.parquet"
     )
 
 
-def _schema_path(dataset_root: Path, table: str, release: str = "R1") -> Path:
+def _schema_path(dataset_root: Path, table: str, release: str = "2026-01-01") -> Path:
     return dataset_root / "demo-catalog" / release / "tables" / table / "schema.json"
 
 
 def _built_and_finalized(con: duckdb.DuckDBPyConnection, store: LocalDirStore):
     manifest = build_release(_candidate(), _tables(con), store, contract=fx.DATASET_CONTRACT)
-    report = verify_release(store, "demo-catalog", "R1", manifest=manifest)
+    report = verify_release(store, "demo-catalog", "2026-01-01", manifest=manifest)
     finalize_release(store, manifest, report, contract=_PARQUET_ONLY_CONTRACT)
     return manifest
 
@@ -142,7 +142,7 @@ def test_build_release_is_byte_identical_across_repeat_builds(tmp_path: Path):
 
     assert manifest1 == manifest2
     assert first == second
-    assert manifest1.dataset == "demo-catalog" and manifest1.release == "R1"
+    assert manifest1.dataset == "demo-catalog" and manifest1.release == "2026-01-01"
     assert {t.name for t in manifest1.tables} == {"demo.events", "demo.entities"}
 
 
@@ -181,8 +181,10 @@ def test_build_release_sort_by_ties_broken_by_primary_key_deterministically(tmp_
         tables={"demo.ties": table},
     )
     candidate = ReleaseCandidate(
-        dataset="ties-catalog", release="R1", run_id=RUN_ID, built_at="2026-09-22T00:00:00Z",
-        destination="local://ties-catalog/R1", tables=("demo.ties",), status=ArtifactStatus.STAGED,
+        dataset="ties-catalog", release="2026-01-01", run_id=RUN_ID,
+        built_at="2026-09-22T00:00:00Z",
+        destination="local://ties-catalog/2026-01-01", tables=("demo.ties",),
+        status=ArtifactStatus.STAGED,
     )
     con = duckdb.connect()
     forward = con.sql("SELECT * FROM (VALUES ('x', '1'), ('x', '2'), ('x', '3')) v(a, id)")
@@ -193,9 +195,9 @@ def test_build_release_sort_by_ties_broken_by_primary_key_deterministically(tmp_
     store2 = LocalDirStore(root=tmp_path / "store2")
     build_release(candidate, {"demo.ties": backward}, store2, contract=contract)
 
-    data1 = (tmp_path / "store1" / "ties-catalog" / "R1" / "tables" / "demo.ties" / "data"
+    data1 = (tmp_path / "store1" / "ties-catalog" / "2026-01-01" / "tables" / "demo.ties" / "data"
               / "part-00000.parquet").read_bytes()
-    data2 = (tmp_path / "store2" / "ties-catalog" / "R1" / "tables" / "demo.ties" / "data"
+    data2 = (tmp_path / "store2" / "ties-catalog" / "2026-01-01" / "tables" / "demo.ties" / "data"
               / "part-00000.parquet").read_bytes()
     assert data1 == data2
 
@@ -225,12 +227,12 @@ def test_verify_release_passes_on_a_clean_build(tmp_path: Path):
     store = LocalDirStore(root=tmp_path)
     manifest = build_release(_candidate(), _tables(con), store, contract=fx.DATASET_CONTRACT)
 
-    report = verify_release(store, "demo-catalog", "R1", manifest=manifest)
+    report = verify_release(store, "demo-catalog", "2026-01-01", manifest=manifest)
     assert report.passed is True
     assert report.run_id == RUN_ID
 
     finalize_release(store, manifest, report, contract=_PARQUET_ONLY_CONTRACT)
-    reloaded_report = verify_release(store, "demo-catalog", "R1")  # cold reload from store
+    reloaded_report = verify_release(store, "demo-catalog", "2026-01-01")  # cold reload from store
     assert reloaded_report.passed is True
 
 
@@ -244,7 +246,7 @@ def test_verify_release_fails_on_corrupted_file(tmp_path: Path):
     data[-1] ^= 0xFF  # flip the last byte -- corrupts content without changing size
     events_path.write_bytes(bytes(data))
 
-    report = verify_release(store, "demo-catalog", "R1")
+    report = verify_release(store, "demo-catalog", "2026-01-01")
     assert report.passed is False
     failing = [c.name for c in report.checks if not c.passed]
     assert any("demo.events" in name and "checksum" in name for name in failing)
@@ -257,7 +259,7 @@ def test_verify_release_fails_on_rewritten_schema_json(tmp_path: Path):
 
     _schema_path(tmp_path, "demo.events").write_text('{"tampered": true}')
 
-    report = verify_release(store, "demo-catalog", "R1")
+    report = verify_release(store, "demo-catalog", "2026-01-01")
     assert report.passed is False
     failing = [c.name for c in report.checks if not c.passed]
     assert any(name == "demo.events.schema_digest_matches" for name in failing)
@@ -270,7 +272,7 @@ def test_verify_release_fails_on_deleted_schema_json(tmp_path: Path):
 
     _schema_path(tmp_path, "demo.events").unlink()
 
-    report = verify_release(store, "demo-catalog", "R1")
+    report = verify_release(store, "demo-catalog", "2026-01-01")
     assert report.passed is False
     failing = [c.name for c in report.checks if not c.passed]
     assert any(name == "demo.events.schema_readable" for name in failing)
@@ -281,9 +283,9 @@ def test_verify_release_fails_on_deleted_provenance(tmp_path: Path):
     store = LocalDirStore(root=tmp_path)
     _built_and_finalized(con, store)
 
-    (tmp_path / "demo-catalog" / "R1" / "provenance.json").unlink()
+    (tmp_path / "demo-catalog" / "2026-01-01" / "provenance.json").unlink()
 
-    report = verify_release(store, "demo-catalog", "R1")
+    report = verify_release(store, "demo-catalog", "2026-01-01")
     assert report.passed is False
     failing = [c.name for c in report.checks if not c.passed]
     assert "provenance_readable" in failing
@@ -298,7 +300,7 @@ def test_verify_release_fails_on_tampered_row_count(tmp_path: Path):
         tables=(dataclasses.replace(manifest.tables[0], row_count=999_999), *manifest.tables[1:]),
     )
 
-    report = verify_release(store, "demo-catalog", "R1", manifest=tampered)
+    report = verify_release(store, "demo-catalog", "2026-01-01", manifest=tampered)
     assert report.passed is False
     failing = [c.name for c in report.checks if not c.passed]
     assert any("row_count_matches" in name for name in failing)
@@ -310,7 +312,7 @@ def test_verify_release_fails_on_empty_manifest_tables(tmp_path: Path):
     manifest = build_release(_candidate(), _tables(con), store, contract=fx.DATASET_CONTRACT)
     tampered = dataclasses.replace(manifest, tables=())
 
-    report = verify_release(store, "demo-catalog", "R1", manifest=tampered)
+    report = verify_release(store, "demo-catalog", "2026-01-01", manifest=tampered)
     assert report.passed is False
     failing = [c.name for c in report.checks if not c.passed]
     assert "tables_nonempty" in failing
@@ -323,10 +325,12 @@ def test_verify_release_fails_when_a_different_releases_manifest_is_served_under
     R1's prefix) must fail verification against R1, not silently pass as R1."""
     con = duckdb.connect()
     store = LocalDirStore(root=tmp_path)
-    build_release(_candidate("R1"), _tables(con), store, contract=fx.DATASET_CONTRACT)
-    r2_manifest = build_release(_candidate("R2"), _tables(con), store, contract=fx.DATASET_CONTRACT)
+    build_release(_candidate("2026-01-01"), _tables(con), store, contract=fx.DATASET_CONTRACT)
+    r2_manifest = build_release(
+        _candidate("2026-01-02"), _tables(con), store, contract=fx.DATASET_CONTRACT
+    )
 
-    report = verify_release(store, "demo-catalog", "R1", manifest=r2_manifest)
+    report = verify_release(store, "demo-catalog", "2026-01-01", manifest=r2_manifest)
     assert report.passed is False
     failing = [c.name for c in report.checks if not c.passed]
     assert "manifest_identity_matches_request" in failing
@@ -344,7 +348,7 @@ def test_local_http_acceptance_head_get_range_and_duckdb_read_parquet(tmp_path: 
     thread.start()
     time.sleep(0.1)
     try:
-        base = f"http://127.0.0.1:{port}/demo-catalog/R1/tables/demo.events/data/part-00000.parquet"
+        base = f"http://127.0.0.1:{port}/demo-catalog/2026-01-01/tables/demo.events/data/part-00000.parquet"
 
         head = httpx.head(base)
         assert head.status_code == 200
@@ -371,7 +375,7 @@ def test_record_release_writes_receipt_and_publishes_lineage(tmp_path: Path):
     store = LocalDirStore(root=tmp_path / "store")
     candidate = _candidate()
     manifest = build_release(candidate, _tables(con_build), store, contract=fx.DATASET_CONTRACT)
-    report = verify_release(store, "demo-catalog", "R1", manifest=manifest)
+    report = verify_release(store, "demo-catalog", "2026-01-01", manifest=manifest)
     assert report.passed is True
     published = finalize_release(store, manifest, report, contract=_PARQUET_ONLY_CONTRACT)
     assert published.status == ArtifactStatus.PUBLISHED
@@ -381,16 +385,16 @@ def test_record_release_writes_receipt_and_publishes_lineage(tmp_path: Path):
     try:
         receipt = record_release(con, published, report)
         assert receipt.status == ArtifactStatus.PUBLISHED
-        assert receipt.dataset == "demo-catalog" and receipt.release == "R1"
+        assert receipt.dataset == "demo-catalog" and receipt.release == "2026-01-01"
 
-        got = ops.publication_receipts(con, "R1")
+        got = ops.publication_receipts(con, "2026-01-01")
         assert got == [receipt]
 
         assets = {a["ref"]: a for a in ops.list_assets(con)}
-        assert "release.demo-catalog.R1" in assets
-        assert assets["release.demo-catalog.R1"]["asset_type"] == "release"
+        assert "release.demo-catalog.2026-01-01" in assets
+        assert assets["release.demo-catalog.2026-01-01"]["asset_type"] == "release"
 
-        upstream = ops.lineage_for(con, "release.demo-catalog.R1", direction="upstream")
+        upstream = ops.lineage_for(con, "release.demo-catalog.2026-01-01", direction="upstream")
         assert {e["src_ref"] for e in upstream} == {"lake.demo.events", "lake.demo.entities"}
         assert all(e["edge_type"] == "publishes" for e in upstream)
     finally:
@@ -404,13 +408,13 @@ def test_finalize_release_raises_and_writes_nothing_on_a_failed_report(tmp_path:
     store = LocalDirStore(root=tmp_path)
     manifest = build_release(_candidate(), _tables(con), store, contract=fx.DATASET_CONTRACT)
     failing_report = verify_release(
-        store, "demo-catalog", "R1", manifest=dataclasses.replace(manifest, tables=())
+        store, "demo-catalog", "2026-01-01", manifest=dataclasses.replace(manifest, tables=())
     )
     assert failing_report.passed is False
 
     with pytest.raises(ValueError, match="acceptance failed"):
         finalize_release(store, manifest, failing_report, contract=_PARQUET_ONLY_CONTRACT)
-    assert not (tmp_path / "demo-catalog" / "R1" / "manifest.json").exists()
+    assert not (tmp_path / "demo-catalog" / "2026-01-01" / "manifest.json").exists()
 
 
 def test_finalize_release_refuses_missing_required_artifact_even_if_report_passed(
@@ -426,9 +430,9 @@ def test_finalize_release_refuses_missing_required_artifact_even_if_report_passe
     manifest = build_release(_candidate(), _tables(con), store, contract=fx.DATASET_CONTRACT)
     assert manifest.artifacts.keys() == {"parquet"}
 
-    report = verify_release(store, "demo-catalog", "R1", manifest=manifest)  # no contract=
+    report = verify_release(store, "demo-catalog", "2026-01-01", manifest=manifest)  # no contract=
     assert report.passed is True
 
     with pytest.raises(RequiredArtifactMissingError):
         finalize_release(store, manifest, report, contract=fx.DATASET_CONTRACT)
-    assert not (tmp_path / "demo-catalog" / "R1" / "manifest.json").exists()
+    assert not (tmp_path / "demo-catalog" / "2026-01-01" / "manifest.json").exists()

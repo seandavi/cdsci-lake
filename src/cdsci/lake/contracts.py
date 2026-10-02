@@ -25,14 +25,12 @@ if TYPE_CHECKING:
     import pyarrow as pa
 
 
-# Dotted internal lake ref grammar (ADR-0014 Amendment 2026-09-22): lowercase
-# identifiers, no scheme, no credentials -- e.g. "lake.demo.events". Anchors the
-# leading segment to "lake" and pins exactly three dotted segments
-# ("lake.<schema>.<table>", no deeper) so a release-asset ref
-# ("release.<dataset>.<release>", which may carry uppercase/hyphenated
-# producer-chosen ids) is deliberately NOT matched here -- that ref form goes
-# through the looser :func:`check_asset_ref`.
-_LAKE_REF_PATTERN = re.compile(r"^lake(\.[a-z][a-z0-9_]*){2}$")
+# Dotted source ref grammar: "<catalog>.<schema>.<table>", lowercase identifiers, no
+# scheme, no credentials -- e.g. "lake.demo.events" or "canceronice.measure.observation".
+# Exactly three dotted segments; a release-asset ref ("release.<dataset>.<release>",
+# which may carry uppercase/hyphenated producer-chosen ids) is deliberately NOT matched
+# here -- that ref form goes through the looser :func:`check_asset_ref`.
+_SOURCE_REF_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){2}$")
 
 _CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
 _CREDENTIAL_WORD_PATTERN = re.compile(r"password|secret|token|credential", re.IGNORECASE)
@@ -49,7 +47,7 @@ def check_asset_ref(ref: str) -> None:
     ``urlsplit().netloc``; and no case-insensitive password/secret/token/credential
     substring). Shared by :mod:`cdsci.lake.ops` (any asset type) and
     :mod:`cdsci.lake.publish.release` (layered under the stricter
-    :func:`check_lake_asset_ref`).
+    :func:`check_source_ref`).
     """
     if not ref or ref != ref.strip():
         raise ValueError(f"invalid asset ref: {ref!r}")
@@ -61,21 +59,20 @@ def check_asset_ref(ref: str) -> None:
         raise ValueError(f"asset ref must not embed credentials: {ref!r}")
 
 
-def check_lake_asset_ref(ref: str, *, field_name: str = "ref") -> None:
-    """Validate the canonical internal lake asset ref grammar (ADR-0014 Amendment 2026-09-22).
+def check_source_ref(ref: str, *, field_name: str = "ref") -> None:
+    """Validate the dotted source ref grammar ``<catalog>.<schema>.<table>``.
 
-    ``lake.<schema>.<table>`` only -- lowercase dotted identifiers, no scheme, no
-    credentials. Layered on top of :func:`check_asset_ref`'s baseline safety check.
-    A :class:`~cdsci.lake.publish.release.SourceAssetVersion` always names an
-    internal lake table, so it is validated against this stricter grammar rather
-    than the permissive one ``ops.register_asset`` uses for other asset types.
+    ``lake`` is the shared internal DuckLake; any other first segment names a
+    product-local catalog (e.g. ``canceronice.measure.observation``). Lowercase
+    dotted identifiers, no scheme, no credentials. Layered on top of
+    :func:`check_asset_ref`'s baseline safety check.
     """
     check_asset_ref(ref)
     if "://" in ref:
-        raise ValueError(f"{field_name}: lake asset ref must not carry a scheme: {ref!r}")
-    if not _LAKE_REF_PATTERN.match(ref):
+        raise ValueError(f"{field_name}: source ref must not carry a scheme: {ref!r}")
+    if not _SOURCE_REF_PATTERN.match(ref):
         raise ValueError(
-            f"{field_name}: lake asset ref must be the dotted form 'lake.<schema>.<table>' "
+            f"{field_name}: source ref must be the dotted form '<catalog>.<schema>.<table>' "
             f"(lowercase identifiers only): {ref!r}"
         )
 
@@ -88,16 +85,61 @@ class TemporalModel(StrEnum):
 
     APPEND_IMMUTABLE = "append_immutable"
     UPSERT_LATEST_SNAPSHOT = "upsert_latest_snapshot"
-    SCD2_RELEASE = "scd2_release"
-    SCD2_BITEMPORAL = "scd2_bitemporal"
 
 
-class Materialization(StrEnum):
-    """How a table's published files relate to release history (design §5.3)."""
+_PRIMITIVE_TYPES = frozenset(
+    {
+        "string", "bool", "int8", "int16", "int32", "int64", "uint8", "uint16",
+        "uint32", "uint64", "float", "double", "date32", "binary",
+    }
+)
+_FIELD_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*$")
 
-    HISTORY = "history"
-    RELEASE_SNAPSHOT = "release_snapshot"
-    APPEND_IMMUTABLE = "append_immutable"
+
+def _top_level_split(body: str, sep: str) -> list[str]:
+    """Split ``body`` on ``sep`` only where bracket depth (``<>`` and ``[]``) is zero."""
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(body):
+        if ch in "<[":
+            depth += 1
+        elif ch in ">]":
+            depth -= 1
+        elif ch == sep and depth == 0:
+            parts.append(body[start:i])
+            start = i + 1
+    parts.append(body[start:])
+    return parts
+
+
+def _split_canonical(canonical: str) -> tuple[str, tuple]:
+    """Parse one canonical Arrow type string one level deep.
+
+    Returns ``("primitive", (name,))``, ``("list", (inner,))`` or
+    ``("struct", ((fname, ftype), ...))``; nested types stay as canonical strings so
+    consumers recurse. Struct bodies split only on top-level commas.
+    """
+    text = canonical.strip()
+    if text in _PRIMITIVE_TYPES or (text.startswith("timestamp[") and text.endswith("]")):
+        return "primitive", (text,)
+    if text.startswith("list<") and text.endswith(">"):
+        inner = text[len("list<") : -1].strip()
+        if not inner:
+            raise ValueError(f"unsupported canonical arrow type string: {canonical!r}")
+        return "list", (inner,)
+    if text.startswith("struct<") and text.endswith(">"):
+        body = text[len("struct<") : -1]
+        fields: list[tuple[str, str]] = []
+        for part in _top_level_split(body, ","):
+            fname, colon, ftype = part.partition(":")
+            fname = fname.strip()
+            ftype = ftype.strip()
+            if not colon or not ftype or not _FIELD_NAME_PATTERN.match(fname):
+                raise ValueError(f"unsupported canonical arrow type string: {canonical!r}")
+            fields.append((fname, ftype))
+        return "struct", tuple(fields)
+    raise ValueError(f"unsupported canonical arrow type string: {canonical!r}")
 
 
 def _parse_arrow_type(canonical: str) -> pa.DataType:
@@ -120,15 +162,19 @@ def _parse_arrow_type(canonical: str) -> pa.DataType:
         "date32": pa.date32(),
         "binary": pa.binary(),
     }
-    if canonical in simple:
-        return simple[canonical]
-    if canonical.startswith("timestamp[") and canonical.endswith("]"):
-        body = canonical[len("timestamp[") : -1]
-        unit, _, tz_part = body.partition(",")
-        unit = unit.strip()
-        tz = tz_part.split("=", 1)[1].strip() if "=" in tz_part else (tz_part.strip() or None)
-        return pa.timestamp(unit, tz=tz)
-    raise ValueError(f"unsupported canonical arrow type string: {canonical!r}")
+    kind, args = _split_canonical(canonical)
+    if kind == "list":
+        return pa.list_(_parse_arrow_type(args[0]))
+    if kind == "struct":
+        return pa.struct([pa.field(n, _parse_arrow_type(t)) for n, t in args])
+    text = args[0]
+    if text in simple:
+        return simple[text]
+    body = text[len("timestamp[") : -1]
+    unit, _, tz_part = body.partition(",")
+    unit = unit.strip()
+    tz = tz_part.split("=", 1)[1].strip() if "=" in tz_part else (tz_part.strip() or None)
+    return pa.timestamp(unit, tz=tz)
 
 
 @dataclass(frozen=True)
@@ -258,3 +304,8 @@ class DatasetContract:
     publisher: str
     tables: Mapping[str, TableContract]
     required_artifacts: frozenset[str] = frozenset({"parquet", "ducklake"})
+    keep_last: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.keep_last is not None and self.keep_last < 1:
+            raise ValueError(f"{self.id}: keep_last must be >= 1 or None, got {self.keep_last}")

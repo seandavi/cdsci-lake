@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from fixtures.contracts import dataset as fx
 
-from cdsci.lake.contracts import Materialization, TemporalModel
+from cdsci.lake.contracts import TemporalModel
 from cdsci.lake.publish.release import (
     AcceptanceCheck,
     AcceptanceReport,
@@ -59,7 +59,7 @@ def _build_manifest_from_contract() -> ReleaseManifest:
     )
     return ReleaseManifest(
         dataset="demo-catalog",
-        release="R1",
+        release="2026-01-01",
         status=ArtifactStatus.PUBLISHED,
         run_id="01927c9e-0000-7000-8000-000000000001",
         tables=(events_table, entities_table),
@@ -93,7 +93,7 @@ def test_producer_manifest_round_trips_through_json():
 def test_duckdock_validator_loads_golden_manifest_cold():
     """No producer code involved -- just JSON parsing + this module's validator."""
     manifest = ReleaseManifest.from_json(GOLDEN_MANIFEST_PATH.read_text())
-    assert manifest.spec_version == "1.0"
+    assert manifest.spec_version == "2.0"
     assert manifest.dataset == "demo-catalog"
     for table in manifest.tables:
         assert isinstance(table.temporal_model, TemporalModel)
@@ -232,7 +232,7 @@ def test_manifest_rejects_secret_shaped_artifact_key():
     with pytest.raises(PublicPathError, match="secret-shaped key"):
         ReleaseManifest(
             dataset="d",
-            release="R1",
+            release="2026-01-01",
             status=ArtifactStatus.STAGED,
             run_id="r1",
             tables=(),
@@ -298,7 +298,7 @@ def test_secret_key_denylist_covers_key_credential_auth_apikey():
         with pytest.raises(PublicPathError, match="secret-shaped key"):
             ReleaseManifest(
                 dataset="d",
-                release="R1",
+                release="2026-01-01",
                 status=ArtifactStatus.STAGED,
                 run_id="r1",
                 tables=(),
@@ -309,7 +309,7 @@ def test_secret_key_denylist_covers_key_credential_auth_apikey():
 def test_check_required_artifacts_rejects_missing_artifact():
     manifest = ReleaseManifest(
         dataset="demo-catalog",
-        release="R1",
+        release="2026-01-01",
         status=ArtifactStatus.PUBLISHED,
         run_id="r1",
         tables=(),
@@ -327,8 +327,7 @@ def test_check_required_artifacts_passes_for_golden_manifest():
 def test_file_index_round_trips():
     idx = TableFileIndex(
         table="demo.entities",
-        release="R1",
-        materialization=Materialization.RELEASE_SNAPSHOT,
+        release="2026-01-01",
         files=(
             FileEntry(
                 uri="data/part-00000.parquet",
@@ -345,7 +344,7 @@ def test_file_index_round_trips():
 def test_acceptance_report_required_check_gates_promotion():
     report = AcceptanceReport(
         dataset="demo-catalog",
-        release="R1",
+        release="2026-01-01",
         run_id="r1",
         checked_at="2026-09-22T00:00:00Z",
         checks=(
@@ -356,7 +355,7 @@ def test_acceptance_report_required_check_gates_promotion():
     assert report.passed is True
     failed = AcceptanceReport(
         dataset="demo-catalog",
-        release="R1",
+        release="2026-01-01",
         run_id="r1",
         checked_at="2026-09-22T00:00:00Z",
         checks=(AcceptanceCheck("manifest_schema_valid", passed=False, required=True),),
@@ -369,10 +368,10 @@ def test_release_candidate_and_publication_receipt_may_reference_private_locatio
     """Internal types (design §6.3/§6.6) -- unlike public manifest/file-index/acceptance types."""
     candidate = ReleaseCandidate(
         dataset="demo-catalog",
-        release="R1",
+        release="2026-01-01",
         run_id="r1",
         built_at="2026-09-22T00:00:00Z",
-        destination="s3://internal-staging-bucket/demo-catalog/R1/",
+        destination="s3://internal-staging-bucket/demo-catalog/2026-01-01/",
         tables=("demo.events", "demo.entities"),
         status=ArtifactStatus.STAGED,
     )
@@ -380,9 +379,9 @@ def test_release_candidate_and_publication_receipt_may_reference_private_locatio
 
     receipt = PublicationReceipt(
         dataset="demo-catalog",
-        release="R1",
+        release="2026-01-01",
         format="parquet",
-        destination="s3://internal-staging-bucket/demo-catalog/R1/",
+        destination="s3://internal-staging-bucket/demo-catalog/2026-01-01/",
         schema_digest="sha256:x",
         run_id="r1",
         status=ArtifactStatus.PUBLISHED,

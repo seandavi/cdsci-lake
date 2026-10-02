@@ -34,7 +34,7 @@ _CLEAN_TABLE = TableContract(
     description="A deliberately lint-clean table for lint_contract's own tests.",
     grain="one row per record_id and validity interval",
     primary_key=("record_id", "valid_from"),
-    temporal_model=TemporalModel.SCD2_RELEASE,
+    temporal_model=TemporalModel.UPSERT_LATEST_SNAPSHOT,
     owner="cdsci-lake",
     license="cc0",
     columns=(
@@ -168,35 +168,12 @@ def test_lint_contract_flags_nullable_column_with_no_null_meaning():
     assert lint_contract(table) == ["clean.table.value: nullable column has no null_meaning"]
 
 
-def test_lint_contract_flags_scd2_table_missing_valid_from_valid_to():
-    table = dataclasses.replace(
-        _CLEAN_TABLE,
-        primary_key=("record_id",),
-        columns=_CLEAN_TABLE.columns[:3],
-    )
-    assert lint_contract(table) == [
-        "clean.table: temporal_model scd2_release requires valid_from/valid_to columns"
-    ]
-
-
 def test_render_table_and_dataset_markdown_contain_no_absolute_path_or_secret():
     for rendered in (
         render_table_markdown(fx.EVENTS_TABLE),
         render_dataset_markdown(fx.DATASET_CONTRACT),
     ):
         assert _UNSAFE_PATTERN.search(rendered) is None
-
-
-def test_dataset_contract_can_construct_without_scd2_valid_columns_and_lint_still_flags_it():
-    """The invariant lint_contract surfaces for a hand-broken SCD2 table isn't
-    rejected by TableContract construction itself (unlike sort_by/primary_key,
-    valid_from/valid_to are not structurally required by __post_init__)."""
-    table = TableContract(
-        name="broken.table", description="d", grain="g", primary_key=("id",),
-        temporal_model=TemporalModel.SCD2_RELEASE, owner="o", license="l",
-        columns=(ColumnContract("id", "string", "the id", nullable=False),),
-    )
-    assert "valid_from/valid_to" in lint_contract(table)[0]
 
 
 def test_dataset_contract_render_dataset_json_survives_a_second_table():
