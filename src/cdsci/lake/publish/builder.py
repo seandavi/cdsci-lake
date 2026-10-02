@@ -147,7 +147,13 @@ class LocalDirStore:
     root: Path
 
     def _abs(self, path: PurePosixPath) -> Path:
-        return self.root / Path(*path.parts)
+        """Resolve ``path`` under ``root``; reject anything that escapes it (absolute
+        paths, ``..`` segments, symlinks out of the tree) or names ``root`` itself."""
+        dest = (self.root / Path(*path.parts)).resolve()
+        root = self.root.resolve()
+        if dest == root or not dest.is_relative_to(root):
+            raise ValueError(f"store path escapes the store root: {str(path)!r}")
+        return dest
 
     def put_if_absent(self, path: PurePosixPath, body: bytes, *, content_type: str) -> None:
         dest = self._abs(path)

@@ -29,18 +29,38 @@ def publish_release(
     """Build, verify, finalize, index and prune one full-snapshot release of ``contract``.
 
     The release id is the UTC build date (``YYYY-MM-DD``, ``.N`` for a later release the
-    same day). If a directory for that id already exists it is necessarily an unpromoted
-    leftover of a failed run (promoted ids are in the index), so it is deleted and the id
-    reused. This assumes a **single writer per dataset store**: concurrent publishers of
-    one dataset would race on the id and the index.
+    same day). If a directory for the chosen id already exists without a
+    ``manifest.json`` it is an incomplete leftover of a failed run, so it is deleted and the
+    id reused. With a ``manifest.json`` it is a published release whose promotion failed
+    afterwards; it is promoted into the index and the next id is used. This assumes a
+    **single writer per dataset store**: concurrent publishers of one dataset would race
+    on the id and the index.
 
     A release that fails acceptance raises out of :func:`finalize_release`: no
     ``manifest.json`` is written and the index is left untouched. ``con``, when given, is
     a lake connection that receives the ``lake_ops`` publication receipt.
     """
-    index = load_index(store, contract.id)
-    release = next_release_id(index, today or datetime.now(UTC).date())
-    store.delete_tree(PurePosixPath(contract.id) / release)
+    if set(tables) != set(contract.tables):
+        missing = sorted(set(contract.tables) - set(tables))
+        unexpected = sorted(set(tables) - set(contract.tables))
+        raise ValueError(
+            f"{contract.id}: tables must be exactly the contract's tables "
+            f"(missing: {missing}, unexpected: {unexpected})"
+        )
+
+    build_day = today or datetime.now(UTC).date()
+    while True:
+        index = load_index(store, contract.id)
+        release = next_release_id(index, build_day)
+        leftover = PurePosixPath(contract.id) / release
+        try:
+            raw = store.get(leftover / "manifest.json")
+        except FileNotFoundError:
+            store.delete_tree(leftover)  # incomplete staging output of a failed run
+            break
+        # A manifest.json means finalize_release already published this id and a later
+        # step (receipt or promotion) failed: finish its promotion instead of deleting it.
+        promote_release(store, ReleaseManifest.from_json(raw.decode()))
 
     candidate = ReleaseCandidate(
         dataset=contract.id,

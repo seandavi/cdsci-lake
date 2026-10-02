@@ -263,3 +263,28 @@ def test_local_store_replace_delete_tree_open_and_put_file(tmp_path: Path):
     with pytest.raises(FileExistsError):
         store.put_file_if_absent(dest, other, content_type="x")
     assert store.get(dest) == b"data"
+
+
+@pytest.mark.parametrize("bad", ["../escape", "/abs/path", "a/../../escape", "."])
+def test_local_store_rejects_paths_outside_root(tmp_path: Path, bad: str):
+    store = LocalDirStore(tmp_path / "root")
+    (tmp_path / "root").mkdir()
+    victim = tmp_path / "escape"
+    victim.mkdir()
+    with pytest.raises(ValueError, match="escapes"):
+        store.delete_tree(PurePosixPath(bad))
+    with pytest.raises(ValueError, match="escapes"):
+        store.put_if_absent(PurePosixPath(bad), b"x", content_type="x")
+    assert victim.exists()
+
+
+def test_acceptance_report_and_receipt_validate_release_id():
+    from cdsci.lake.publish.release import AcceptanceReport, PublicationReceipt
+
+    with pytest.raises(ValueError):
+        AcceptanceReport(dataset=DATASET, release="R1", run_id="r", checked_at="t", checks=())
+    with pytest.raises(ValueError):
+        PublicationReceipt(
+            dataset=DATASET, release="R1", format="parquet", destination="d",
+            schema_digest="s", run_id="r", status=ArtifactStatus.PUBLISHED,
+        )

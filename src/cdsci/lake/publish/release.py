@@ -554,6 +554,7 @@ class AcceptanceReport:
     spec_version: str = SPEC_VERSION
 
     def __post_init__(self) -> None:
+        check_release_id(self.release)
         _check_public_strings(self)
 
     @property
@@ -669,6 +670,9 @@ class PublicationReceipt:
     version: str | None = None
     details: Mapping[str, Any] = field(default_factory=dict)
     spec_version: str = SPEC_VERSION
+
+    def __post_init__(self) -> None:
+        check_release_id(self.release)
 
     def to_dict(self) -> dict[str, Any]:
         return {

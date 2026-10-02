@@ -205,3 +205,41 @@ def test_wrong_inner_type_fails_build_release(tmp_path: Path):
             source_asset_versions=(), run_id="r", today=TODAY,
         )
     assert not (tmp_path / "nested-catalog" / "releases.json").exists()
+
+
+def test_publish_release_rejects_missing_or_unexpected_tables(tmp_path: Path):
+    store = LocalDirStore(tmp_path)
+    con = duckdb.connect()
+    partial = {"demo.events": _tables(con)["demo.events"]}
+    with pytest.raises(ValueError, match=r"missing: \['demo.entities'\]"):
+        _publish(store, partial)
+    extra = {**_tables(con), "demo.other": con.sql("SELECT 1 AS x")}
+    with pytest.raises(ValueError, match=r"unexpected: \['demo.other'\]"):
+        _publish(store, extra)
+    assert not (tmp_path / DATASET).exists()
+
+
+def test_publish_release_finishes_promotion_of_published_unindexed_release(
+    tmp_path: Path, monkeypatch
+):
+    from cdsci.lake.publish import pipeline
+
+    store = LocalDirStore(tmp_path)
+    con = duckdb.connect()
+    real_promote = pipeline.promote_release
+    monkeypatch.setattr(
+        pipeline, "promote_release", lambda *a, **k: (_ for _ in ()).throw(OSError("boom"))
+    )
+    with pytest.raises(OSError, match="boom"):
+        _publish(store, _tables(con))
+    # published (manifest.json written) but never indexed
+    assert (tmp_path / DATASET / "2026-10-02" / "manifest.json").exists()
+    assert not (tmp_path / DATASET / "releases.json").exists()
+
+    monkeypatch.setattr(pipeline, "promote_release", real_promote)
+    manifest = _publish(store, _tables(con))
+    assert manifest.release == "2026-10-02.2"  # the published id was preserved, not rebuilt
+    assert [r.release for r in load_index(store, DATASET).releases] == [
+        "2026-10-02", "2026-10-02.2",
+    ]
+    assert verify_release(store, DATASET, "2026-10-02", contract=fx.DATASET_CONTRACT).passed

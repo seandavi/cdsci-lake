@@ -426,28 +426,28 @@ def test_record_publication_receipt_round_trips_and_is_idempotent(lake_settings:
     con = lake_connect(lake_settings)
     try:
         receipt = PublicationReceipt(
-            dataset="demo-catalog", release="R1", format="parquet",
-            destination="demo-catalog/R1", schema_digest="sha256:abc", run_id="r1",
+            dataset="demo-catalog", release="2026-01-01", format="parquet",
+            destination="demo-catalog/2026-01-01", schema_digest="sha256:abc", run_id="r1",
             status=ArtifactStatus.PUBLISHED, row_counts={"demo.events": 3},
         )
         receipt_id = ops.record_publication_receipt(con, receipt)
         assert receipt_id
 
-        got = ops.publication_receipts(con, "R1")
+        got = ops.publication_receipts(con, "2026-01-01")
         assert got == [receipt]
         assert con.execute(
             "SELECT asset_ref FROM ops.lake_ops.publication_receipt WHERE receipt_id = ?",
             [receipt_id],
-        ).fetchone()[0] == "release.demo-catalog.R1"
+        ).fetchone()[0] == "release.demo-catalog.2026-01-01"
 
         # Re-recording the same release replaces the one row (new receipt_id, still one row).
         updated = PublicationReceipt(
-            dataset="demo-catalog", release="R1", format="parquet",
-            destination="demo-catalog/R1", schema_digest="sha256:def", run_id="r2",
+            dataset="demo-catalog", release="2026-01-01", format="parquet",
+            destination="demo-catalog/2026-01-01", schema_digest="sha256:def", run_id="r2",
             status=ArtifactStatus.PUBLISHED, row_counts={"demo.events": 4},
         )
         ops.record_publication_receipt(con, updated)
-        rows = ops.publication_receipts(con, "R1")
+        rows = ops.publication_receipts(con, "2026-01-01")
         assert rows == [updated]
     finally:
         con.close()
@@ -462,22 +462,23 @@ def test_record_publication_receipt_falls_back_to_active_run_id(lake_settings: S
         with ops.run(con, source="icite", target="lake.icite.t", version="v1") as r:
             r.rows = upsert(con, "lake.icite.t", src, key="id")
             ops.register_asset(
-                con, ref="release.demo-catalog.R1", writer="cdsci", asset_type="release",
-                name="demo-catalog R1",
+                con, ref="release.demo-catalog.2026-01-01", writer="cdsci", asset_type="release",
+                name="demo-catalog 2026-01-01",
             )
             receipt = PublicationReceipt(
-                dataset="demo-catalog", release="R1", format="parquet",
-                destination="demo-catalog/R1", schema_digest="sha256:abc", run_id="",
+                dataset="demo-catalog", release="2026-01-01", format="parquet",
+                destination="demo-catalog/2026-01-01", schema_digest="sha256:abc", run_id="",
                 status=ArtifactStatus.PUBLISHED,
             )
             ops.record_publication_receipt(con, receipt)
             active_run_id = r.run_id
 
         receipt_run_id = con.execute(
-            "SELECT run_id FROM ops.lake_ops.publication_receipt WHERE release_id = 'R1'"
+            "SELECT run_id FROM ops.lake_ops.publication_receipt WHERE release_id = '2026-01-01'"
         ).fetchone()[0]
         asset_run_id = con.execute(
-            "SELECT last_run_id FROM ops.lake_ops.asset WHERE ref = 'release.demo-catalog.R1'"
+            "SELECT last_run_id FROM ops.lake_ops.asset "
+            "WHERE ref = 'release.demo-catalog.2026-01-01'"
         ).fetchone()[0]
         assert receipt_run_id == asset_run_id == active_run_id
     finally:
