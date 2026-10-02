@@ -216,7 +216,7 @@ def prune_releases(store: ObjectStore, contract: DatasetContract) -> tuple[str, 
         return ()
     index = load_index(store, contract.id)
     ordered = sorted(index.releases, key=lambda r: release_sort_key(r.release))
-    newest = {r.release for r in ordered[len(ordered) - contract.keep_last :]}
+    newest = {r.release for r in ordered[-contract.keep_last :]}
     doomed = tuple(r.release for r in ordered if r.release not in newest and not r.pinned)
     if not doomed:
         return ()
