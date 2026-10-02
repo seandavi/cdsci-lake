@@ -41,21 +41,13 @@ rationale for *what's next*, not how it was built.
 - ~~**Repo remote**~~ — **done**: private GitHub repo `seandavi/cdsci-lake`, `main`
   pushed.
 
-## Transform layer (deferred — ADR-0012/0013)
+## Transform layer (landed — ADR-0015, ADR-0021)
 
-The EL write path is `upsert`-only; derived tables and transforms (incl.
-sqlmesh-based) are deferred. When the transform layer lands it must also:
-
-- **Capture transform runs/outputs.** A transform is just another *writer* to the
-  lake, so it reuses the `ops.run` / `writer` / snapshot-attribution model — no new
-  ledger, extend the existing one to record transform runs and the tables they
-  produce.
-- **Capture lineage** (net-new). The ledger records runs + snapshots, not
-  table/column dependency edges. sqlmesh computes these (column-level via SQLGlot
-  for SQL models, table-level for Python models); design where that graph is
-  captured so observability/consumers can read it alongside `ops`.
-
-Iterate the design in an issue; promote to an ADR when it stabilises.
+Plain-SQL models under `transform/models/` run by the in-repo runner
+(`python -m cdsci.lake.transform run-all`). Each model runs inside `ops.run`
+(one `lake_ops.run` row and one attributed snapshot per model), and sqlglot
+table- and column-level lineage is replaced per model run in
+`lake_ops.lineage` / `lake_ops.column_lineage`.
 
 ## OpenAlex follow-ups (ADR-0005)
 
