@@ -1,7 +1,8 @@
 {
-  "spec_version": "1.0",
+  "spec_version": "2.0",
   "dataset": "demo-catalog",
-  "release": "R1",
+  "release": "2026-01-01",
+  "release_date": "2026-01-01",
   "status": "published",
   "published_at": "2026-09-22T00:00:00Z",
   "run_id": "01927c9e-0000-7000-8000-000000000001",
@@ -45,13 +46,12 @@
     },
     {
       "name": "demo.entities",
-      "description": "SCD2-release entity catalog spanning two writer scopes.",
-      "grain": "one row per entity_id and validity interval",
+      "description": "Entity catalog: one current row per entity across two writer scopes.",
+      "grain": "one row per entity_id",
       "primary_key": [
-        "entity_id",
-        "valid_from"
+        "entity_id"
       ],
-      "temporal_model": "scd2_release",
+      "temporal_model": "upsert_latest_snapshot",
       "owner": "cdsci-lake",
       "license": "cc0",
       "schema": "tables/demo.entities/schema.json",

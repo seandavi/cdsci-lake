@@ -7,11 +7,11 @@ M0 conformance fixture dataset -- not a real product.
 
 # demo.entities
 
-SCD2-release entity catalog spanning two writer scopes.
+Entity catalog: one current row per entity across two writer scopes.
 
-- **Grain:** one row per entity_id and validity interval
-- **Primary key:** entity_id, valid_from
-- **Temporal model:** `scd2_release` — Type-2 history: an attribute change closes the old [valid_from, valid_to) interval and opens a new one; at most one current row per business key.
+- **Grain:** one row per entity_id
+- **Primary key:** entity_id
+- **Temporal model:** `upsert_latest_snapshot` — One mutable current row per natural key, updated only when tracked values change.
 - **Owner:** cdsci-lake
 - **License:** cc0
 
@@ -20,8 +20,6 @@ SCD2-release entity catalog spanning two writer scopes.
 | entity_id | string | No | Business key. |  |  |  |  |  |
 | label | string | No | Tracked attribute. |  |  |  |  |  |
 | source | string | No | Owning writer scope. |  |  |  |  |  |
-| valid_from | string | No | Release this interval opened. |  |  |  |  |  |
-| valid_to | string | Yes | Release this interval closed, or null if current. |  |  |  |  |  |
 
 # demo.events
 

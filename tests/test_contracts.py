@@ -13,10 +13,12 @@ from fixtures.contracts import dataset as fx
 
 from cdsci.lake.contracts import (
     ColumnContract,
+    DatasetContract,
     TableContract,
     TemporalModel,
+    _split_canonical,
     check_asset_ref,
-    check_lake_asset_ref,
+    check_source_ref,
 )
 
 
@@ -110,14 +112,14 @@ def test_table_contract_rejects_partition_by_column_not_in_columns():
         )
 
 
-def test_check_lake_asset_ref_rejects_four_segments():
+def test_check_source_ref_rejects_four_segments():
     """S1: the grammar is pinned to exactly 'lake.<schema>.<table>' -- no deeper."""
     with pytest.raises(ValueError, match="dotted form"):
-        check_lake_asset_ref("lake.a.b.c")
+        check_source_ref("lake.a.b.c")
 
 
-def test_check_lake_asset_ref_accepts_three_segments():
-    check_lake_asset_ref("lake.demo.events")
+def test_check_source_ref_accepts_three_segments():
+    check_source_ref("lake.demo.events")
 
 
 @pytest.mark.parametrize(
@@ -133,9 +135,9 @@ def test_check_asset_ref_rejects_credentials_and_control_chars(ref: str):
         check_asset_ref(ref)
 
 
-def test_check_lake_asset_ref_rejects_file_scheme():
+def test_check_source_ref_rejects_file_scheme():
     with pytest.raises(ValueError, match="scheme"):
-        check_lake_asset_ref("file:///x")
+        check_source_ref("file:///x")
 
 
 def test_arrow_schema_without_pyarrow_raises_import_error(monkeypatch):
@@ -151,3 +153,56 @@ def test_arrow_schema_without_pyarrow_raises_import_error(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", blocked)
     with pytest.raises(ImportError):
         fx.EVENTS_TABLE.arrow_schema()
+
+
+def test_check_source_ref_accepts_product_local_catalog():
+    check_source_ref("canceronice.measure.observation")
+
+
+@pytest.mark.parametrize("ref", ["Lake.x.y", "a.b", "s3://a/b/c"])
+def test_check_source_ref_rejects_malformed(ref: str):
+    with pytest.raises(ValueError):
+        check_source_ref(ref)
+
+
+def test_split_canonical_primitive_list_and_struct():
+    assert _split_canonical("int64") == ("primitive", ("int64",))
+    assert _split_canonical(" timestamp[us, tz=UTC] ") == ("primitive", ("timestamp[us, tz=UTC]",))
+    assert _split_canonical("list<string>") == ("list", ("string",))
+    assert _split_canonical("struct<a: string,b:  list<int64>>") == (
+        "struct",
+        (("a", "string"), ("b", "list<int64>")),
+    )
+    # Top-level commas only: the nested struct and tz timestamp keep theirs.
+    kind, fields = _split_canonical(
+        "struct<x: struct<p: string, q: int64>, ts: timestamp[us, tz=UTC], y: string>"
+    )
+    assert kind == "struct"
+    assert [n for n, _ in fields] == ["x", "ts", "y"]
+    assert fields[0][1] == "struct<p: string, q: int64>"
+
+
+@pytest.mark.parametrize(
+    "bad", ["list<>", "struct<>", "struct<A: string>", "struct<a string>", "map<string>", "list<"]
+)
+def test_split_canonical_rejects_malformed(bad: str):
+    with pytest.raises(ValueError, match="unsupported canonical arrow type"):
+        _split_canonical(bad)
+
+
+def test_nested_arrow_type_parses_to_pyarrow():
+    pa = pytest.importorskip("pyarrow")
+    from cdsci.lake.contracts import _parse_arrow_type
+
+    t = _parse_arrow_type("list<struct<a: string, b: list<int64>>>")
+    inner = pa.struct([pa.field("a", pa.string()), pa.field("b", pa.list_(pa.int64()))])
+    assert t == pa.list_(inner)
+
+
+@pytest.mark.parametrize("bad", [0, -1])
+def test_dataset_contract_rejects_keep_last_below_one(bad: int):
+    with pytest.raises(ValueError, match="keep_last"):
+        DatasetContract(
+            id="d", title="t", description="x", publisher="p",
+            tables={"demo.events": fx.EVENTS_TABLE}, keep_last=bad,
+        )

@@ -23,14 +23,6 @@ _TEMPORAL_MODEL_DEFINITION: dict[TemporalModel, str] = {
     TemporalModel.UPSERT_LATEST_SNAPSHOT: (
         "One mutable current row per natural key, updated only when tracked values change."
     ),
-    TemporalModel.SCD2_RELEASE: (
-        "Type-2 history: an attribute change closes the old [valid_from, valid_to) interval "
-        "and opens a new one; at most one current row per business key."
-    ),
-    TemporalModel.SCD2_BITEMPORAL: (
-        "Type-2 history with two time axes: effective_from/effective_to are source-world "
-        "time, valid_from/valid_to are publication-system time."
-    ),
 }
 
 # Column names that read as coordinates even without an explicit coordinate_system --
@@ -167,13 +159,6 @@ def lint_contract(table: TableContract) -> list[str]:
 
         if c.nullable and not c.null_meaning:
             problems.append(f"{table.name}.{c.name}: nullable column has no null_meaning")
-
-    is_scd2 = table.temporal_model in (TemporalModel.SCD2_RELEASE, TemporalModel.SCD2_BITEMPORAL)
-    if is_scd2 and ("valid_from" not in column_names or "valid_to" not in column_names):
-        problems.append(
-            f"{table.name}: temporal_model {table.temporal_model.value} requires "
-            "valid_from/valid_to columns"
-        )
 
     # __post_init__ already rejects these at construction time -- surfaced again here
     # so a lint report names the same invariant a renderer's caller can see, per the

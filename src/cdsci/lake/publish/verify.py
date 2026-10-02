@@ -21,10 +21,10 @@ import duckdb
 
 from ..contracts import DatasetContract
 from .builder import (
-    _MATERIALIZATION_FOR_TEMPORAL_MODEL,
     LocalDirStore,
     ObjectStore,
     _expected_duckdb_type,
+    _normalize_duckdb_type,
 )
 from .frozen import CATALOG_FILENAME, frozen_ducklake_attach_sql
 from .release import (
@@ -42,6 +42,23 @@ def _get_or_record_failure(
     """``store.get`` that records a failed required check instead of raising."""
     try:
         return store.get(path)
+    except Exception as exc:  # noqa: BLE001
+        checks.append(
+            AcceptanceCheck(check_name, passed=False, required=True, detail=str(exc)[:200])
+        )
+        return None
+
+
+def _digest_or_record_failure(
+    store: ObjectStore, path: PurePosixPath, checks: list[AcceptanceCheck], check_name: str
+) -> tuple[int, str] | None:
+    """Stream ``path`` through ``store.open``; return ``(size, sha256)`` without holding the
+    file in memory. A failure is recorded as a failed required check instead of raising."""
+    try:
+        with store.open(path) as f:
+            digest = hashlib.file_digest(f, "sha256").hexdigest()
+            size = f.tell()  # file_digest reads to EOF
+        return size, digest
     except Exception as exc:  # noqa: BLE001
         checks.append(
             AcceptanceCheck(check_name, passed=False, required=True, detail=str(exc)[:200])
@@ -263,12 +280,22 @@ def _check_frozen_ducklake(
             if schema_bytes is None:
                 continue
             expected_columns = [
-                (c["name"], _expected_duckdb_type(c["arrow_type"]), c["nullable"])
+                (
+                    c["name"],
+                    _normalize_duckdb_type(_expected_duckdb_type(c["arrow_type"])),
+                    c["nullable"],
+                )
                 for c in json.loads(schema_bytes)["columns"]
             ]
-            described = con.execute(f"DESCRIBE {qualified}").fetchall()
+            # Names/types come from DuckDB's own type objects (never re-parsed DESCRIBE
+            # strings); nullability only exists in DESCRIBE's null column.
+            rel = con.sql(f"SELECT * FROM {qualified} LIMIT 0")
+            nullable_by_name = {
+                row[0]: row[2] == "YES" for row in con.execute(f"DESCRIBE {qualified}").fetchall()
+            }
             actual_columns = [
-                (name, col_type, null == "YES") for name, col_type, null, *_ in described
+                (name, str(col_type), nullable_by_name[name])
+                for name, col_type in zip(rel.columns, rel.types, strict=True)
             ]
             checks.append(
                 AcceptanceCheck(
@@ -399,30 +426,21 @@ def verify_release(
             )
         )
 
-        expected = _MATERIALIZATION_FOR_TEMPORAL_MODEL[table.temporal_model]
-        checks.append(
-            AcceptanceCheck(
-                f"{table.name}.materialization_matches_temporal_model",
-                passed=file_index.materialization == expected,
-                required=True,
-                detail=f"{file_index.materialization.value} vs expected {expected.value}",
-            )
-        )
-
         total_rows = 0
         for entry in file_index.files:
             file_path = prefix / "tables" / table.name / entry.uri
             check_name = f"{table.name}.{entry.uri}.readable"
-            body = _get_or_record_failure(store, file_path, checks, check_name)
-            if body is None:
+            digested = _digest_or_record_failure(store, file_path, checks, check_name)
+            if digested is None:
                 continue
-            size_ok = len(body) == entry.size
-            sha_ok = hashlib.sha256(body).hexdigest() == entry.sha256
+            size, sha256 = digested
+            size_ok = size == entry.size
+            sha_ok = sha256 == entry.sha256
             checks.append(
                 AcceptanceCheck(
                     f"{table.name}.{entry.uri}.size_and_checksum",
                     passed=size_ok and sha_ok, required=True,
-                    detail=f"size={len(body)} (expected {entry.size}), sha256_ok={sha_ok}",
+                    detail=f"size={size} (expected {entry.size}), sha256_ok={sha_ok}",
                 )
             )
             total_rows += entry.rows or 0
