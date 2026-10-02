@@ -231,8 +231,11 @@ def test_prune_keeps_newest_n_and_pins(tmp_path: Path):
 
 def test_prune_with_fewer_releases_than_keep_last_deletes_nothing(tmp_path: Path):
     store = LocalDirStore(tmp_path)
-    _promote(store, "2026-10-01")
-    assert prune_releases(store, _contract(5)) == ()
+    for day in ("01", "02", "03", "04"):
+        _promote(store, f"2026-10-{day}")
+    # keep_last between len and 2*len once sliced from a negative start and pruned the oldest.
+    assert prune_releases(store, _contract(7)) == ()
+    assert len(load_index(store, DATASET).releases) == 4
 
 
 def test_local_store_replace_delete_tree_open_and_put_file(tmp_path: Path):
