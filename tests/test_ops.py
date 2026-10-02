@@ -410,7 +410,7 @@ def test_record_lineage_is_idempotent_on_src_dst_pair(lake_settings: Settings):
         first = ops.lineage_for(con, "lake.a.t")[0]
 
         ops.record_lineage(
-            con, src_ref="r2://raw/a.csv", dst_ref="lake.a.t", edge_type="sqlmesh",
+            con, src_ref="r2://raw/a.csv", dst_ref="lake.a.t", edge_type="sqlglot",
         )
         rows = ops.lineage_for(con, "lake.a.t")
         assert len(rows) == 1  # no duplicate row

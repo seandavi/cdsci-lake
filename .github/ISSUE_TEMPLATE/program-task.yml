@@ -58,7 +58,6 @@ body:
       description: Explicitly exclude tempting adjacent work.
       placeholder: |
         - No dashboard changes.
-        - No SQLMesh synchronization.
         - No domain schema migration.
     validations:
       required: true

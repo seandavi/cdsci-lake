@@ -176,7 +176,11 @@ column-level lineage (#113), stored in `lake_ops` per model run (#114).
 `bugsigdb.*` and `uniprot.identifier_mapping` have built in prod; the ensembl and
 ncbi_gene* models are still blocked on EL sources never loaded to prod.
 Historic SQLMesh snapshot attribution stays readable in
-`lake_ops.snapshot_attribution`; nothing writes it now.
+`lake_ops.snapshot_attribution`; nothing writes it now. cdsci_lake's SQLMesh
+objects were purged from prod on 2026-10-02 (`sqlmesh__bugsigdb`,
+`sqlmesh__uniprot`, `bugsigdb__cdsci_lake`, `uniprot__cdsci_lake`, plus the
+`cdsci_lake` snapshots/intervals/environment in the `sqlmesh` state schema).
+omicidx's SQLMesh state and `sqlmesh__{src,stg,sradb,geometadb}` remain.
 
 ## Next steps (not yet done)
 
@@ -185,8 +189,8 @@ Historic SQLMesh snapshot attribution stays readable in
 
 1. **CRISP (1970–2009, XML)** — the 2 historical RePORTER groups need an XML
    stream-parse path (design doc §1.7–1.8). Not implemented.
-2. **Merge PR #92**, then work the `lake_ops` sync (#85–#90) and load the six
-   blocked EL sources so all 15 ported models build.
+2. **Load the blocked EL sources** (ensembl, ncbi_gene*) so all 15 transform
+   models build in prod.
 3. ~~**`ref.id_crosswalk`**~~ — built, unused, **retired 2026-08-15** in favour of
    per-pair joins (rationale in `docs/ROADMAP.md`). The type reconciliation it was
    going to centralize still applies per join site: `publink.pmid` is BIGINT but

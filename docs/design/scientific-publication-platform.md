@@ -350,7 +350,7 @@ Recommended optional dependency groups:
 ```text
 cdsci-lake                 read/runtime substrate
 cdsci-lake[ingest]         cdsci source ingestors
-cdsci-lake[transform]      SQLMesh or transform implementation
+cdsci-lake[transform]      plain-SQL runner + sqlglot lineage (ADR-0021)
 cdsci-lake[publish]        PyArrow, Parquet, PyIceberg publication
 cdsci-lake[telemetry]      optional log/trace exporters
 ```
@@ -455,7 +455,6 @@ class AssetRef:
 class LineageProvider(StrEnum):
     DECLARED = "declared"
     SQLGLOT = "sqlglot"
-    SQLMESH = "sqlmesh"
 
 
 class LineageConfidence(StrEnum):
@@ -476,7 +475,7 @@ class LineageEdge:
     expression: str | None = None
 ```
 
-Provider-specific lineage is adapted to this vocabulary. SQLMesh remains authoritative for SQLMesh detail; SQLGlot is used for inline SQL outside SQLMesh; URL/file roots are explicit declarations.
+Provider-specific lineage is adapted to this vocabulary. SQLGlot extracts lineage from the plain-SQL transforms (ADR-0021); URL/file roots are explicit declarations.
 
 ### 6.3 Run context and operational sink
 
@@ -1073,13 +1072,12 @@ Only required when a release advertises Iceberg.
 1. Every published table has at least one upstream asset edge.
 2. URL/file roots are explicit assets, never inferred from execution order.
 3. SQLGlot failures downgrade to measured `table_only` or `unresolved` edges rather than fabricating column lineage.
-4. SQLMesh edges adapt to the same vocabulary without reparsing SQL unnecessarily.
-5. Source columns named by exact edges exist in the source contract.
-6. Public lineage omits internal credentials, paths, restricted asset names, watermarks, and raw logs.
-7. `run_id` joins source run, internal asset version, publication receipt, and optional Iceberg snapshot.
-8. Provenance records source version method, retrieval time, URI, checksum/validators where available, and row count.
-9. Expiring internal or table-format snapshots does not remove the public release manifest.
-10. Lineage generation is deterministic for identical inputs.
+4. Source columns named by exact edges exist in the source contract.
+5. Public lineage omits internal credentials, paths, restricted asset names, watermarks, and raw logs.
+6. `run_id` joins source run, internal asset version, publication receipt, and optional Iceberg snapshot.
+7. Provenance records source version method, retrieval time, URI, checksum/validators where available, and row count.
+8. Expiring internal or table-format snapshots does not remove the public release manifest.
+9. Lineage generation is deterministic for identical inputs.
 
 ### 11.13 Logging, scheduling, and security acceptance
 
@@ -1187,7 +1185,7 @@ Exit: a client can discover a release and retrieve its schema/files without Duck
 
 - Add `asset`, `asset_version`, `asset_lineage`, and `publication_receipt` to `lake_ops`.
 - Generalize cancer's SQLGlot lineage implementation.
-- Add SQLMesh adapter only after cross-project safety prerequisites are accepted.
+- Store sqlglot table- and column-level transform lineage in `lake_ops` (ADR-0021).
 - Add structured JSON event output.
 
 Exit: one query traces source run → internal version → release files → optional Iceberg snapshot.
