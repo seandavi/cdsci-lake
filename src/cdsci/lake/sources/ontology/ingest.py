@@ -31,6 +31,7 @@ contracted CURIE); consumers normalize against the ``prefix`` mapping if needed.
 from __future__ import annotations
 
 import gzip
+import re
 import shutil
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -198,24 +199,38 @@ def _release(url: str) -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
+def _sql_str(value: str) -> str:
+    """Render ``value`` as a single-quoted SQL string literal."""
+    return "'" + value.replace("'", "''") + "'"
+
+
 def fetch_db(onto: str, settings: Settings | None = None) -> tuple[Path, str]:
     """Download + gunzip one semsql DB into the raw layer; return ``(path, release)``.
 
-    Both steps are idempotent: ``download`` skips an existing ``.db.gz`` and the
-    gunzip skips an existing ``.db`` — re-running an ingest re-uses the bronze files.
+    Bronze is keyed by upstream release (``{onto}-{release}.db[.gz]``), so a new
+    semsql build is actually fetched while a re-run of the same release re-uses the
+    files (``download`` skips an existing ``.gz``; the gunzip skips an existing
+    ``.db``). Once the current ``.db`` exists, this ontology's older bronze files
+    are deleted -- semsql is ~330 ontologies, too much to keep every release.
     """
     s = settings or get_settings()
     base = s.semsql_base_url.rstrip("/")
     url = f"{base}/{onto}{_SUFFIX}"
+    release = _release(url)
     root = raw_dir("ontology", s)
-    gz = download(url, root / f"{onto}{_SUFFIX}")
-    db = root / f"{onto}.db"
+    gz = download(url, root / f"{onto}-{release}{_SUFFIX}")
+    db = root / f"{onto}-{release}.db"
     if not db.exists():
         tmp = db.with_suffix(".db.part")
         with gzip.open(gz, "rb") as src, open(tmp, "wb") as dst:
             shutil.copyfileobj(src, dst, length=1 << 20)
         tmp.rename(db)
-    return db, _release(url)
+    # Exact match, never a prefix glob: `go*` would also delete `go-plus`.
+    stale = re.compile(rf"{re.escape(onto)}(-\d{{4}}-\d{{2}}-\d{{2}})?\.db(\.gz)?")
+    for f in root.iterdir():
+        if f not in (gz, db) and stale.fullmatch(f.name):
+            f.unlink()
+    return db, release
 
 
 def curate(
@@ -241,6 +256,7 @@ def curate(
             counts[rel.table] = upsert(
                 con, target, sql, key=list(rel.key),
                 exclude_change_cols=["snapshot_version"],
+                prune=f"ontology = {_sql_str(onto)}",
             )
     finally:
         con.execute("DETACH src;")

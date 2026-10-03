@@ -136,6 +136,7 @@ def _load(
     key: list[str],
     *,
     mode: str,
+    prune: str | None,
 ) -> int:
     """Dispatch one batch to MERGE-upsert (idempotent) or append-INSERT (disjoint bulk).
 
@@ -143,9 +144,13 @@ def _load(
     ``mode="append"`` INSERTs without reading the target — for the initial bulk,
     whose accession-hash batches are disjoint, so a MERGE's whole-table read
     (growing every batch) is pure waste (the lesson from ``openalex``/``pmc``).
+    ``prune`` is the slice this batch is authoritative for (see
+    :func:`cdsci.lake.upsert`).
     """
     if mode == "merge":
-        return upsert(con, target, source_sql, key, exclude_change_cols=["snapshot_version"])
+        return upsert(
+            con, target, source_sql, key, exclude_change_cols=["snapshot_version"], prune=prune
+        )
     if mode != "append":
         raise ValueError(f"mode must be 'merge' or 'append', got {mode!r}")
     catalog, schema, _ = target.split(".")
@@ -168,12 +173,20 @@ def curate(
 ) -> int:
     """Load one batch of the idmapping file, keyed ``(accession, gene_id)``.
 
-    Returns the target's current full row count (see :func:`_load`).
+    Returns the target's current full row count (see :func:`_load`). A full merge
+    load prunes rows dropped upstream, scoped to its ``batch`` shard; ``limit`` or
+    ``mode="append"`` never prunes.
     """
     target = target or f"{LAKE}.{_TABLE}"
+    if limit or mode != "merge":
+        prune = None
+    elif batch is not None:
+        prune = f"(hash(accession) % {int(batch[1])}) = {int(batch[0])}"
+    else:
+        prune = "true"
     return _load(
         con, target, _select_sql(path, version, limit, batch),
-        key=["accession", "gene_id"], mode=mode,
+        key=["accession", "gene_id"], mode=mode, prune=prune,
     )
 
 

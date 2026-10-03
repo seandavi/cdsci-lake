@@ -1,0 +1,30 @@
+# Scheduled bioc-family load (bioc ADR-0012/0013; cdsci ADR-0025) on the
+# cdsci-lake systemd scheduling convention -- see monode/infrastructure's
+# SCHEDULING.md for the full pattern this is an instance of.
+[Unit]
+Description=Land every vertebrate species of the current Ensembl release and rebuild the ensembl models
+Documentation=file:///home/davsean/Documents/git/cdsci-lake/docs/design/dashboard_and_scheduling.md
+After=network-online.target
+Wants=network-online.target
+OnFailure=ntfy-notify@%N.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/davsean/Documents/git/cdsci-lake
+EnvironmentFile=/home/davsean/Documents/git/cdsci-lake/.env
+Environment=CU_OPENALEX_LAKE_BACKEND=postgres
+# run-release lands species not yet recorded in lake_ops for the current release;
+# an unchanged release lands nothing and every model is skipped as up to date.
+# Partitions are immutable per (taxon, release) -- no prune.
+# NOT `/usr/bin/env uv` -- systemd --user's minimal PATH excludes ~/.local/bin
+# (see icite.service). One ExecStart= per command: systemd runs them in order
+# and stops at the first failure, so models never build on a partial load.
+ExecStart=%h/.local/bin/uv run python -m cdsci.lake.sources.ensembl run-release
+ExecStart=%h/.local/bin/uv run python -m cdsci.lake.transform run --if-stale ensembl.feature ensembl.genome ensembl.gene ensembl.transcript ensembl.exon
+# RuntimeMaxSec= silently has no effect on Type=oneshot -- use TimeoutStartSec=.
+# A new release is ~360 GTF downloads (gtf holds ~368M rows) plus the model rebuilds.
+TimeoutStartSec=43200
+Nice=10
+
+[Install]
+WantedBy=default.target

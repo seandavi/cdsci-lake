@@ -1,0 +1,12 @@
+[Unit]
+Description=Weekly BugSigDB release-tag check
+
+[Timer]
+OnCalendar=Mon *-*-* 03:00:00
+RandomizedDelaySec=900
+# Release tags are irregular; an unchanged tag costs an idempotent no-op.
+# Persistent: a missed trigger (host down) runs at next boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

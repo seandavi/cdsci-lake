@@ -1,0 +1,33 @@
+# Scheduled bioc-family load (bioc ADR-0012/0013; cdsci ADR-0025) on the
+# cdsci-lake systemd scheduling convention -- see monode/infrastructure's
+# SCHEDULING.md for the full pattern this is an instance of.
+[Unit]
+Description=Load the NCBI Gene dumps (gene_info, gene2ensembl, gene2accession, gene2go, gene2pubmed) and rebuild their models
+Documentation=file:///home/davsean/Documents/git/cdsci-lake/docs/design/dashboard_and_scheduling.md
+After=network-online.target
+Wants=network-online.target
+OnFailure=ntfy-notify@%N.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/davsean/Documents/git/cdsci-lake
+EnvironmentFile=/home/davsean/Documents/git/cdsci-lake/.env
+Environment=CU_OPENALEX_LAKE_BACKEND=postgres
+# Source cadence is nightly; loaded weekly (owner decision). Each full load prunes
+# genes dropped upstream (ADR-0003 amendment). gene_go also reads
+# lake.ontology.terms, so a monthly ontology change rebuilds it here next Saturday.
+# NOT `/usr/bin/env uv` -- systemd --user's minimal PATH excludes ~/.local/bin
+# (see icite.service). One ExecStart= per command: systemd runs them in order
+# and stops at the first failure, so models never build on a partial load.
+ExecStart=%h/.local/bin/uv run python -m cdsci.lake.sources.ncbi_gene run
+ExecStart=%h/.local/bin/uv run python -m cdsci.lake.sources.ncbi_gene2accession run
+ExecStart=%h/.local/bin/uv run python -m cdsci.lake.sources.ncbi_gene2go run
+ExecStart=%h/.local/bin/uv run python -m cdsci.lake.sources.ncbi_gene2pubmed run
+ExecStart=%h/.local/bin/uv run python -m cdsci.lake.transform run --if-stale ncbi_gene.gene ncbi_gene.mapping ncbi_gene2accession.mapping ncbi_gene2go.gene_go ncbi_gene2pubmed.gene_publication
+# RuntimeMaxSec= silently has no effect on Type=oneshot -- use TimeoutStartSec=.
+# Four multi-GB dumps, each a 20-batch MERGE + prune, then five model rebuilds.
+TimeoutStartSec=21600
+Nice=10
+
+[Install]
+WantedBy=default.target

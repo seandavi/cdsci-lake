@@ -1,0 +1,12 @@
+[Unit]
+Description=Monthly semsql ontology load
+
+[Timer]
+OnCalendar=*-*-20 13:00:00
+RandomizedDelaySec=1800
+# semsql rebuilds irregularly; monthly is the owner-chosen cadence.
+# Persistent: a missed trigger (host down) runs at next boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

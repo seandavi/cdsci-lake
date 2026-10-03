@@ -1,0 +1,29 @@
+# Scheduled bioc-family load (bioc ADR-0012/0013; cdsci ADR-0025) on the
+# cdsci-lake systemd scheduling convention -- see monode/infrastructure's
+# SCHEDULING.md for the full pattern this is an instance of.
+[Unit]
+Description=Load the UniProt ID-mapping dump into lake.uniprot.idmapping and rebuild its model
+Documentation=file:///home/davsean/Documents/git/cdsci-lake/docs/design/dashboard_and_scheduling.md
+After=network-online.target
+Wants=network-online.target
+OnFailure=ntfy-notify@%N.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/davsean/Documents/git/cdsci-lake
+EnvironmentFile=/home/davsean/Documents/git/cdsci-lake/.env
+Environment=CU_OPENALEX_LAKE_BACKEND=postgres
+# Full whole-of-UniProt dump; each 20-batch MERGE prunes accessions dropped
+# upstream within its hash shard (ADR-0003 amendment).
+# NOT `/usr/bin/env uv` -- systemd --user's minimal PATH excludes ~/.local/bin
+# (see icite.service). One ExecStart= per command: systemd runs them in order
+# and stops at the first failure, so models never build on a partial load.
+ExecStart=%h/.local/bin/uv run python -m cdsci.lake.sources.uniprot run
+ExecStart=%h/.local/bin/uv run python -m cdsci.lake.transform run --if-stale uniprot.identifier_mapping
+# RuntimeMaxSec= silently has no effect on Type=oneshot -- use TimeoutStartSec=.
+# ~6.6 GiB gzip download + a 20-batch MERGE over the exploded accession<->gene pairs.
+TimeoutStartSec=14400
+Nice=10
+
+[Install]
+WantedBy=default.target

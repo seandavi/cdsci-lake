@@ -1,0 +1,30 @@
+# Scheduled bioc-family load (bioc ADR-0012/0013; cdsci ADR-0025) on the
+# cdsci-lake systemd scheduling convention -- see monode/infrastructure's
+# SCHEDULING.md for the full pattern this is an instance of.
+[Unit]
+Description=Load the semsql OBO ontologies into lake.ontology.*
+Documentation=file:///home/davsean/Documents/git/cdsci-lake/docs/design/dashboard_and_scheduling.md
+After=network-online.target
+Wants=network-online.target
+OnFailure=ntfy-notify@%N.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/davsean/Documents/git/cdsci-lake
+EnvironmentFile=/home/davsean/Documents/git/cdsci-lake/.env
+Environment=CU_OPENALEX_LAKE_BACKEND=postgres
+# Every ontology in the semsql bucket (the source default). Bronze is keyed by
+# upstream release, and each ontology's load prunes its own rows dropped upstream
+# (ADR-0003 amendment). No models read only from ontology; ncbi_gene2go.gene_go
+# picks up a change on the next ncbi-gene run.
+# NOT `/usr/bin/env uv` -- systemd --user's minimal PATH excludes ~/.local/bin
+# (see icite.service). One ExecStart= per command: systemd runs them in order
+# and stops at the first failure, so models never build on a partial load.
+ExecStart=%h/.local/bin/uv run python -m cdsci.lake.sources.ontology run
+# RuntimeMaxSec= silently has no effect on Type=oneshot -- use TimeoutStartSec=.
+# ~330 SQLite builds downloaded and projected one at a time.
+TimeoutStartSec=43200
+Nice=10
+
+[Install]
+WantedBy=default.target

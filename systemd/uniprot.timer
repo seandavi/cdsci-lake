@@ -1,0 +1,12 @@
+[Unit]
+Description=Monthly UniProt ID-mapping load
+
+[Timer]
+OnCalendar=*-*-15 13:00:00
+RandomizedDelaySec=1800
+# UniProt releases every ~8 weeks; monthly catches each release within a month.
+# Persistent: a missed trigger (host down) runs at next boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

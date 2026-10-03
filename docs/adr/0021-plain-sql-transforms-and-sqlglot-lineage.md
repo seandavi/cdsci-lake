@@ -116,6 +116,13 @@ tests, and in-catalog snapshot attribution through `ops.run`.
     with the first derived table too large to rebuild;
   - *pre-prod build* (scratch schema, run tests, swap): add before another
     producer's derived tables depend on ours.
+- 2026-10-03: the *run a subgraph* trigger fired — scheduled per-family runs
+  (systemd units per source family) must rebuild only that family's models, and
+  only when needed. The answer is `run TARGET... --if-stale`, not `--select`:
+  targets run in the order given, and a model is skipped unless it was never
+  built, its SQL fingerprint (`sql:<sha256[:12]>`, the run `version`) changed,
+  its table is missing, or an input's latest successful `lake_ops.run` snapshot
+  is newer than the model's last build.
 - Column lineage has no SQLMesh-grade guarantee on complex CTEs and window
   functions. It is observability, not a correctness gate.
 - omicidx may keep SQLMesh locally as a producer-local choice. Its state

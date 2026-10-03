@@ -13,10 +13,10 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from cdsci.lake import Settings, lake_connect, ops
+from cdsci.lake import Settings, lake_connect, ops, upsert
 from cdsci.lake.transform.graph import build_graph, topological_order
 from cdsci.lake.transform.models import Model, load_models
-from cdsci.lake.transform.runner import run_all, run_model
+from cdsci.lake.transform.runner import is_stale, run_all, run_model
 from cdsci.lake.transform.targets import Target, publish
 
 
@@ -182,6 +182,39 @@ def test_run_all_respects_dependency_order(lake_settings: Settings, models_dir: 
         assert con.execute("SELECT * FROM lake.a.t2").fetchall() == [(2,)]
     finally:
         con.close()
+
+
+def test_is_stale_tracks_sql_and_input_changes(lake_settings: Settings):
+    """``--if-stale``: rebuild on first run, changed input, or changed SQL; skip otherwise."""
+    con = lake_connect(lake_settings)
+
+    def load(rows: str) -> None:
+        with ops.run(con, source="srcx", target="lake.a.src"):
+            upsert(con, "lake.a.src", f"SELECT * FROM (VALUES {rows}) v(id, val)", key="id")
+
+    try:
+        ops.register_sources(
+            con, writer="cdsci", sources=(ops.Source("srcx", "a", "d", "daily", "x", "cc0"),)
+        )
+        load("(1, 'a')")
+        model = Model("a.m", "SELECT * FROM lake.a.src", Path("a/m.sql"))
+        assert is_stale(con, model)  # never built
+        run_model(con, model)
+        assert not is_stale(con, model)
+
+        load("(1, 'a')")  # idempotent re-load: no snapshot, still fresh
+        assert not is_stale(con, model)
+
+        load("(1, 'b')")  # a real input change
+        assert is_stale(con, model)
+        run_model(con, model)
+        assert not is_stale(con, model)
+
+        changed_sql = Model("a.m", "SELECT id FROM lake.a.src", Path("a/m.sql"))
+        assert is_stale(con, changed_sql)
+    finally:
+        con.close()
+
 
 
 def test_publish_parquet_dated_and_latest(lake_settings: Settings, tmp_path: Path):
