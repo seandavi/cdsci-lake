@@ -60,18 +60,33 @@ def graph_cmd(ctx: typer.Context) -> None:
 @app.command("run")
 def run_cmd(
     ctx: typer.Context,
-    target: str = typer.Argument(..., help="Model target, e.g. ncbi_gene2pubmed.gene_publication."),
+    targets: list[str] = typer.Argument(
+        ..., help="Model targets, e.g. ncbi_gene2pubmed.gene_publication."
+    ),
+    if_stale: bool = typer.Option(
+        False, "--if-stale",
+        help="Skip a model whose SQL and inputs are unchanged since its last successful build.",
+    ),
 ) -> None:
-    """Run one model — no dependency check; use ``run-all`` for the full graph."""
+    """Run models in the order given — no dependency resolution; use ``run-all`` for the graph.
+
+    A failing model raises, stopping the remaining targets with a non-zero exit.
+    """
     models = load_models(ctx.obj)
-    if target not in models:
-        raise typer.BadParameter(f"no such model: {target!r} (known: {sorted(models)})")
+    for target in targets:
+        if target not in models:
+            raise typer.BadParameter(f"no such model: {target!r} (known: {sorted(models)})")
     con = lake_connect()
     try:
-        rows = runner.run_model(con, models[target])
+        for target in targets:
+            model = models[target]
+            if if_stale and not runner.is_stale(con, model):
+                typer.echo(f"  {target}: up to date (skipped)")
+                continue
+            rows = runner.run_model(con, model)
+            typer.echo(f"  {target}: {rows} rows")
     finally:
         con.close()
-    typer.echo(f"  {target}: {rows} rows")
 
 
 @app.command("run-all")

@@ -96,6 +96,28 @@ def current_release() -> int:
     return int(_get_text(f"{_PUB}/VERSION").strip())
 
 
+def vertebrate_species(ensembl_release: int) -> list[dict]:
+    """Every species in a release's ``species_EnsemblVertebrates.txt``, as
+    :func:`species_info` dicts (``#`` header skipped).
+    """
+    url = f"{_PUB}/release-{ensembl_release}/species_EnsemblVertebrates.txt"
+    out = []
+    for line in _get_text(url).splitlines():
+        if line.startswith("#"):
+            continue
+        f = line.split("\t")
+        # #name, species, division, taxonomy_id, assembly, assembly_accession, ...
+        if len(f) > 5:
+            out.append({
+                "species": f[1],
+                "ensembl_release": str(ensembl_release),
+                "ncbitaxon_id": int(f[3]),
+                "assembly": f[4],
+                "genome_accession": f[5],
+            })
+    return out
+
+
 def species_info(ensembl_release: int, species: str) -> dict:
     """``{species, ensembl_release, ncbitaxon_id, assembly, genome_accession}``.
 
@@ -104,18 +126,9 @@ def species_info(ensembl_release: int, species: str) -> dict:
     whatever that release itself says (a species can change assembly between
     releases).
     """
-    url = f"{_PUB}/release-{ensembl_release}/species_EnsemblVertebrates.txt"
-    for line in _get_text(url).splitlines():
-        f = line.split("\t")
-        # #name, species, division, taxonomy_id, assembly, assembly_accession, ...
-        if len(f) > 5 and f[1] == species:
-            return {
-                "species": species,
-                "ensembl_release": str(ensembl_release),
-                "ncbitaxon_id": int(f[3]),
-                "assembly": f[4],
-                "genome_accession": f[5],
-            }
+    for info in vertebrate_species(ensembl_release):
+        if info["species"] == species:
+            return info
     raise ValueError(f"{species!r} is not in Ensembl release {ensembl_release} vertebrates")
 
 
@@ -232,3 +245,56 @@ def ingest(
     finally:
         con.close()
     return r.summary()
+
+
+def ingest_release(
+    *,
+    ensembl_release: int | None = None,
+    schema: str = "ensembl",
+    settings: Settings | None = None,
+) -> dict:
+    """Land every vertebrate species of a release, skipping species already landed.
+
+    "Landed" is read from the ``lake_ops.run`` ledger (``version`` =
+    ``{release}:{species}``), not by scanning the multi-hundred-million-row
+    ``gtf`` table. A species failure is recorded and the loop continues; any
+    failure raises at the end so the scheduled unit fails loudly.
+    """
+    s = settings or get_settings()
+    release = ensembl_release or current_release()
+    con = lake_connect(s, read_only=True, with_ops=True)
+    try:
+        landed = {
+            row[0]
+            for row in con.execute(
+                f"SELECT DISTINCT split_part(version, ':', 2) "
+                f"FROM {ops.OPS}.{ops.OPS_SCHEMA}.run "
+                "WHERE source = 'ensembl' AND status IN ('success', 'idempotent') "
+                "AND version LIKE ?",
+                [f"{release}:%"],
+            ).fetchall()
+        }
+    finally:
+        con.close()
+
+    species = [i["species"] for i in vertebrate_species(release)]
+    todo = [sp for sp in species if sp not in landed]
+    _log.info(
+        "release {}: {} species, {} already landed, {} to land",
+        release, len(species), len(species) - len(todo), len(todo),
+    )
+    errors: dict[str, str] = {}
+    for sp in todo:
+        try:
+            ingest(species=sp, ensembl_release=release, schema=schema, settings=s)
+        except Exception as exc:  # noqa: BLE001 -- record, continue, raise at the end
+            errors[sp] = f"{type(exc).__name__}: {exc}"
+            _log.error("{} failed: {}", sp, errors[sp])
+    if errors:
+        raise RuntimeError(f"ensembl {release}: {len(errors)} species failed: {sorted(errors)}")
+    return {
+        "release": release,
+        "landed": len(todo),
+        "already_landed": len(species) - len(todo),
+        "errors": {},
+    }

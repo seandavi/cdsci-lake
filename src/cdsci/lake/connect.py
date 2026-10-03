@@ -277,6 +277,7 @@ def upsert(
     key: str | list[str],
     *,
     exclude_change_cols: list[str] | None = None,
+    prune: str | None = None,
 ) -> int:
     """MERGE the rows of ``source_sql`` into ``target`` on ``key``; return row count.
 
@@ -304,8 +305,17 @@ def upsert(
     is self-describing (author/source/run_id, ADR-0009). An idempotent MERGE makes
     no snapshot even when wrapped, so the no-op-is-free contract holds; outside a
     run (e.g. a direct test call) the write is unattributed.
+
+    ``prune`` is opt-in: a trusted, internal SQL boolean over the target's
+    unqualified columns naming the slice this load is authoritative for (``"true"``
+    for the whole table, ``"(hash(gene_id) % 20) = 3"`` for one batch). After the
+    MERGE, rows inside that slice whose key is absent from ``source_sql`` are
+    deleted in the same attributed transaction, so the table mirrors the latest
+    full dump (ADR-0003 amendment). Callers MUST pass ``None`` for partial loads
+    (``limit``, subset fixtures, ``mode="append"``) or they delete real rows.
     """
     from . import ops  # local import avoids a connect<->ops circular dependency
+    from .log import logger  # local: log imports publish.release (cycle risk)
 
     parts = target.split(".")
     if len(parts) != 3:
@@ -340,6 +350,15 @@ def upsert(
             f"MERGE INTO {target} AS t USING _cri_stage AS s ON {on} "
             f"{matched}WHEN NOT MATCHED THEN INSERT *;"
         )
+        if prune is not None:
+            pruned = con.execute(
+                f"DELETE FROM {target} AS t WHERE ({prune}) "
+                f"AND NOT EXISTS (SELECT 1 FROM _cri_stage AS s WHERE {on});"
+            ).fetchone()[0]
+            if pruned:
+                logger.info(
+                    "{} pruned {:,} row(s) missing from the new load", target, pruned
+                )
     return con.execute(f"SELECT count(*) FROM {target}").fetchone()[0]
 
 

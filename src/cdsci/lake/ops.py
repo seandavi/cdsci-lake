@@ -618,6 +618,19 @@ def last_run(
     return dict(zip(cols, row, strict=True))
 
 
+def last_change_snapshot(con: duckdb.DuckDBPyConnection, ref: str) -> int | None:
+    """Newest snapshot_after of a 'success' run targeting ref (lake.S.T) or its schema (lake.S).
+
+    Multi-table EL sources (ncbi_gene, ontology) record their schema as the run
+    target, so a run against the schema counts as a change to every table in it.
+    """
+    return con.execute(
+        f"SELECT max(snapshot_after) FROM {_t('run')} "
+        "WHERE status = 'success' AND target IN (?, ?)",
+        [ref, ref.rsplit(".", 1)[0]],
+    ).fetchone()[0]
+
+
 _RUN_COLS = (
     "run_id", "source", "target", "version", "status", "snapshot_before",
     "snapshot_after", "rows_after", "started_at", "finished_at", "error", "host",

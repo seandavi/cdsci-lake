@@ -93,6 +93,29 @@ def test_land_batched_covers_every_row(lake_settings: Settings):
         con.close()
 
 
+def test_land_prunes_gene_dropped_upstream_across_batches(lake_settings: Settings, tmp_path: Path):
+    """A batched merge re-land deletes a gene the new dump dropped; ``limit`` never prunes."""
+    con = lake_connect(lake_settings)
+    count = "SELECT count(*) FROM lake.ncbi_gene.gene_info"
+    try:
+        for i in range(2):
+            ncbi_gene.land(con, "gene_info", GENE_INFO, VERSION, batch=(i, 2))
+        assert con.execute(count).fetchone()[0] == 7
+
+        lines = GENE_INFO.read_text().splitlines(keepends=True)
+        dropped = tmp_path / "gene_info_no_a1bg.tsv"
+        dropped.write_text("".join(ln for ln in lines if ln.split("\t")[1:2] != ["1"]))
+        for i in range(2):
+            ncbi_gene.land(con, "gene_info", dropped, VERSION, batch=(i, 2))
+        assert con.execute(count).fetchone()[0] == 6
+        assert con.execute(f"{count} WHERE gene_id = 1").fetchone()[0] == 0
+
+        ncbi_gene.land(con, "gene_info", GENE_INFO, VERSION, limit=1)
+        assert con.execute(count).fetchone()[0] == 6
+    finally:
+        con.close()
+
+
 def test_ingest_end_to_end(lake_settings: Settings):
     summary = ncbi_gene.ingest(
         dump="gene_info", file=str(GENE_INFO), version=VERSION,

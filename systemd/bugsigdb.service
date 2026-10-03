@@ -1,0 +1,29 @@
+# Scheduled bioc-family load (bioc ADR-0012/0013; cdsci ADR-0025) on the
+# cdsci-lake systemd scheduling convention -- see monode/infrastructure's
+# SCHEDULING.md for the full pattern this is an instance of.
+[Unit]
+Description=Load the newest BugSigDB release tag into lake.bugsigdb.signatures and rebuild its models
+Documentation=file:///home/davsean/Documents/git/cdsci-lake/docs/design/dashboard_and_scheduling.md
+After=network-online.target
+Wants=network-online.target
+OnFailure=ntfy-notify@%N.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/davsean/Documents/git/cdsci-lake
+EnvironmentFile=/home/davsean/Documents/git/cdsci-lake/.env
+Environment=CU_OPENALEX_LAKE_BACKEND=postgres
+# Follows GitHub releases/latest (CU_OPENALEX_BUGSIGDB_VERSION overrides). A full
+# load prunes signatures dropped from the release (ADR-0003 amendment).
+# NOT `/usr/bin/env uv` -- systemd --user's minimal PATH excludes ~/.local/bin
+# (see icite.service). One ExecStart= per command: systemd runs them in order
+# and stops at the first failure, so models never build on a partial load.
+ExecStart=%h/.local/bin/uv run python -m cdsci.lake.sources.bugsigdb run
+ExecStart=%h/.local/bin/uv run python -m cdsci.lake.transform run --if-stale bugsigdb.study bugsigdb.experiment bugsigdb.signature bugsigdb.signature_taxon
+# RuntimeMaxSec= silently has no effect on Type=oneshot -- use TimeoutStartSec=.
+# One CSV per release tag; an unchanged tag is an idempotent no-op.
+TimeoutStartSec=3600
+Nice=10
+
+[Install]
+WantedBy=default.target

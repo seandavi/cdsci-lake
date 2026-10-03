@@ -177,6 +177,33 @@ def test_upsert_is_idempotent_for_null_key_columns(lake_settings: Settings):
         con.close()
 
 
+def test_upsert_prune_deletes_missing_rows_only_inside_scope(lake_settings: Settings):
+    """``prune`` deletes keys absent from the load, only inside its slice; a no-op is free."""
+    con = lake_connect(lake_settings)
+    try:
+        seed = "SELECT * FROM (VALUES (1,'a'),(2,'b'),(3,'c'),(4,'d')) v(id,val)"
+        upsert(con, "lake.main.p", seed, key="id")
+        even = "(id % 2) = 0"
+
+        # Every even key present (4 changed): nothing pruned, 4 updated.
+        s1 = "SELECT * FROM (VALUES (2,'b'),(4,'D')) v(id,val)"
+        assert upsert(con, "lake.main.p", s1, key="id", prune=even) == 4
+        assert con.execute("SELECT val FROM lake.main.p WHERE id = 4").fetchone()[0] == "D"
+
+        # 4 dropped upstream: pruned; odd keys sit outside the slice and survive.
+        s2 = "SELECT * FROM (VALUES (2,'b')) v(id,val)"
+        assert upsert(con, "lake.main.p", s2, key="id", prune=even) == 3
+        ids = [r[0] for r in con.execute("SELECT id FROM lake.main.p ORDER BY id").fetchall()]
+        assert ids == [1, 2, 3]
+
+        # The same load again prunes zero rows and must add no snapshot.
+        before = con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0]
+        upsert(con, "lake.main.p", s2, key="id", prune=even)
+        assert con.execute("SELECT max(snapshot_id) FROM lake.snapshots()").fetchone()[0] == before
+    finally:
+        con.close()
+
+
 def test_reporter_projects_curate(lake_settings: Settings):
     con = lake_connect(lake_settings)
     try:

@@ -50,7 +50,7 @@ def run_model(con: duckdb.DuckDBPyConnection, model: Model) -> int:
         ),
     )
     kind = "VIEW" if model.materialized == "view" else "TABLE"
-    with ops.run(con, source=model.target, target=target) as r:
+    with ops.run(con, source=model.target, target=target, version=model.fingerprint) as r:
         with r.attribute(table):
             con.execute(f"CREATE SCHEMA IF NOT EXISTS {LAKE}.{schema};")
             con.execute(f"CREATE OR REPLACE {kind} {target} AS ({model.sql});")
@@ -62,6 +62,30 @@ def run_model(con: duckdb.DuckDBPyConnection, model: Model) -> int:
         )
         _record_lineage(con, model, target)
     return r.rows
+
+
+def is_stale(con: duckdb.DuckDBPyConnection, model: Model) -> bool:
+    """True when ``model`` needs a rebuild: never built successfully, SQL changed
+    (fingerprint differs), its table is missing, or an input table changed in a
+    snapshot after the model's last successful build.
+    """
+    last = ops.last_run(con, model.target, status="success")
+    if last is None or last["version"] != model.fingerprint:
+        return True
+    schema, table = model.target.split(".", 1)
+    exists = con.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_catalog = ? AND table_schema = ? AND table_name = ?",
+        [LAKE, schema, table],
+    ).fetchone()
+    if exists is None:
+        return True
+    built = last["snapshot_after"]
+    for dep in table_dependencies(model):
+        changed = ops.last_change_snapshot(con, f"{LAKE}.{dep}")
+        if changed is not None and (built is None or changed > built):
+            return True
+    return False
 
 
 def _run_tests(con: duckdb.DuckDBPyConnection, model: Model, target: str) -> None:

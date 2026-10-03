@@ -36,7 +36,7 @@ import duckdb
 from ... import ops
 from ...config import Settings, get_settings
 from ...connect import LAKE, csv_source, lake_connect, raw_dir, upsert
-from ...download import download
+from ...download import download, get_json
 
 _RAW = "bugsigdb"
 
@@ -171,12 +171,25 @@ def curate(
     target: str | None = None,
     limit: int | None = None,
 ) -> int:
-    """MERGE-upsert one release's ``full_dump.csv`` into ``signatures`` on ``bsdb_id``."""
+    """MERGE-upsert one release's ``full_dump.csv`` into ``signatures`` on ``bsdb_id``.
+
+    A full load prunes signatures dropped from the release; ``limit`` never prunes.
+    """
     target = target or f"{LAKE}.bugsigdb.signatures"
     return upsert(
         con, target, _select_sql(path, version, exported_at, limit),
         key="bsdb_id", exclude_change_cols=["export_timestamp"],
+        prune=None if limit else "true",
     )
+
+
+def latest_tag(settings: Settings | None = None) -> str:
+    """The newest BugSigDB exports release tag (GitHub ``releases/latest``)."""
+    s = settings or get_settings()
+    rel = get_json(s.bugsigdb_releases_api)
+    if not isinstance(rel, dict) or "tag_name" not in rel:
+        raise RuntimeError(f"No release found at {s.bugsigdb_releases_api}")
+    return rel["tag_name"]
 
 
 def ingest(
@@ -187,9 +200,13 @@ def ingest(
     limit: int | None = None,
     settings: Settings | None = None,
 ) -> dict:
-    """End-to-end: download (unless ``file``) a release tag -> MERGE-upsert -> summary."""
+    """End-to-end: download (unless ``file``) a release tag -> MERGE-upsert -> summary.
+
+    Tag precedence: ``version`` argument, then the ``bugsigdb_version`` setting
+    override, then the newest GitHub release (:func:`latest_tag`).
+    """
     s = settings or get_settings()
-    version = version or s.bugsigdb_version
+    version = version or s.bugsigdb_version or latest_tag(s)
     path = Path(file) if file else download_csv(version, s)
     exported_at = _exported_at(path)
     target = f"{LAKE}.{schema}.signatures"

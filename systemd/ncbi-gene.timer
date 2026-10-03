@@ -1,0 +1,12 @@
+[Unit]
+Description=Weekly NCBI Gene dumps load (source cadence: nightly; loaded weekly)
+
+[Timer]
+OnCalendar=Sat *-*-* 03:00:00
+RandomizedDelaySec=1800
+# NCBI regenerates gene/DATA nightly; weekly is the owner-chosen load cadence.
+# Persistent: a missed trigger (host down) runs at next boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

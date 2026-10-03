@@ -57,3 +57,17 @@ and the stamp then records **the snapshot in which a row last actually changed**
   pushes dedup to every read. Rejected; DuckLake snapshots already version.
 - **Compare `snapshot_version` like any column** — forces the monthly full rewrite
   above. Rejected; it's the bug this ADR's exclusion fixes.
+
+## Amendment 2026-10-03
+
+MERGE alone never deletes, so a row dropped upstream persists forever and a
+full-snapshot release cut from the lake (ADR-0025) would republish it. Full-dump
+sources therefore pass a scoped **`prune=`** to `upsert`: a trusted, internal SQL
+boolean over the target's columns naming the slice the load is authoritative for
+(`"true"` for the whole table, `"(hash(gene_id) % n) = i"` for one batch,
+`"ontology = 'go'"` for one ontology). After the MERGE, rows inside that slice whose
+key is absent from the load are deleted **in the same attributed transaction**, so
+the change lands in the same snapshot. A prune that deletes nothing adds no
+snapshot, so the idempotent-re-run contract holds. Prune is opt-in; partial loads
+(`limit`, subset fixtures, `mode="append"`) pass `None`. Ensembl does not prune: its
+(taxon, release) partitions are immutable and releases stack by design.

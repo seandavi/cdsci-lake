@@ -2,7 +2,7 @@
 -- license: cc-by-4.0
 -- uniprot.identifier_mapping: reshapes lake.uniprot.idmapping's (accession,
 -- gene_id) pairs into the (source_namespace, source_id, target_namespace,
--- target_id, taxon_id, source, confidence, valid_from, valid_to) tuple
+-- target_id, taxon_id, source, confidence) tuple
 -- bioc-on-ice's annotation.identifier_mapping already uses for every other
 -- cross-reference direction (verified live: ENTREZ -> SYMBOL/ALIAS/HGNC/...).
 -- `ENTREZ`, not `ENTREZID` -- the OrgDb keytype name (SPEC.md's own parity
@@ -18,8 +18,6 @@ SELECT
     accession AS target_id,
     TRY_CAST(ncbi_taxon AS INTEGER) AS taxon_id,
     'UniProt' AS source,
-    CAST(NULL AS DOUBLE) AS confidence,
-    snapshot_version AS valid_from,
-    CAST(NULL AS VARCHAR) AS valid_to
+    CAST(NULL AS DOUBLE) AS confidence
 FROM lake.uniprot.idmapping
 WHERE TRY_CAST(ncbi_taxon AS INTEGER) IS NOT NULL

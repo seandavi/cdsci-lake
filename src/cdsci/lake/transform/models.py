@@ -34,6 +34,7 @@ business key to assert), not an error.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,6 +67,11 @@ class Model:
     materialized: Literal["table", "view"] = "table"
     column_comments: dict[str, str] = field(default_factory=dict)
     tests: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def fingerprint(self) -> str:
+        """Short hash of the model SQL, recorded as its run ``version`` (``--if-stale``)."""
+        return "sql:" + hashlib.sha256(self.sql.encode()).hexdigest()[:12]
 
 
 def _directives(sql: str, target: str) -> tuple[str, str, Literal["table", "view"]]:

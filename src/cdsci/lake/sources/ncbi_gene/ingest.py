@@ -139,15 +139,19 @@ def _load(
     key: list[str],
     *,
     mode: str,
+    prune: str | None,
 ) -> int:
     """MERGE-upsert (idempotent) or append-INSERT (disjoint bulk) one batch.
 
     ``mode="append"`` skips the MERGE's read of a target that grows with every
     batch -- safe only because the shards partition disjointly by ``gene_id``
-    (the same lesson ``uniprot``/``openalex``/``pmc`` landed on).
+    (the same lesson ``uniprot``/``openalex``/``pmc`` landed on). ``prune`` is
+    the slice this batch is authoritative for (see :func:`cdsci.lake.upsert`).
     """
     if mode == "merge":
-        return upsert(con, target, source_sql, key, exclude_change_cols=["snapshot_version"])
+        return upsert(
+            con, target, source_sql, key, exclude_change_cols=["snapshot_version"], prune=prune
+        )
     if mode != "append":
         raise ValueError(f"mode must be 'merge' or 'append', got {mode!r}")
     catalog, schema, _ = target.split(".")
@@ -175,11 +179,19 @@ def land(
 
     ``columns``/``key`` default to this module's :data:`DUMP_COLUMNS` /
     :data:`DUMP_KEYS`; the gene2* siblings (#37/#38/#39) pass their own and
-    otherwise reuse this whole function unchanged.
+    otherwise reuse this whole function unchanged. A full merge load prunes rows
+    dropped upstream, scoped to its ``batch`` shard; ``limit`` or ``mode="append"``
+    never prunes.
     """
     target = f"{LAKE}.{schema}.{name}"
     sql = _select_sql(path, version, columns or DUMP_COLUMNS[name], limit, batch)
-    return _load(con, target, sql, key or DUMP_KEYS[name], mode=mode)
+    if limit or mode != "merge":
+        prune = None
+    elif batch is not None:
+        prune = f"(hash(gene_id) % {int(batch[1])}) = {int(batch[0])}"
+    else:
+        prune = "true"
+    return _load(con, target, sql, key or DUMP_KEYS[name], mode=mode, prune=prune)
 
 
 def ingest(
