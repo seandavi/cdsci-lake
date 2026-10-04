@@ -7,7 +7,7 @@ here: interpreting the GTF (attribute parsing, the CDS→exon join) is SQL under
 is a ``transform run``, not a re-download.
 
 **Immutable per release.** An Ensembl release never changes, so a GTF is landed
-whole per ``(ncbitaxon_id, ensembl_release)`` and a re-ingest of an already-landed
+whole per ``(species, ensembl_release)`` and a re-ingest of an already-landed
 partition is a **no-op** (not a re-download, not a re-write, no snapshot) unless
 ``replace=True``. That's the icite-style snapshot shape the issue asks for rather
 than a MERGE-on-change source: there is no per-row natural key in a GTF worth
@@ -183,12 +183,15 @@ def curate(
     replace: bool = False,
     limit: int | None = None,
 ) -> int:
-    """Land ``path`` as the ``(ncbitaxon_id, ensembl_release)`` partition of ``target``.
+    """Land ``path`` as the ``(species, ensembl_release)`` partition of ``target``.
 
-    Already-landed partition + ``replace=False`` → returns immediately, writing
-    nothing (an Ensembl release is immutable; see the module docstring). Otherwise
-    the partition is deleted and re-inserted wholesale inside one attributed
-    snapshot. Returns the target's full row count either way.
+    Keyed by Ensembl species (one assembly), not taxon: a taxon can carry many
+    assemblies in one release (28 pig breeds, 13 mouse strains in 116), and a
+    taxon key skipped every assembly after the first. Already-landed partition +
+    ``replace=False`` → returns immediately, writing nothing (an Ensembl release
+    is immutable; see the module docstring). Otherwise the partition is deleted
+    and re-inserted wholesale inside one attributed snapshot. Returns the
+    target's full row count either way.
     """
     target = target or f"{LAKE}.{_TABLE}"
     catalog, schema, _ = target.split(".")
@@ -196,13 +199,13 @@ def curate(
     con.execute(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema};")
     con.execute(f"CREATE TABLE IF NOT EXISTS {target} AS SELECT * FROM ({select}) WHERE false;")
 
-    where = "ncbitaxon_id = ? AND ensembl_release = ?"
-    params = [info["ncbitaxon_id"], info["ensembl_release"]]
+    where = "species = ? AND ensembl_release = ?"
+    params = [info["species"], info["ensembl_release"]]
     landed = con.execute(f"SELECT count(*) FROM {target} WHERE {where}", params).fetchone()[0]
     if landed and not replace:
         _log.info(
-            "release {} / taxon {} already landed ({:,} rows) — skipping (pass replace=True "
-            "to force)", info["ensembl_release"], info["ncbitaxon_id"], landed,
+            "release {} / {} already landed ({:,} rows) — skipping (pass replace=True "
+            "to force)", info["ensembl_release"], info["species"], landed,
         )
         return con.execute(f"SELECT count(*) FROM {target}").fetchone()[0]
 
@@ -256,9 +259,11 @@ def ingest_release(
     """Land every vertebrate species of a release, skipping species already landed.
 
     "Landed" is read from the ``lake_ops.run`` ledger (``version`` =
-    ``{release}:{species}``), not by scanning the multi-hundred-million-row
-    ``gtf`` table. A species failure is recorded and the loop continues; any
-    failure raises at the end so the scheduled unit fails loudly.
+    ``{release}:{species}``, status ``success``), not by scanning the
+    multi-hundred-million-row ``gtf`` table (~3 min over R2). ``idempotent`` runs
+    don't count: they only say a partition already existed. A species failure is
+    recorded and the loop continues; any failure raises at the end so the
+    scheduled unit fails loudly.
     """
     s = settings or get_settings()
     release = ensembl_release or current_release()
@@ -269,8 +274,7 @@ def ingest_release(
             for row in con.execute(
                 f"SELECT DISTINCT split_part(version, ':', 2) "
                 f"FROM {ops.OPS}.{ops.OPS_SCHEMA}.run "
-                "WHERE source = 'ensembl' AND status IN ('success', 'idempotent') "
-                "AND version LIKE ?",
+                "WHERE source = 'ensembl' AND status = 'success' AND version LIKE ?",
                 [f"{release}:%"],
             ).fetchall()
         }
