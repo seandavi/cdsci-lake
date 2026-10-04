@@ -15,7 +15,7 @@ EnvironmentFile=/home/davsean/Documents/git/cdsci-lake/.env
 Environment=CU_OPENALEX_LAKE_BACKEND=postgres
 # run-release lands species not yet recorded in lake_ops for the current release;
 # an unchanged release lands nothing and every model is skipped as up to date.
-# Partitions are immutable per (taxon, release) -- no prune.
+# Partitions are immutable per (species, release) -- no prune.
 # NOT `/usr/bin/env uv` -- systemd --user's minimal PATH excludes ~/.local/bin
 # (see icite.service). One ExecStart= per command: systemd runs them in order
 # and stops at the first failure, so models never build on a partial load.

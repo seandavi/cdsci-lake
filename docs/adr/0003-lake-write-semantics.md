@@ -70,4 +70,4 @@ key is absent from the load are deleted **in the same attributed transaction**, 
 the change lands in the same snapshot. A prune that deletes nothing adds no
 snapshot, so the idempotent-re-run contract holds. Prune is opt-in; partial loads
 (`limit`, subset fixtures, `mode="append"`) pass `None`. Ensembl does not prune: its
-(taxon, release) partitions are immutable and releases stack by design.
+(species, release) partitions are immutable and releases stack by design.

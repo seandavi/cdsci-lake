@@ -24,7 +24,7 @@ import pytest
 from cdsci.lake import Settings, lake_connect, ops
 from cdsci.lake.sources import ensembl
 from cdsci.lake.transform.models import load_models
-from cdsci.lake.transform.runner import run_all
+from cdsci.lake.transform.runner import run_all, run_model
 
 FIXTURES = Path(__file__).parent / "fixtures"
 MODELS = Path(__file__).parents[1] / "transform" / "models"
@@ -91,7 +91,7 @@ def test_curate_skips_an_already_landed_release(con):
 
 
 def test_curate_replace_rewrites_only_its_own_partition(con):
-    """``replace=True`` re-lands one (taxon, release); a different taxon is untouched."""
+    """``replace=True`` re-lands one (species, release); another species is untouched."""
     ensembl.curate(con, SAMPLE, INFO)
     other = {**INFO, "ncbitaxon_id": 9606, "species": "homo_sapiens"}
     ensembl.curate(con, SAMPLE, other)
@@ -99,9 +99,24 @@ def test_curate_replace_rewrites_only_its_own_partition(con):
 
     ensembl.curate(con, SAMPLE, INFO, replace=True, limit=5)
     counts = dict(con.execute(
-        "SELECT ncbitaxon_id, count(*) FROM lake.ensembl.gtf GROUP BY 1"
+        "SELECT species, count(*) FROM lake.ensembl.gtf GROUP BY 1"
     ).fetchall())
-    assert counts == {559292: 5, 9606: SAMPLE_ROWS}
+    assert counts == {"saccharomyces_cerevisiae": 5, "homo_sapiens": SAMPLE_ROWS}
+
+
+def test_curate_lands_every_assembly_of_one_taxon(con):
+    """Two assemblies sharing a taxon (mouse strains, pig breeds) both land.
+
+    Regression: the partition was keyed (taxon, release), so the second
+    assembly of a taxon was skipped as "already landed" (66 of 359 species in
+    release 116).
+    """
+    ensembl.curate(con, SAMPLE, INFO)
+    strain = {**INFO, "species": "saccharomyces_cerevisiae_strain", "genome_accession": "GCA_X"}
+    assert ensembl.curate(con, SAMPLE, strain) == 2 * SAMPLE_ROWS
+    # genome's own test asserts one row per (assembly, release); it failed in prod
+    # under the old (taxon, release) grain. run_model raises on a failing test.
+    assert run_model(con, load_models(MODELS)["ensembl.genome"]) == 2
 
 
 def test_models_derive_genome_gene_transcript_exon(con):
