@@ -1,6 +1,6 @@
 [project]
 name = "cdsci-lake"
-version = "0.4.1"
+version = "0.4.2"
 description = "Shared DuckLake platform: read client + bulk source ingestors for the cdsci research-data lake"
 readme = "README.md"
 authors = [{ name = "Sean Davis", email = "seandavi@gmail.com" }]

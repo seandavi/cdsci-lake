@@ -1,6 +1,6 @@
--- description: One row per (exon, transcript) per release, with the coding bounds and phase of the CDS lying in it.
+-- description: One row per (exon, transcript) per assembly (species) per release, with the coding bounds and phase of the CDS lying in it.
 -- license: ensembl-no-restrictions
--- column exon_id: Ensembl stable exon id (ENSE…). Not unique on its own — one exon is shared by every transcript that contains it, so the key is (exon_id, transcript_id, ncbitaxon_id, ensembl_release).
+-- column exon_id: Ensembl stable exon id (ENSE…). Not unique on its own — one exon is shared by every transcript that contains it, and breed/strain assemblies of one taxon reuse stable ids, so the key is (exon_id, transcript_id, species, ensembl_release).
 -- column rank: The exon's 1-based position within its transcript (GTF `exon_number`), counted 5'→3' on the transcript's own strand.
 -- column cds_start: Start of the coding sequence within this exon, or NULL for a wholly non-coding exon. From the CDS line joined on (transcript_id, exon_number).
 -- column cds_phase: GTF `frame` of the joined CDS line — bases to skip before the first whole codon (0/1/2). NULL for a non-coding exon.
@@ -21,6 +21,7 @@ SELECT
     e.exon_id,
     e.transcript_id,
     e.ncbitaxon_id,
+    e.species,
     e.ensembl_release,
     e.seqname AS sequence_name,
     e."start",
@@ -36,6 +37,6 @@ LEFT JOIN lake.ensembl.feature c
   ON c.feature = 'CDS'
  AND c.transcript_id = e.transcript_id
  AND c.exon_number = e.exon_number
- AND c.ncbitaxon_id = e.ncbitaxon_id
+ AND c.species = e.species
  AND c.ensembl_release = e.ensembl_release
 WHERE e.feature = 'exon'
