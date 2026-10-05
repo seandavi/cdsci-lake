@@ -1,11 +1,13 @@
--- description: One row per Ensembl gene per release — the GTF's `gene` feature lines.
+-- description: One row per Ensembl gene per assembly (species) per release — the GTF's `gene` feature lines.
 -- license: ensembl-no-restrictions
 -- column gene_id: Ensembl stable gene id (ENSG…, or the species' native id for non-Ensembl genebuilds — yeast carries SGD ids such as YDL246C). External and citable; unversioned, with the version in its own column.
 -- column symbol: The gene's official symbol (GTF `gene_name`). NULL where Ensembl has no symbol for the gene — common outside the well-annotated genomes.
 -- column gene_type: GTF `gene_biotype` (protein_coding, lncRNA, …).
 -- column curation_source: GTF `gene_source` — which genebuild annotated the gene (ensembl, havana, ensembl_havana, sgd, …), not this lake's `source`.
 -- ensembl.gene (ADR-0015): a straight projection of the `gene` lines from
--- ensembl.feature, keyed (gene_id, ncbitaxon_id, ensembl_release). Column names
+-- ensembl.feature, keyed (gene_id, species, ensembl_release): breed/strain
+-- assemblies of one taxon reuse the reference's stable ids (sheep ENSOARG…
+-- across 12 assemblies in 116), so taxon is not part of the key. Column names
 -- follow bioc-on-ice's annotation.gene shape (symbol/gene_type/curation_source)
 -- because those are the better names, but `ncbitaxon_id` deliberately does *not*
 -- follow its `taxon_id` — this lake's id-naming convention (scripts/
@@ -13,6 +15,7 @@
 SELECT
     gene_id,
     ncbitaxon_id,
+    species,
     ensembl_release,
     gene_version AS version,
     gene_name AS symbol,

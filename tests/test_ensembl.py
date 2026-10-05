@@ -24,7 +24,7 @@ import pytest
 from cdsci.lake import Settings, lake_connect, ops
 from cdsci.lake.sources import ensembl
 from cdsci.lake.transform.models import load_models
-from cdsci.lake.transform.runner import run_all, run_model
+from cdsci.lake.transform.runner import run_all
 
 FIXTURES = Path(__file__).parent / "fixtures"
 MODELS = Path(__file__).parents[1] / "transform" / "models"
@@ -105,18 +105,23 @@ def test_curate_replace_rewrites_only_its_own_partition(con):
 
 
 def test_curate_lands_every_assembly_of_one_taxon(con):
-    """Two assemblies sharing a taxon (mouse strains, pig breeds) both land.
+    """Two assemblies sharing a taxon *and* stable ids both land and model cleanly.
 
     Regression: the partition was keyed (taxon, release), so the second
     assembly of a taxon was skipped as "already landed" (66 of 359 species in
-    release 116).
+    release 116); and the models keyed (id, taxon, release), which breed
+    assemblies break by reusing the reference's ids (sheep ENSOARG… in 116).
+    The same GTF bytes under a second species name is exactly that shape.
     """
     ensembl.curate(con, SAMPLE, INFO)
     strain = {**INFO, "species": "saccharomyces_cerevisiae_strain", "genome_accession": "GCA_X"}
     assert ensembl.curate(con, SAMPLE, strain) == 2 * SAMPLE_ROWS
-    # genome's own test asserts one row per (assembly, release); it failed in prod
-    # under the old (taxon, release) grain. run_model raises on a failing test.
-    assert run_model(con, load_models(MODELS)["ensembl.genome"]) == 2
+    models = {t: m for t, m in load_models(MODELS).items() if t.startswith("ensembl.")}
+    # run_all runs every model's .test.sql grain assertions; a failure raises.
+    assert run_all(con, models) == {
+        "ensembl.feature": 2 * SAMPLE_ROWS, "ensembl.genome": 2, "ensembl.gene": 8,
+        "ensembl.transcript": 8, "ensembl.exon": 22,
+    }
 
 
 def test_models_derive_genome_gene_transcript_exon(con):
