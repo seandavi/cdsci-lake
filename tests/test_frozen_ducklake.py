@@ -479,3 +479,38 @@ def test_verify_release_fails_closed_for_unsupported_store_with_ducklake_artifac
     assert by_name["ducklake.acceptance_supported"].passed is False
     assert by_name["ducklake.acceptance_supported"].required is True
     assert report.passed is False
+
+
+def test_url_valued_data_does_not_trip_no_private_paths(tmp_path: Path):
+    """#127: DuckLake keeps per-column min/max string stats in the catalog; a URL-valued
+    data column must not read as a private location."""
+    con = duckdb.connect()
+    tables = _tables(con)
+    tables["demo.events"] = con.sql(
+        "SELECT * FROM (VALUES "
+        "('e1', '2026-01-01T00:00:00Z', 'https://pubmed.ncbi.nlm.nih.gov/35232402/'), "
+        "('e2', '2026-01-02T00:00:00Z', '/srv/not/a/leak/but/data') "
+        ") v(event_id, occurred_at, payload)"
+    )
+    store = LocalDirStore(root=tmp_path)
+    manifest = build_release(_candidate("2026-01-01"), tables, store, contract=fx.DATASET_CONTRACT)
+    manifest = build_frozen_ducklake(store, manifest, contract=fx.DATASET_CONTRACT)
+    report = verify_release(
+        store, "demo-catalog", "2026-01-01", manifest, contract=fx.DATASET_CONTRACT
+    )
+    assert {c.name: c.passed for c in report.checks}["ducklake.no_private_paths"] is True
+
+
+def test_private_path_in_location_column_still_fails(tmp_path: Path):
+    store, manifest = _build_frozen(tmp_path)
+    catalog = _release_dir(tmp_path) / CATALOG_FILENAME
+    con = duckdb.connect(str(catalog))
+    con.execute(
+        "UPDATE ducklake_metadata SET value = '/home/me/private/lake/data/' "
+        "WHERE key = 'data_path'"
+    )
+    con.close()
+    from cdsci.lake.publish.verify import _inspect_catalog_metadata
+
+    reasons, _ = _inspect_catalog_metadata(catalog)
+    assert "ducklake_metadata.value" in reasons
