@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
@@ -66,39 +65,39 @@ def _digest_or_record_failure(
         return None
 
 
-# A rooted or drive-lettered path of >= 3 segments, not preceded by a path/word
-# char (so it does not fire inside the relative `tables/x/data/y.parquet` strings the
-# catalog legitimately holds, nor on random slack bytes). Root-agnostic: /data, /Users,
-# /scratch are caught as well as /home and /tmp.
-_PRIVATE_PATH_RAW_PATTERN = re.compile(
-    rb"(?<![A-Za-z0-9_.+/\\-])(?:[A-Za-z]:[\\/]|[/\\])(?:[A-Za-z0-9_.+-]+[\\/]){2,}[A-Za-z0-9_.+-]+"
-    rb"|://"
+# Catalog columns that hold values derived from the data itself (per-column min/max
+# stats, partition values, inlined rows), not locations. A URL-valued string column
+# legitimately puts ``https://...`` here (cdsci-lake#127), so they are not scanned;
+# every other VARCHAR column is, so a newly added location column fails closed.
+_DATA_DERIVED_COLUMNS = frozenset(
+    {"min_value", "max_value", "extra_stats", "partition_value", "variant_path", "shredded_type"}
 )
+_DATA_DERIVED_TABLE_PREFIX = "ducklake_inlined_data_"
 
 
 def _inspect_catalog_metadata(catalog_path: Path) -> tuple[list[str], int]:
     """Open ``catalog_path`` as a plain (non-DuckLake) database and return
-    ``(leak_reasons, snapshot_count)``: ``leak_reasons`` names every place (raw file
-    bytes, or a ``table.column``) that still looks like an absolute path or URL
-    scheme -- design §4 rule 4 -- and ``snapshot_count`` is the released catalog's own
-    ``ducklake_snapshot`` row count (a release is one published state -- cdsci-lake#95
-    M2 review finding #7's single-snapshot collapse). Reasons never include the leaked
+    ``(leak_reasons, snapshot_count)``: ``leak_reasons`` names every catalog
+    ``table.column`` (other than data-derived stats, see ``_DATA_DERIVED_COLUMNS``)
+    that still looks like an absolute path or URL scheme -- design §4 rule 4 -- and
+    ``snapshot_count`` is the released catalog's own ``ducklake_snapshot`` row count (a
+    release is one published state -- cdsci-lake#95 M2 review finding #7's
+    single-snapshot collapse). Reasons never include the leaked
     value itself, only its location -- an ``AcceptanceCheck.detail`` is itself a
     public-artifact field (design §4), so it must not carry the very private path
     this check exists to catch.
     """
     reasons: list[str] = []
-    if _PRIVATE_PATH_RAW_PATTERN.search(catalog_path.read_bytes()):
-        reasons.append("raw catalog bytes contain an absolute-path or URL-scheme marker")
-
     con = duckdb.connect(str(catalog_path), read_only=True)
     try:
         table_names = [
             r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()
         ]
         for table_name in table_names:
+            if table_name.startswith(_DATA_DERIVED_TABLE_PREFIX):
+                continue
             for col_name, col_type, *_ in con.execute(f"DESCRIBE {table_name}").fetchall():
-                if col_type != "VARCHAR":
+                if col_type != "VARCHAR" or col_name in _DATA_DERIVED_COLUMNS:
                     continue
                 hit = con.execute(
                     f'SELECT count(*) FROM {table_name} WHERE "{col_name}" IS NOT NULL '
