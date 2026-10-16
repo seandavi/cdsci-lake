@@ -2,7 +2,7 @@
 .env
 
 # Lake raw downloads + local catalog/data (R2 is the real data store)
-/data/
+/data
 *.duckdb
 *.duckdb.wal
 
