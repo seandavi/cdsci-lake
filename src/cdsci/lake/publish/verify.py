@@ -501,6 +501,7 @@ def verify_release_over_release(
     candidate: Path,
     reference: str | None,
     contracts: Iterable[DatasetContract],
+    uncontracted_tables: Iterable[str] = (),
 ) -> AcceptanceReport:
     """The publish gate (bioc-on-ice#183 step 5): a candidate release bundle on local disk
     against the previous published release ``reference`` (its base URL or directory;
@@ -510,8 +511,11 @@ def verify_release_over_release(
     count within the contract's ``row_count_bounds`` of the reference's, (3) primary key
     not null and unique, (4) every ``references`` column covered by its target table in
     the candidate. A table absent from the reference (a new source) gets only 3 and 4; a
-    reference table absent from the candidate fails. A table with no ``TableContract``
-    gets 1 and 2 with default bounds and an optional ``contract_declared`` failure.
+    reference table absent from the candidate fails, as does an empty candidate or an
+    empty reference. A table with no ``TableContract`` fails the required
+    ``contract_declared`` check unless the caller names it in ``uncontracted_tables``
+    (an owner-approved exemption): then it gets 1 and 2 with default bounds and
+    ``contract_declared`` is an optional failure.
     Reference columns and counts come from its ``manifest.json`` alone -- no reference
     Parquet is read.
     """
@@ -521,6 +525,7 @@ def verify_release_over_release(
             if table.name in tables_by_name:
                 raise ValueError(f"table contract {table.name!r} declared twice")
             tables_by_name[table.name] = table
+    uncontracted = set(uncontracted_tables)
     checks: list[AcceptanceCheck] = []
     con = duckdb.connect()
     try:
@@ -540,8 +545,12 @@ def verify_release_over_release(
                     )
                 )
             else:
+                # An empty reference would make every candidate table look new.
                 checks.append(
-                    AcceptanceCheck("reference_manifest_loads", passed=True, required=True)
+                    AcceptanceCheck(
+                        "reference_manifest_loads", passed=bool(previous), required=True,
+                        detail="" if previous else "reference manifest lists no tables",
+                    )
                 )
 
         names = []
@@ -551,6 +560,12 @@ def verify_release_over_release(
             path = str(candidate / t["path"]).replace("'", "''")
             con.execute(f"CREATE VIEW {_quote(name)} AS SELECT * FROM read_parquet('{path}')")
             names.append(name)
+        checks.append(
+            AcceptanceCheck(
+                "candidate_has_tables", passed=bool(names), required=True,
+                detail=f"{len(names)} tables",
+            )
+        )
 
         for name in sorted(previous.keys() - set(names)):
             checks.append(
@@ -586,10 +601,12 @@ def verify_release_over_release(
                     )
                 )
             if contract is None:
+                exempt = name in uncontracted
                 checks.append(
                     AcceptanceCheck(
-                        f"{name}.contract_declared", passed=False, required=False,
-                        detail="no TableContract: key and join checks not run",
+                        f"{name}.contract_declared", passed=False, required=not exempt,
+                        detail="no TableContract: key and join checks not run"
+                        + ("; exempted by caller" if exempt else ""),
                     )
                 )
                 continue
@@ -625,9 +642,10 @@ def verify_release_over_release(
                 checks.append(
                     _count_is_zero(
                         con, check_name,
-                        f"SELECT count(*) FROM (SELECT DISTINCT {_quote(column)} AS v "
-                        f"FROM {view} WHERE {_quote(column)} IS NOT NULL) "
-                        f"ANTI JOIN {_quote(target_table)} t ON v = t.{_quote(target_column)}",
+                        f"SELECT count(DISTINCT s.{_quote(column)}) FROM {view} s "
+                        f"ANTI JOIN {_quote(target_table)} t "
+                        f"ON s.{_quote(column)} = t.{_quote(target_column)} "
+                        f"WHERE s.{_quote(column)} IS NOT NULL",
                         f"distinct values missing from {target}",
                     )
                 )

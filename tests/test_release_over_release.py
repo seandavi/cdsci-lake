@@ -1,12 +1,16 @@
 """Offline tests for ``verify_release_over_release`` (bioc-on-ice#183 step 5).
 
 Each test writes two tiny release bundles (Parquet + ``manifest.json`` in the
-``bioconice publish`` layout) to ``tmp_path``; no network.
+``bioconice publish`` layout) to ``tmp_path``; no network beyond a loopback http.server.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import functools
+import http.server
 import json
+import threading
 from pathlib import Path
 
 import duckdb
@@ -56,6 +60,7 @@ EVENTS_SQL = "SELECT i::BIGINT AS event_id, (i % 10 + 1)::BIGINT AS entity_id FR
 def _bundle(root: Path, release: str, tables: dict[str, str]) -> Path:
     """Write ``tables`` (name -> SELECT) as a release bundle under ``root``."""
     con = duckdb.connect()
+    root.mkdir(parents=True, exist_ok=True)
     entries = []
     for name, sql in tables.items():
         schema, table = name.split(".")
@@ -79,10 +84,14 @@ def reference(tmp_path: Path) -> Path:
     )
 
 
-def _gate(tmp_path: Path, reference: Path | None, tables: dict[str, str], contracts=CONTRACTS):
+def _gate(
+    tmp_path: Path, reference: Path | str | None, tables: dict[str, str],
+    contracts=CONTRACTS, uncontracted_tables=(),
+):
     candidate = _bundle(tmp_path / "candidate", "2026-10-31", tables)
     return verify_release_over_release(
-        "demo", candidate, None if reference is None else str(reference), contracts
+        "demo", candidate, None if reference is None else str(reference), contracts,
+        uncontracted_tables,
     )
 
 
@@ -181,15 +190,113 @@ def test_unreadable_reference_fails(tmp_path):
     assert _failed(report) == {"reference_manifest_loads"}
 
 
-def test_table_without_contract_is_an_optional_failure(tmp_path, reference):
+def test_table_without_contract_fails(tmp_path, reference):
     report = _gate(
         tmp_path, reference,
         {"demo.entities": ENTITIES_SQL.format(n=10), "demo.events": EVENTS_SQL},
         contracts=[],
     )
-    assert report.passed
+    assert _failed(report) == {"demo.entities.contract_declared", "demo.events.contract_declared"}
+
+
+def test_uncontracted_exemption_is_an_optional_failure(tmp_path, reference):
+    report = _gate(
+        tmp_path, reference,
+        {"demo.entities": ENTITIES_SQL.format(n=10), "demo.events": EVENTS_SQL},
+        contracts=[],
+        uncontracted_tables={"demo.entities", "demo.events"},
+    )
+    assert report.passed, report.to_json()
     optional = {c.name for c in report.checks if not c.required and not c.passed}
     assert optional == {"demo.entities.contract_declared", "demo.events.contract_declared"}
+    assert "demo.events.row_count_within_bounds" in {c.name for c in report.checks}
+
+
+def _only(table: TableContract) -> list[DatasetContract]:
+    return [dataclasses.replace(CONTRACTS[0], tables={table.name: table})]
+
+
+def test_duplicate_keys_without_contract_fail(tmp_path, reference):
+    report = _gate(
+        tmp_path, reference,
+        {
+            "demo.entities": ENTITIES_SQL.format(n=10) + " UNION ALL SELECT 1, 'dup'",
+            "demo.events": EVENTS_SQL,
+        },
+        contracts=_only(EVENTS),
+    )
+    assert _failed(report) == {"demo.entities.contract_declared"}
+
+
+def test_orphan_references_without_contract_fail(tmp_path, reference):
+    report = _gate(
+        tmp_path, reference,
+        {
+            "demo.entities": ENTITIES_SQL.format(n=10),
+            "demo.events": EVENTS_SQL.replace("+ 1", "+ 5"),
+        },
+        contracts=_only(ENTITIES),
+    )
+    assert _failed(report) == {"demo.events.contract_declared"}
+
+
+def test_empty_reference_fails(tmp_path):
+    reference = _bundle(tmp_path / "v2026-10-01", "2026-10-01", {})
+    report = _gate(
+        tmp_path, reference,
+        {"demo.entities": ENTITIES_SQL.format(n=10), "demo.events": EVENTS_SQL},
+    )
+    assert _failed(report) == {"reference_manifest_loads"}
+
+
+def test_empty_candidate_fails(tmp_path):
+    report = _gate(tmp_path, None, {})
+    assert _failed(report) == {"candidate_has_tables"}
+
+
+def test_reference_target_column_named_v(tmp_path):
+    targets = TableContract(
+        **{**vars(ENTITIES), "name": "demo.targets", "primary_key": ("v",),
+           "columns": (ColumnContract("v", "int64", "Key.", nullable=False),)},
+    )
+    refs = TableContract(
+        **{**vars(ENTITIES), "name": "demo.refs", "primary_key": ("id",),
+           "columns": (ColumnContract("id", "int64", "Key.", nullable=False),
+                       ColumnContract("v", "int64", "Target.", nullable=True)),
+           "references": {"v": "demo.targets.v"}},
+    )
+    contracts = [dataclasses.replace(
+        CONTRACTS[0], tables={"demo.targets": targets, "demo.refs": refs}
+    )]
+    tables = {
+        "demo.targets": "SELECT i::BIGINT AS v FROM range(5) t(i)",
+        "demo.refs": "SELECT i::BIGINT AS id, (i % 5)::BIGINT AS v FROM range(10) t(i)",
+    }
+    report = _gate(tmp_path, None, tables, contracts=contracts)
+    assert report.passed, report.to_json()
+    report = _gate(
+        tmp_path, None, {**tables, "demo.refs": tables["demo.refs"].replace("% 5", "% 7")},
+        contracts=contracts,
+    )
+    check = next(c for c in report.checks if c.name == "demo.refs.v.references_covered")
+    assert not check.passed and check.detail.endswith(": 2")
+
+
+def test_reference_manifest_over_local_http(tmp_path, reference):
+    handler = functools.partial(
+        http.server.SimpleHTTPRequestHandler, directory=str(reference.parent)
+    )
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        report = _gate(
+            tmp_path, f"http://127.0.0.1:{server.server_port}/{reference.name}/",
+            {"demo.entities": ENTITIES_SQL.format(n=12), "demo.events": EVENTS_SQL},
+        )
+    finally:
+        server.shutdown()
+    assert report.passed, report.to_json()
+    assert "demo.entities.row_count_within_bounds" in {c.name for c in report.checks}
 
 
 def test_contract_rejects_bad_references_and_bounds():
