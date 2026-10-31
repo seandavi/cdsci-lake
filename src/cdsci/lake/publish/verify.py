@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 import duckdb
 
-from ..contracts import DatasetContract
+from ..contracts import DEFAULT_ROW_COUNT_BOUNDS, DatasetContract
 from .builder import (
     LocalDirStore,
     ObjectStore,
@@ -32,6 +33,7 @@ from .release import (
     AcceptanceReport,
     ReleaseManifest,
     TableFileIndex,
+    _check_public_path,
 )
 
 
@@ -467,5 +469,191 @@ def verify_release(
 
     return AcceptanceReport(
         dataset=dataset_id, release=release_id, run_id=run_id,
+        checked_at=datetime.now(UTC).isoformat(), checks=tuple(checks),
+    )
+
+
+def _bundle_manifest(con: duckdb.DuckDBPyConnection, base: str) -> dict:
+    """A release bundle's ``manifest.json`` (``bioconice publish``'s layout: ``tables[]``
+    with ``schema``/``table``/``path``/``row_count``/``columns[].name/type``), read through
+    DuckDB so ``base`` may be a local directory or an ``https://`` release prefix."""
+    text = con.execute("SELECT content FROM read_text(?)", [f"{base}/manifest.json"]).fetchone()[0]
+    return json.loads(text)
+
+
+def _count_is_zero(
+    con: duckdb.DuckDBPyConnection, check_name: str, sql: str, what: str
+) -> AcceptanceCheck:
+    """Required check that passes when ``sql`` -- one ``count(*)`` -- returns 0."""
+    try:
+        n = con.execute(sql).fetchone()[0]
+    except duckdb.Error as exc:  # type name only: the message can carry a local path
+        return AcceptanceCheck(check_name, passed=False, required=True, detail=type(exc).__name__)
+    return AcceptanceCheck(check_name, passed=n == 0, required=True, detail=f"{what}: {n}")
+
+
+def _quote(identifier: str) -> str:
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def verify_release_over_release(
+    dataset_id: str,
+    candidate: Path,
+    reference: str | None,
+    contracts: Iterable[DatasetContract],
+    uncontracted_tables: Iterable[str] = (),
+) -> AcceptanceReport:
+    """The publish gate (bioc-on-ice#183 step 5): a candidate release bundle on local disk
+    against the previous published release ``reference`` (its base URL or directory;
+    ``None`` only for a first-ever release).
+
+    Per candidate table: (1) columns and types equal the reference manifest's, (2) row
+    count within the contract's ``row_count_bounds`` of the reference's, (3) primary key
+    not null and unique, (4) every ``references`` column covered by its target table in
+    the candidate. A table absent from the reference (a new source) gets only 3 and 4; a
+    reference table absent from the candidate fails, as does an empty candidate or an
+    empty reference. A table with no ``TableContract`` fails the required
+    ``contract_declared`` check unless the caller names it in ``uncontracted_tables``
+    (an owner-approved exemption) and it is in the reference: then it gets 1 and 2
+    with default bounds and ``contract_declared`` is an optional failure. A new table
+    is never exempt -- it has no 1 and 2 to fall back on.
+    Reference columns and counts come from its ``manifest.json`` alone -- no reference
+    Parquet is read.
+    """
+    tables_by_name = {}
+    for dataset in contracts:
+        for table in dataset.tables.values():
+            if table.name in tables_by_name:
+                raise ValueError(f"table contract {table.name!r} declared twice")
+            tables_by_name[table.name] = table
+    uncontracted = set(uncontracted_tables)
+    checks: list[AcceptanceCheck] = []
+    con = duckdb.connect()
+    try:
+        manifest = _bundle_manifest(con, str(candidate))
+        previous: dict[str, dict] = {}
+        if reference is not None:
+            try:
+                previous = {
+                    f"{t['schema']}.{t['table']}": t
+                    for t in _bundle_manifest(con, reference.rstrip("/"))["tables"]
+                }
+            except Exception as exc:  # noqa: BLE001 -- surfaced as a failed check
+                checks.append(
+                    AcceptanceCheck(
+                        "reference_manifest_loads", passed=False, required=True,
+                        detail=type(exc).__name__,
+                    )
+                )
+            else:
+                # An empty reference would make every candidate table look new.
+                checks.append(
+                    AcceptanceCheck(
+                        "reference_manifest_loads", passed=bool(previous), required=True,
+                        detail="" if previous else "reference manifest lists no tables",
+                    )
+                )
+
+        names = []
+        for t in manifest["tables"]:
+            name = f"{t['schema']}.{t['table']}"
+            _check_public_path(t["path"], field_name=f"{name}.path")
+            path = str(candidate / t["path"]).replace("'", "''")
+            con.execute(f"CREATE VIEW {_quote(name)} AS SELECT * FROM read_parquet('{path}')")
+            names.append(name)
+        checks.append(
+            AcceptanceCheck(
+                "candidate_has_tables", passed=bool(names), required=True,
+                detail=f"{len(names)} tables",
+            )
+        )
+
+        for name in sorted(previous.keys() - set(names)):
+            checks.append(
+                AcceptanceCheck(
+                    f"{name}.present", passed=False, required=True,
+                    detail="in the previous release, missing from this one",
+                )
+            )
+
+        for name in names:
+            view = _quote(name)
+            contract = tables_by_name.get(name)
+            prev = previous.get(name)
+            if prev is not None:
+                columns = [tuple(r[:2]) for r in con.execute(f"DESCRIBE {view}").fetchall()]
+                expected = [(c["name"], c["type"]) for c in prev["columns"]]
+                changed = sorted(set(columns) ^ set(expected))
+                checks.append(
+                    AcceptanceCheck(
+                        f"{name}.columns_unchanged", passed=columns == expected, required=True,
+                        detail=f"differs: {changed}" if changed else
+                        ("column order differs" if columns != expected else ""),
+                    )
+                )
+                low, high = contract.row_count_bounds if contract else DEFAULT_ROW_COUNT_BOUNDS
+                n = con.execute(f"SELECT count(*) FROM {view}").fetchone()[0]
+                n_prev = prev["row_count"]
+                checks.append(
+                    AcceptanceCheck(
+                        f"{name}.row_count_within_bounds",
+                        passed=low * n_prev <= n <= high * n_prev, required=True,
+                        detail=f"{n} rows vs previous {n_prev}, bounds ({low}, {high})",
+                    )
+                )
+            if contract is None:
+                exempt = name in uncontracted and prev is not None
+                checks.append(
+                    AcceptanceCheck(
+                        f"{name}.contract_declared", passed=False, required=not exempt,
+                        detail="no TableContract: key and join checks not run"
+                        + ("; exempted by caller" if exempt else ""),
+                    )
+                )
+                continue
+            if contract.primary_key:
+                keys = [_quote(k) for k in contract.primary_key]
+                checks.append(
+                    _count_is_zero(
+                        con, f"{name}.key_not_null",
+                        f"SELECT count(*) FROM {view} WHERE "
+                        + " OR ".join(f"{k} IS NULL" for k in keys),
+                        "rows with a null key column",
+                    )
+                )
+                checks.append(
+                    _count_is_zero(
+                        con, f"{name}.key_unique",
+                        f"SELECT count(*) FROM (SELECT 1 FROM {view} "
+                        f"GROUP BY {', '.join(keys)} HAVING count(*) > 1)",
+                        "duplicated keys",
+                    )
+                )
+            for column, target in contract.references.items():
+                target_table, _, target_column = target.rpartition(".")
+                check_name = f"{name}.{column}.references_covered"
+                if target_table not in names:
+                    checks.append(
+                        AcceptanceCheck(
+                            check_name, passed=False, required=True,
+                            detail=f"target table {target_table} not in this release",
+                        )
+                    )
+                    continue
+                checks.append(
+                    _count_is_zero(
+                        con, check_name,
+                        f"SELECT count(DISTINCT s.{_quote(column)}) FROM {view} s "
+                        f"ANTI JOIN {_quote(target_table)} t "
+                        f"ON s.{_quote(column)} = t.{_quote(target_column)} "
+                        f"WHERE s.{_quote(column)} IS NOT NULL",
+                        f"distinct values missing from {target}",
+                    )
+                )
+    finally:
+        con.close()
+
+    return AcceptanceReport(
+        dataset=dataset_id, release=manifest["release"], run_id=manifest.get("run_id", "unknown"),
         checked_at=datetime.now(UTC).isoformat(), checks=tuple(checks),
     )

@@ -190,6 +190,10 @@ class ColumnContract:
     enum: tuple[str, ...] = ()
 
 
+# A table may shrink 10% or grow 50% release over release unless its contract says otherwise.
+DEFAULT_ROW_COUNT_BOUNDS = (0.9, 1.5)
+
+
 @dataclass(frozen=True)
 class TableContract:
     name: str
@@ -204,9 +208,27 @@ class TableContract:
     partition_by: tuple[str, ...] = ()
     examples: tuple[str, ...] = ()
     properties: Mapping[str, str] = field(default_factory=dict)
+    # Release-over-release gate (verify_release_over_release): this release's row count
+    # must be within (min, max) times the previous release's.
+    row_count_bounds: tuple[float, float] = DEFAULT_ROW_COUNT_BOUNDS
+    # Join coverage: column -> "<table>.<column>" in the same release; every non-null
+    # value of the column must appear there. ponytail: single-column only; add composite
+    # targets when a table needs one.
+    references: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         column_names = {c.name for c in self.columns}
+        low, high = self.row_count_bounds
+        if not 0 <= low <= high:
+            raise ValueError(f"{self.name}: row_count_bounds must be 0 <= min <= max")
+        missing_ref = [k for k in self.references if k not in column_names]
+        if missing_ref:
+            raise ValueError(f"{self.name}: references column(s) not in columns: {missing_ref}")
+        bad_target = [v for v in self.references.values() if v.count(".") < 1]
+        if bad_target:
+            raise ValueError(
+                f"{self.name}: references target(s) not '<table>.<column>': {bad_target}"
+            )
         missing = [k for k in self.primary_key if k not in column_names]
         if missing:
             raise ValueError(f"{self.name}: primary_key column(s) not in columns: {missing}")
