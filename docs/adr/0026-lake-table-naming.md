@@ -24,10 +24,10 @@ grew up side by side:
   schema is the upstream source and the table says what a row is.
 
 Plural and singular are mixed (`reporter.projects`, `openalex.works`,
-`ontology.terms` next to `bugsigdb.signature`, `ensembl.gene`). Raw upstream
-copies sit unmarked next to their curated projections: `ensembl.gtf` beside
-`ensembl.gene`, and `bugsigdb.signatures` (the landed CSV) beside
-`bugsigdb.signature` (the model), told apart by one letter.
+`ontology.terms` next to `bugsigdb.signature`, `ensembl.gene`). The verbatim
+landing of an upstream CSV sits unmarked next to the typed table of the same
+content: `bugsigdb.signatures` (the landed CSV) beside `bugsigdb.signature`
+(the model), told apart by one letter.
 
 ## Decision
 
@@ -37,8 +37,14 @@ copies sit unmarked next to their curated projections: `ensembl.gtf` beside
 2. **Tables named by content, with no source prefix.** The schema already names
    the source: `pubmed.article`, `ncbi_gene.gene2pubmed`.
 3. **snake_case, singular nouns.** A table is named for one row: `article`,
-   `signature`, `gene`. **Raw upstream copies use a `raw_` table prefix inside
-   the source schema** (`ensembl.raw_gtf`). There is no separate raw schema.
+   `signature`, `gene`. **The `raw_` table prefix is only for a verbatim,
+   untyped landing** (an all-VARCHAR CSV dump, say) **that sits beside a typed
+   table of the same content in the source schema**: bugsigdb's raw CSV as
+   `bugsigdb.raw_signature` next to `bugsigdb.signature`. A typed extract-load
+   copy of an upstream file is named by its content with no prefix:
+   `ncbi_gene.gene2pubmed`, `ensembl.gtf`. The lake write path is EL-only
+   (ADR-0013), so a prefix on every EL table would carry no information. There
+   is no separate raw schema.
 4. **Published names are separate and owned by each product.** A release table
    name comes from the product's release table list, as a SELECT over the lake
    table: bioc-on-ice publishes `annotation.pubmed__article` from
@@ -55,8 +61,9 @@ copies sit unmarked next to their curated projections: `ensembl.gtf` beside
   (omicidx to cdsci-lake) no longer forces a rename.
 - NCBI Gene folds into one `ncbi_gene` schema as its tables migrate; the
   `ncbi_gene2*` schemas go away with them.
-- Raw and curated tables of one source sit together, and the `raw_` prefix marks
-  which is which. Lineage and ownership stay per source schema.
+- An untyped landing and its typed table sit together in one source schema, and
+  the `raw_` prefix marks which is which. Lineage and ownership stay per source
+  schema.
 - Lake renames are internal. Consumers of the lake (transform models, the MeSH
   ingest's `lake.omicidx.pubmed_article` default, product release lists) update
   in the same change as the rename. End users of a published release see no
@@ -72,6 +79,10 @@ copies sit unmarked next to their curated projections: `ensembl.gtf` beside
 - **One flat schema with source prefixes** (`lake.main.pubmed_article`). Loses
   the per-source namespace that ownership, grants and lineage hang on, and puts
   the source name in every table name.
-- **A separate raw schema** (`raw.ensembl_gtf`, or `ensembl_raw.gtf`). Splits
-  one source across two schemas and brings the source prefix back. A `raw_`
-  table prefix inside the source schema marks the layer without either cost.
+- **A `raw_` prefix on every extract-load table** (`ncbi_gene.raw_gene2pubmed`).
+  Every lake write is EL (ADR-0013), so the prefix would mark nearly every table
+  and tell the reader nothing.
+- **A separate raw schema** (`raw.bugsigdb_signature`, or
+  `bugsigdb_raw.signature`). Splits one source across two schemas and brings
+  the source prefix back. A `raw_` table prefix inside the source schema marks
+  the layer without either cost.
