@@ -514,8 +514,9 @@ def verify_release_over_release(
     reference table absent from the candidate fails, as does an empty candidate or an
     empty reference. A table with no ``TableContract`` fails the required
     ``contract_declared`` check unless the caller names it in ``uncontracted_tables``
-    (an owner-approved exemption): then it gets 1 and 2 with default bounds and
-    ``contract_declared`` is an optional failure.
+    (an owner-approved exemption) and it is in the reference: then it gets 1 and 2
+    with default bounds and ``contract_declared`` is an optional failure. A new table
+    is never exempt -- it has no 1 and 2 to fall back on.
     Reference columns and counts come from its ``manifest.json`` alone -- no reference
     Parquet is read.
     """
@@ -601,7 +602,7 @@ def verify_release_over_release(
                     )
                 )
             if contract is None:
-                exempt = name in uncontracted
+                exempt = name in uncontracted and prev is not None
                 checks.append(
                     AcceptanceCheck(
                         f"{name}.contract_declared", passed=False, required=not exempt,

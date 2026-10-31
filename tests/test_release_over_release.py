@@ -212,6 +212,19 @@ def test_uncontracted_exemption_is_an_optional_failure(tmp_path, reference):
     assert "demo.events.row_count_within_bounds" in {c.name for c in report.checks}
 
 
+def test_new_table_cannot_be_exempted(tmp_path, reference):
+    report = _gate(
+        tmp_path, reference,
+        {
+            "demo.entities": ENTITIES_SQL.format(n=10),
+            "demo.events": EVENTS_SQL,
+            "demo.extra": "SELECT 1 AS id UNION ALL SELECT 1",
+        },
+        uncontracted_tables={"demo.extra"},
+    )
+    assert _failed(report) == {"demo.extra.contract_declared"}
+
+
 def _only(table: TableContract) -> list[DatasetContract]:
     return [dataclasses.replace(CONTRACTS[0], tables={table.name: table})]
 
