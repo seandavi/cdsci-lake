@@ -3,15 +3,19 @@
 - Status: accepted
 - Date: 2026-10-31
 
-Refines ADR-0001 decision 3 ("per-source silver schemas"), which said only that
-the lake is schema-namespaced. Source refs keep the ADR-0025 grammar
+Refines and amends ADR-0001 decision 3 ("per-source silver schemas"). That
+decision makes per-source schemas of typed, curated tables the contract and
+keeps bronze (raw downloads on R2/local) unregistered. It says nothing about
+how schemas and tables are named. This ADR adds the naming rules and amends
+decision 3 to permit an untyped companion table beside a typed table in a
+source schema (decision 3 below). Source refs keep the ADR-0025 grammar
 `<catalog>.<schema>.<table>`. Tracking: cdsci-lake#136 (first rename),
 seandavi/bioc-on-ice#183 (migration map that depends on it).
 
 ## Context
 
-ADR-0001 named the lake schema-namespaced and nothing more. Three conventions
-grew up side by side:
+ADR-0001 fixed per-source schemas of typed tables but did not name them. Three
+conventions grew up side by side:
 
 - **Producer-named schema.** `omicidx.pubmed_article` is named for the project
   that wrote it, not the data. The table carries the source name as a prefix to
@@ -24,10 +28,10 @@ grew up side by side:
   schema is the upstream source and the table says what a row is.
 
 Plural and singular are mixed (`reporter.projects`, `openalex.works`,
-`ontology.terms` next to `bugsigdb.signature`, `ensembl.gene`). The verbatim
-landing of an upstream CSV sits unmarked next to the typed table of the same
-content: `bugsigdb.signatures` (the landed CSV) beside `bugsigdb.signature`
-(the model), told apart by one letter.
+`ontology.terms` next to `bugsigdb.signature`, `ensembl.gene`). The plural can
+be the only thing telling two tables apart: `bugsigdb.signatures` (the EL load
+of the release CSV, key columns cast to typed values) beside
+`bugsigdb.signature` (a transform model over it).
 
 ## Decision
 
@@ -39,12 +43,13 @@ content: `bugsigdb.signatures` (the landed CSV) beside `bugsigdb.signature`
 3. **snake_case, singular nouns.** A table is named for one row: `article`,
    `signature`, `gene`. **The `raw_` table prefix is only for a verbatim,
    untyped landing** (an all-VARCHAR CSV dump, say) **that sits beside a typed
-   table of the same content in the source schema**: bugsigdb's raw CSV as
-   `bugsigdb.raw_signature` next to `bugsigdb.signature`. A typed extract-load
+   table of the same content in the source schema**. For example, a
+   hypothetical source `acme` would land its CSV with every column VARCHAR as
+   `acme.raw_sample` next to the typed `acme.sample`. A typed extract-load
    copy of an upstream file is named by its content with no prefix:
-   `ncbi_gene.gene2pubmed`, `ensembl.gtf`. The lake write path is EL-only
-   (ADR-0013), so a prefix on every EL table would carry no information. There
-   is no separate raw schema.
+   `ncbi_gene.gene2pubmed`, `ensembl.gtf`. Every
+   ingestion-path write is EL (ADR-0013), so a prefix on every EL table would
+   carry no information. There is no separate raw schema.
 4. **Published names are separate and owned by each product.** A release table
    name comes from the product's release table list, as a SELECT over the lake
    table: bioc-on-ice publishes `annotation.pubmed__article` from
@@ -80,9 +85,8 @@ content: `bugsigdb.signatures` (the landed CSV) beside `bugsigdb.signature`
   the per-source namespace that ownership, grants and lineage hang on, and puts
   the source name in every table name.
 - **A `raw_` prefix on every extract-load table** (`ncbi_gene.raw_gene2pubmed`).
-  Every lake write is EL (ADR-0013), so the prefix would mark nearly every table
-  and tell the reader nothing.
-- **A separate raw schema** (`raw.bugsigdb_signature`, or
-  `bugsigdb_raw.signature`). Splits one source across two schemas and brings
+  Every ingestion-path write is EL (ADR-0013), so the prefix would mark nearly
+  every table and tell the reader nothing.
+- **A separate raw schema** (`raw.acme_sample`, or `acme_raw.sample`). Splits one source across two schemas and brings
   the source prefix back. A `raw_` table prefix inside the source schema marks
   the layer without either cost.
