@@ -13,6 +13,8 @@ into it is internal use, not redistribution.
 | reporter, icite, ctgov, scp, census_geo | US public domain | yes | US-government works |
 | openalex | CC0 | yes | public domain dedication |
 | retractionwatch | CC0 (effectively) | yes | attribution appreciated |
+| hgnc | CC0 | yes | genenames.org/about/license (2026-11-01): "all data is released under the Creative Commons Public Domain (CC0) License" |
+| complexportal | CC0 | yes | CC0 per bioc-on-ice's declared table docs (`schemas.py`); EBI's about page was not re-checked 2026-11-01 |
 | reactome | CC0 | yes | reactome.org/license §1(c) covers the *data*; §1(a) CC BY 4.0 covers illustrations/icons only |
 | ror | CC0 | yes | ror.readme.io/docs/data-dump: "All ROR IDs and metadata in the data dump are provided under the Creative Commons CC0 1.0 Universal Public Domain Dedication"; Zenodo record carries `license: cc-zero` |
 | orcid | CC0 | yes | info.orcid.org/annual-data-files: "ORCID releases the Public Data File under a CC0 1.0 Public Domain Dedication". Same terms for the public API. Only researcher-*public* fields are returned; ORCID's Public Data File Use Policy adds community norms (cite ORCID, honor deletions on refresh), not license conditions |
