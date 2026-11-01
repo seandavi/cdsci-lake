@@ -47,7 +47,10 @@ def september(date: str = "20260910") -> dict[str, list[str]]:
 
 @pytest.fixture
 def lake_settings(tmp_path: Path) -> Settings:
-    return Settings(storage_base_uri=f"file://{tmp_path}")
+    # lake_backend pinned: CU_OPENALEX_LAKE_BACKEND=postgres in the environment or a
+    # .env would otherwise point these writes at the shared lake.
+    return Settings(storage_base_uri=f"file://{tmp_path}", lake_backend="local",
+                    lake_catalog=str(tmp_path / "catalog.ducklake"))
 
 
 def test_wikipathways_lands_every_line_verbatim_and_a_new_release_replaces_the_last(
@@ -117,6 +120,24 @@ def test_an_empty_release_is_refused_and_the_table_kept(lake_settings, tmp_path)
         empty = release(tmp_path, "20261010", {"Homo_sapiens": []})
         with pytest.raises(ValueError, match="zero rows"):
             wikipathways.curate(con, sorted(empty.glob("*.gmt")), "20261010")
+        assert con.execute("SELECT count(*) FROM lake.wikipathways.gene_set").fetchone()[0] == 4
+        assert con.execute(SNAP).fetchone()[0] == before
+    finally:
+        con.close()
+
+
+def test_a_line_that_is_not_a_gmt_record_fails_and_keeps_the_table(lake_settings, tmp_path):
+    con = lake_connect(lake_settings)
+    try:
+        good = release(tmp_path, "20260910", september())
+        wikipathways.curate(con, sorted(good.glob("*.gmt")), "20260910")
+        before = con.execute(SNAP).fetchone()[0]
+        # a truncated or non-GMT body: lines with no tab at all
+        bad = release(tmp_path, "20261010", {"Homo_sapiens": [
+            gmt("20261010", "WP100", "Glutathione metabolism", "Homo sapiens", "2687"),
+            "<html>not found</html>"]})
+        with pytest.raises(ValueError, match="line 2 is not a GMT record"):
+            wikipathways.curate(con, sorted(bad.glob("*.gmt")), "20261010", limit=1)
         assert con.execute("SELECT count(*) FROM lake.wikipathways.gene_set").fetchone()[0] == 4
         assert con.execute(SNAP).fetchone()[0] == before
     finally:

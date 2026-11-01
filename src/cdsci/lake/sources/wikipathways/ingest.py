@@ -21,7 +21,8 @@ order as the file has them, and the packed set name
 either is interpretation, which is bioc-on-ice's.
 
 Every species file of the release lands. A file set that is not exactly one
-release (a stray file name, two dates) fails before anything is read.
+release (a stray file name, two dates), or a line that is not at least a name and
+a description, fails before anything lands.
 """
 
 from __future__ import annotations
@@ -74,24 +75,31 @@ def download_release(version: str, settings: Settings | None = None) -> list[Pat
     return [download(url + n, dest / n) for n in names]
 
 
-def _select_sql(paths: list[Path], version: str, limit: int | None) -> str:
-    limit_sql = f" LIMIT {int(limit)}" if limit else ""
+def _lines_sql(paths: list[Path]) -> str:
     # No CSV reader: a line is a record and tab the only separator. The final LF
     # leaves one empty string after the split; that and nothing else is dropped.
-    # A set with no genes keeps genes NULL.
     return f"""
         WITH f AS (SELECT parse_filename(filename) AS file_name,
                           str_split(content, '\n') AS lines
                    FROM read_text({csv_source(paths)})),
              l AS (SELECT file_name, unnest(lines) AS line,
                           generate_subscripts(lines, 1) AS line_number FROM f)
+        SELECT * FROM l WHERE line <> ''
+    """
+
+
+def _select_sql(paths: list[Path], version: str, limit: int | None) -> str:
+    limit_sql = f" LIMIT {int(limit)}" if limit else ""
+    # A set with no genes keeps genes NULL.
+    return f"""
+        WITH l AS ({_lines_sql(paths)})
         SELECT file_name, line_number::INTEGER AS line_number,
                split_part(line, '\t', 1) AS name,
                split_part(line, '\t', 2) AS description,
                nullif(array_to_string(str_split(line, '\t')[3:], '\t'), '') AS genes,
                regexp_extract(file_name, '-gmt-(.*)\\.gmt$', 1) AS species,
                '{version}' AS wikipathways_version
-        FROM l WHERE line <> ''
+        FROM l
         {limit_sql}
     """
 
@@ -112,6 +120,13 @@ def curate(
     """
     if release_of([p.name for p in paths]) != version:
         raise ValueError(f"wikipathways: the files are not release {version}")
+    # The record shape, on every line (not just a limited load's): a set name and a
+    # description, tab-separated. What they say is bioc-on-ice's to check.
+    bad = con.execute(f"SELECT file_name, line_number FROM ({_lines_sql(sorted(paths))}) "
+                      "WHERE strpos(line, chr(9)) = 0 ORDER BY ALL LIMIT 1").fetchone()
+    if bad:
+        raise ValueError(f"wikipathways: {bad[0]} line {bad[1]} is not a GMT record "
+                         "(name TAB description [TAB gene ...])")
     target = target or f"{LAKE}.wikipathways.gene_set"
     return upsert(
         con, target, _select_sql(sorted(paths), version, limit),
