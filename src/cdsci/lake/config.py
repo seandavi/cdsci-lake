@@ -221,6 +221,15 @@ class Settings(BaseSettings):
     # Releases are quarterly but the files carry no version tag, so the snapshot
     # is tagged by retrieval date. See ``sources/reactome/ingest.py``.
     reactome_base_url: str = "https://reactome.org/download/current/"
+    # HGNC complete set (CC0) — the rolling file, regenerated in place with no
+    # version in-band, so the snapshot is tagged by retrieval date unless a dated
+    # archive copy is landed instead. See ``sources/hgnc/ingest.py``.
+    hgnc_url: str = (
+        "https://storage.googleapis.com/public-download-files/hgnc/tsv/tsv/hgnc_complete_set.txt"
+    )
+    # Complex Portal (CC0) — dated release directories (``<YYYY-MM-DD>/complextab/``);
+    # the date is the version. See ``sources/complexportal/ingest.py``.
+    complexportal_base_url: str = "https://ftp.ebi.ac.uk/pub/databases/intact/complex/"
 
     # ROR — the versioned institution-registry bulk dump (CC0, confirmed at
     # ror.readme.io/docs/data-dump 2026-08-11). This is the Zenodo *concept*

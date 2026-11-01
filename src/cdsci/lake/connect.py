@@ -313,6 +313,10 @@ def upsert(
     deleted in the same attributed transaction, so the table mirrors the latest
     full dump (ADR-0003 amendment). Callers MUST pass ``None`` for partial loads
     (``limit``, subset fixtures, ``mode="append"``) or they delete real rows.
+    A pruning load whose ``source_sql`` returns zero rows while the target slice
+    still holds rows raises ``ValueError`` before any write: an empty parse
+    (header-only file, broken filter) would otherwise prune the whole slice. An
+    empty load over an empty slice (a small dump's empty hash shard) is a no-op.
     """
     from . import ops  # local import avoids a connect<->ops circular dependency
     from .log import logger  # local: log imports publish.release (cycle risk)
@@ -327,11 +331,32 @@ def upsert(
     run = ops.active_run()
     attribution = run.attribute(table) if run is not None else nullcontext()
     with attribution:
-        con.execute(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema};")
         con.execute(f"CREATE OR REPLACE TEMP TABLE _cri_stage AS {source_sql};")
+        empty_prune = (prune is not None
+                       and not con.execute("SELECT 1 FROM _cri_stage LIMIT 1").fetchone())
+        if empty_prune:
+            exists = con.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_catalog = ? AND table_schema = ? AND table_name = ?",
+                [catalog, schema, table],
+            ).fetchone()
+            doomed = exists and con.execute(
+                f"SELECT count(*) FROM {target} WHERE ({prune})"
+            ).fetchone()[0]
+            if doomed:
+                raise ValueError(
+                    f"refusing to prune {target}: the load returned zero rows but "
+                    f"prune {prune!r} would delete {doomed:,} row(s)"
+                )
+        con.execute(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema};")
         con.execute(
             f"CREATE TABLE IF NOT EXISTS {target} AS SELECT * FROM _cri_stage WHERE false;"
         )
+        if empty_prune:
+            # Nothing to merge and nothing it may delete: stop here, so `prune` is never
+            # evaluated again by a DELETE. A first-ever load still creates the (empty)
+            # table above, because readers expect it to exist.
+            return con.execute(f"SELECT count(*) FROM {target}").fetchone()[0]
 
         cols = [c[0] for c in con.execute("DESCRIBE _cri_stage").fetchall()]
         compare = [c for c in cols if c not in keys and c not in ignore]
