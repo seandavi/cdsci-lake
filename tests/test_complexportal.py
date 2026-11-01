@@ -99,3 +99,4 @@ def test_a_reordered_header_in_a_later_file_fails_and_keeps_the_table(lake_setti
         assert con.execute(rows).fetchall() == [("CPX-663", "2026-01-09")]
     finally:
         con.close()
+

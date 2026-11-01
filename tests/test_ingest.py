@@ -225,6 +225,22 @@ def test_upsert_refuses_an_empty_load_that_would_prune_rows(lake_settings: Setti
         con.close()
 
 
+def test_an_empty_prune_load_never_reevaluates_prune(lake_settings: Settings):
+    """The empty-load check counts the slice once and stops: no MERGE, no DELETE, so a
+    predicate that would match on a second evaluation never deletes anything."""
+    con = lake_connect(lake_settings)
+    try:
+        upsert(con, "lake.main.v", "SELECT * FROM (VALUES (1,'a')) v(id,val)", key="id")
+        con.execute("CREATE SEQUENCE guard_seq START 1")
+        empty = "SELECT * FROM (VALUES (1,'a')) v(id,val) WHERE false"
+        # count sees nextval = 1 (no match); a DELETE would see 2 and match.
+        assert upsert(con, "lake.main.v", empty, key="id",
+                      prune="nextval('guard_seq') = 2") == 1
+        assert con.execute("SELECT count(*) FROM lake.main.v").fetchone()[0] == 1
+    finally:
+        con.close()
+
+
 def test_reporter_projects_curate(lake_settings: Settings):
     con = lake_connect(lake_settings)
     try:
