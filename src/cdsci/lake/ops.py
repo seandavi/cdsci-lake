@@ -153,6 +153,8 @@ SOURCES: tuple[Source, ...] = (
            "daily", "hgnc-gcs", "cc0"),
     Source("complexportal", "complexportal", "Complex Portal: curated and predicted "
            "macromolecular complexes (complextab)", "on-release", "ebi-ftp", "cc0"),
+    Source("wikipathways", "wikipathways", "WikiPathways: pathway gene sets, every species "
+           "(monthly GMT)", "monthly", "wikipathways-data", "cc0"),
     Source("ror", "ror", "ROR: canonical institution identity (names, locations, relationships)",
            "on-release", "zenodo", "cc0"),
     # Not the annual bulk file: demand-driven fetch of caller-supplied iDs from
