@@ -88,6 +88,12 @@ def download_release(version: str, settings: Settings | None = None) -> list[Pat
     return files
 
 
+def _header(path: Path) -> list[str]:
+    """The file's first line, split. Only that line is read."""
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return f.readline().rstrip("\r\n").split("\t")
+
+
 def _select_sql(read: str, version: str, limit: int | None) -> str:
     select = ", ".join(f'"{h}" AS {c}' for h, c in COLUMNS.items())
     limit_sql = f" LIMIT {int(limit)}" if limit else ""
@@ -113,12 +119,14 @@ def curate(
     ``complexportal_version`` is compared like any column, so a new release
     restamps every row: the table is one release, never a mix.
     """
+    # Every file, not the combined read: read_csv binds later files by position,
+    # so a reordered header in a non-first file would misassign its values.
+    for path in paths:
+        if (header := _header(path)) != list(COLUMNS):
+            raise ValueError(f"complexportal: {path} header is not the declared one; differs "
+                             f"in {sorted(set(header) ^ set(COLUMNS)) or 'column order'}")
     read = (f"read_csv({csv_source(sorted(paths))}, delim='\\t', header=true, "
             "all_varchar=true, quote='', escape='', nullstr='-', filename=true)")
-    header = [r[0] for r in con.sql(f"DESCRIBE SELECT * EXCLUDE (filename) FROM {read}").fetchall()]
-    if header != list(COLUMNS):
-        raise ValueError(f"complexportal: header is not the declared one; "
-                         f"differs in {sorted(set(header) ^ set(COLUMNS))}")
     target = target or f"{LAKE}.complexportal.complex"
     return upsert(
         con, target, _select_sql(read, version, limit),

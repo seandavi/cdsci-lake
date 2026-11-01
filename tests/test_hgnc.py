@@ -78,6 +78,20 @@ def test_a_changed_header_fails_before_landing(lake_settings, tmp_path):
         con.close()
 
 
+def test_a_header_only_file_is_refused_and_the_table_kept(lake_settings, tmp_path):
+    con = lake_connect(lake_settings)
+    snap = "SELECT max(snapshot_id) FROM lake.snapshots()"
+    try:
+        hgnc.curate(con, write(tmp_path / "seed.txt", [TP53, GSTT1]), "2026-09-18")
+        before = con.execute(snap).fetchone()[0]
+        with pytest.raises(ValueError, match="zero rows"):
+            hgnc.curate(con, write(tmp_path / "empty.txt", []), "2026-10-30")
+        assert con.execute("SELECT count(*) FROM lake.hgnc.gene").fetchone()[0] == 2
+        assert con.execute(snap).fetchone()[0] == before
+    finally:
+        con.close()
+
+
 def test_a_dated_archive_names_its_version(lake_settings, tmp_path):
     assert file_version(Path("hgnc_complete_set_2026-09-04.txt")) == "2026-09-04"
     assert file_version(Path("hgnc_complete_set.txt")) is None

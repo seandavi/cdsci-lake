@@ -81,3 +81,21 @@ def test_a_changed_header_or_an_undated_directory_fails(lake_settings, tmp_path)
     undated = release(tmp_path, "current", {"9606.tsv": [TP53]})
     with pytest.raises(ValueError, match="pass version"):
         complexportal.ingest(directory=str(undated), settings=lake_settings)
+
+
+def test_a_reordered_header_in_a_later_file_fails_and_keeps_the_table(lake_settings, tmp_path):
+    good = release(tmp_path, "2026-01-09", {"9606.tsv": [TP53]})
+    con = lake_connect(lake_settings)
+    try:
+        complexportal.curate(con, sorted(good.glob("*.tsv")), "2026-01-09")
+        swapped = list(complexportal.COLUMNS)
+        swapped[1], swapped[2] = swapped[2], swapped[1]
+        d = release(tmp_path, "2026-10-17", {"559292.tsv": [YEAST]})
+        (d / "9606.tsv").write_text("\t".join(complexportal.COLUMNS) + "\n" + TP53 + "\n")
+        (d / "9606_predicted.tsv").write_text("\t".join(swapped) + "\n" + PREDICTED + "\n")
+        with pytest.raises(ValueError, match="9606_predicted.tsv"):
+            complexportal.curate(con, sorted(d.glob("*.tsv")), "2026-10-17")
+        rows = "SELECT complex_ac, complexportal_version FROM lake.complexportal.complex"
+        assert con.execute(rows).fetchall() == [("CPX-663", "2026-01-09")]
+    finally:
+        con.close()

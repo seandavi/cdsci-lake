@@ -204,6 +204,27 @@ def test_upsert_prune_deletes_missing_rows_only_inside_scope(lake_settings: Sett
         con.close()
 
 
+def test_upsert_refuses_an_empty_load_that_would_prune_rows(lake_settings: Settings):
+    """An empty load raises if its prune slice holds rows; over an empty slice, or
+    without ``prune``, it is a no-op that adds no snapshot."""
+    con = lake_connect(lake_settings)
+    snap = "SELECT max(snapshot_id) FROM lake.snapshots()"
+    try:
+        upsert(con, "lake.main.e", "SELECT * FROM (VALUES (1,'a'),(2,'b')) v(id,val)", key="id")
+        empty = "SELECT * FROM (VALUES (1,'a')) v(id,val) WHERE false"
+        before = con.execute(snap).fetchone()[0]
+        with pytest.raises(ValueError, match=r"zero rows.*'true' would delete 2 row"):
+            upsert(con, "lake.main.e", empty, key="id", prune="true")
+        assert con.execute("SELECT count(*) FROM lake.main.e").fetchone()[0] == 2
+        assert con.execute(snap).fetchone()[0] == before
+
+        assert upsert(con, "lake.main.e", empty, key="id", prune="id > 2") == 2
+        assert upsert(con, "lake.main.e", empty, key="id") == 2
+        assert con.execute(snap).fetchone()[0] == before
+    finally:
+        con.close()
+
+
 def test_reporter_projects_curate(lake_settings: Settings):
     con = lake_connect(lake_settings)
     try:
