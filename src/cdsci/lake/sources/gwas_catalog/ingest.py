@@ -42,7 +42,9 @@ from ...download import download, unzip
 
 _RAW = "gwas_catalog"
 ASSOCIATIONS_ZIP = "gwas-catalog-associations_ontology-annotated-full.zip"
-STUDIES_FILE = "gwas-catalog-download-studies-v1.0.3.1.txt"
+# The studies file is '.tsv' from 2026-10-22 and '.txt' before, same columns.
+STUDIES_FILES = ("gwas-catalog-download-studies-v1.0.3.1.tsv",
+                 "gwas-catalog-download-studies-v1.0.3.1.txt")
 
 # Upstream header -> column name, in file order. The two files spell the PubMed
 # column differently ('PUBMEDID', 'PUBMED ID'); the lake spells it one way.
@@ -115,11 +117,23 @@ STUDIES = {
 }
 
 
-def _dated(url: str) -> list[str]:
-    """The all-digit subdirectories an FTP-over-HTTPS listing links to."""
+def _links(url: str) -> list[str]:
+    """The names an FTP-over-HTTPS directory listing links to."""
     resp = httpx.get(url, timeout=60, follow_redirects=True)
     resp.raise_for_status()
-    return re.findall(r'href="(\d+)/"', resp.text)
+    return re.findall(r'href="([^"]+)"', resp.text)
+
+
+def _dated(url: str) -> list[str]:
+    """The all-digit subdirectories a listing links to."""
+    return [n[:-1] for n in _links(url) if re.fullmatch(r"\d+/", n)]
+
+
+def _studies_file(names: list[str], where: object) -> str:
+    """The release's studies file name, of those ``where`` holds."""
+    if found := [n for n in STUDIES_FILES if n in names]:
+        return found[0]
+    raise FileNotFoundError(f"gwas_catalog: {where} holds none of {STUDIES_FILES}")
 
 
 def latest(settings: Settings | None = None) -> str:
@@ -150,8 +164,9 @@ def download_release(version: str, settings: Settings | None = None) -> tuple[Pa
     s = settings or get_settings()
     url = f"{s.gwas_catalog_releases_url}{version.replace('-', '/')}/"
     dest = raw_dir(_RAW, s) / version
+    studies = _studies_file(_links(url), url)
     archive = download(url + ASSOCIATIONS_ZIP, dest / ASSOCIATIONS_ZIP)
-    return _extract(archive, dest), download(url + STUDIES_FILE, dest / STUDIES_FILE)
+    return _extract(archive, dest), download(url + studies, dest / studies)
 
 
 def _check(path: Path, columns: dict[str, str]) -> None:
@@ -251,7 +266,7 @@ def ingest(
         if not version:
             raise ValueError(f"gwas_catalog: {d} is not <YYYY>/<MM>/<DD>/; pass version")
         associations = _extract(d / ASSOCIATIONS_ZIP, raw_dir(_RAW, s) / version)
-        studies = d / STUDIES_FILE
+        studies = d / _studies_file([p.name for p in d.iterdir()], d)
     else:
         version = version or latest(s)
         associations, studies = download_release(version, s)

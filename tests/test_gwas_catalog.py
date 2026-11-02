@@ -9,14 +9,20 @@ zipped, both files under a dated ``YYYY/MM/DD`` release directory.
 from __future__ import annotations
 
 import importlib
+import shutil
 import zipfile
 from pathlib import Path
 
+import httpx
 import pytest
 
 from cdsci.lake import Settings, lake_connect
 from cdsci.lake.sources import gwas_catalog
-from cdsci.lake.sources.gwas_catalog.ingest import ASSOCIATIONS_ZIP, STUDIES_FILE
+from cdsci.lake.sources.gwas_catalog.ingest import ASSOCIATIONS_ZIP, STUDIES_FILES
+
+# the module itself: the package's `ingest` attribute is the function
+INGEST = importlib.import_module("cdsci.lake.sources.gwas_catalog.ingest")
+TSV, TXT = STUDIES_FILES  # the studies file's name from 2026-10-22, and before
 
 SNAP = "SELECT max(snapshot_id) FROM lake.snapshots()"
 ASSOC_ROWS = ("SELECT line_number, snps, gwas_catalog_release FROM lake.gwas_catalog.association "
@@ -53,7 +59,8 @@ def tsv(path: Path, columns: dict[str, str], rows: list[str], header=None) -> Pa
     return path
 
 
-def release(root: Path, version: str, assocs: list[str], studies: list[str]) -> Path:
+def release(root: Path, version: str, assocs: list[str], studies: list[str],
+            studies_file: str = TXT) -> Path:
     d = root.joinpath(*version.split("-"))
     inner = tsv(root / "gwas-catalog-download-associations-alt-full.tsv",
                 gwas_catalog.ASSOCIATIONS, assocs)
@@ -61,7 +68,7 @@ def release(root: Path, version: str, assocs: list[str], studies: list[str]) -> 
     with zipfile.ZipFile(d / ASSOCIATIONS_ZIP, "w") as z:
         z.write(inner, inner.name)
     inner.unlink()
-    tsv(d / STUDIES_FILE, gwas_catalog.STUDIES, studies)
+    tsv(d / studies_file, gwas_catalog.STUDIES, studies)
     return d
 
 
@@ -107,7 +114,7 @@ def test_gwas_catalog_lands_both_files_verbatim_and_a_new_release_replaces_the_l
         # re-landing the same release writes nothing
         before = con.execute(SNAP).fetchone()[0]
         tsv_path = next((tmp_path / "lake" / "raw" / "gwas_catalog" / "2026-09-15").glob("*.tsv"))
-        gwas_catalog.curate(con, tsv_path, d / STUDIES_FILE, "2026-09-15")
+        gwas_catalog.curate(con, tsv_path, d / TXT, "2026-09-15")
         assert con.execute(SNAP).fetchone()[0] == before
 
         # a limited load never prunes; a full load of the next release drops what it
@@ -187,7 +194,53 @@ def test_an_undated_directory_needs_a_version(lake_settings, tmp_path):
 def test_latest_walks_to_the_newest_dated_directory(monkeypatch):
     index = {"": ["2025", "2026"], "2026/": ["09", "10"], "2026/10/": ["05", "22"]}
     base = Settings().gwas_catalog_releases_url
-    # the package's `ingest` attribute is the function, so patch the module itself
-    monkeypatch.setattr(importlib.import_module("cdsci.lake.sources.gwas_catalog.ingest"),
-                        "_dated", lambda url: index[url.removeprefix(base)])
+    monkeypatch.setattr(INGEST, "_links", lambda url: [
+        "?C=N;O=D", "/pub/databases/gwas/", "README.txt",
+        *[f"{n}/" for n in index[url.removeprefix(base)]]])
     assert gwas_catalog.latest() == "2026-10-22"
+
+
+def test_a_tsv_studies_file_lands_from_a_directory(lake_settings, tmp_path):
+    d = release(tmp_path / "releases", "2026-10-22", [QUOTED], [STUDY1], TSV)
+    summary = gwas_catalog.ingest(directory=str(d), settings=lake_settings)
+    assert (summary["version"], summary["study"]) == ("2026-10-22", 1)
+    (d / TSV).unlink()
+    with pytest.raises(FileNotFoundError, match="holds none of"):
+        gwas_catalog.ingest(directory=str(d), settings=lake_settings)
+
+
+@pytest.mark.parametrize("studies_file", [TSV, TXT])
+def test_the_default_run_downloads_the_newest_release_under_either_studies_name(
+        studies_file, lake_settings, tmp_path, monkeypatch):
+    """No directory, no version: walk the index to the newest release, list it, and
+    download its studies file under whichever name it carries."""
+    upstream = release(tmp_path / "upstream", "2026-10-22", [QUOTED, OTHER], [STUDY1, STUDY2],
+                       studies_file)
+    base = lake_settings.gwas_catalog_releases_url
+    index = {"": ["2026/"], "2026/": ["10/"], "2026/10/": ["22/"],
+             "2026/10/22/": ["?C=N;O=D", "gwas-catalog-ancestry.tsv",
+                             *sorted(p.name for p in upstream.iterdir())]}
+    monkeypatch.setattr(INGEST, "_links", lambda url: index[url.removeprefix(base)])
+    fetched = []
+
+    def download(url, dest):
+        fetched.append(url.removeprefix(base))
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        return Path(shutil.copy(upstream / url.rsplit("/", 1)[1], dest))
+
+    monkeypatch.setattr(INGEST, "download", download)
+    summary = gwas_catalog.ingest(settings=lake_settings)
+    assert (summary["version"], summary["association"], summary["study"]) == (
+        "2026-10-22", 2, 2)
+    assert fetched == [f"2026/10/22/{ASSOCIATIONS_ZIP}", f"2026/10/22/{studies_file}"]
+
+
+def test_a_listing_error_propagates(lake_settings, monkeypatch):
+    """Only a listing without the studies file means "not there"; anything else is raised."""
+    def unavailable(url):
+        raise httpx.HTTPStatusError("503", request=httpx.Request("GET", url),
+                                    response=httpx.Response(503))
+
+    monkeypatch.setattr(INGEST, "_links", unavailable)
+    with pytest.raises(httpx.HTTPStatusError):
+        gwas_catalog.download_release("2026-10-22", lake_settings)
