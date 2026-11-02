@@ -15,6 +15,7 @@ into it is internal use, not redistribution.
 | retractionwatch | CC0 (effectively) | yes | attribution appreciated |
 | hgnc | CC0 | yes | genenames.org/about/license (2026-11-01): "all data is released under the Creative Commons Public Domain (CC0) License" |
 | complexportal | CC0 | yes | CC0 per bioc-on-ice's declared table docs (`schemas.py`); EBI's about page was not re-checked 2026-11-01 |
+| gwas_catalog | EMBL-EBI Terms of Use | yes, attributed | ebi.ac.uk/gwas/docs/about (2026-11-01): "The NHGRI-EBI GWAS Catalog and all its contents are available under the general Terms of Use for EMBL-EBI Services"; ebi.ac.uk/about/terms-of-use (2026-11-01): "EMBL-EBI itself places no additional restrictions on the use or redistribution of the data available via its Data Resources and Tools other than those provided by the original data owners". Not a formal open licence; cite the Catalog |
 | wikipathways | CC0 | yes | wikipathways.org/terms.html (2026-11-01): "WikiPathways content is covered by the Creative Commons CC0 Waiver" |
 | reactome | CC0 | yes | reactome.org/license §1(c) covers the *data*; §1(a) CC BY 4.0 covers illustrations/icons only |
 | ror | CC0 | yes | ror.readme.io/docs/data-dump: "All ROR IDs and metadata in the data dump are provided under the Creative Commons CC0 1.0 Universal Public Domain Dedication"; Zenodo record carries `license: cc-zero` |

@@ -155,6 +155,10 @@ SOURCES: tuple[Source, ...] = (
            "macromolecular complexes (complextab)", "on-release", "ebi-ftp", "cc0"),
     Source("wikipathways", "wikipathways", "WikiPathways: pathway gene sets, every species "
            "(monthly GMT)", "monthly", "wikipathways-data", "cc0"),
+    # EMBL-EBI Terms of Use, not a formal open licence: no restriction on use or
+    # redistribution beyond the data owners', attribution expected (data-licenses.md).
+    Source("gwas_catalog", "gwas_catalog", "NHGRI-EBI GWAS Catalog: curated variant-trait "
+           "associations and their studies", "on-release", "ebi-ftp", "embl-ebi-terms-of-use"),
     Source("ror", "ror", "ROR: canonical institution identity (names, locations, relationships)",
            "on-release", "zenodo", "cc0"),
     # Not the annual bulk file: demand-driven fetch of caller-supplied iDs from
