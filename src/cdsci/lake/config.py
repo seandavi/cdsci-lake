@@ -230,6 +230,9 @@ class Settings(BaseSettings):
     # Complex Portal (CC0) — dated release directories (``<YYYY-MM-DD>/complextab/``);
     # the date is the version. See ``sources/complexportal/ingest.py``.
     complexportal_base_url: str = "https://ftp.ebi.ac.uk/pub/databases/intact/complex/"
+    # NHGRI-EBI GWAS Catalog (EMBL-EBI Terms of Use) — dated release directories
+    # (``YYYY/MM/DD/``); the date is the version. See ``sources/gwas_catalog/ingest.py``.
+    gwas_catalog_releases_url: str = "https://ftp.ebi.ac.uk/pub/databases/gwas/releases/"
     # WikiPathways (CC0) — monthly GMT releases under ``<YYYYMMDD>/gmt/``, the newest
     # also under ``current/gmt/``; the date is the version. See
     # ``sources/wikipathways/ingest.py``.
