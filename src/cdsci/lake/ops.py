@@ -159,6 +159,11 @@ SOURCES: tuple[Source, ...] = (
     # redistribution beyond the data owners', attribution expected (data-licenses.md).
     Source("gwas_catalog", "gwas_catalog", "NHGRI-EBI GWAS Catalog: curated variant-trait "
            "associations and their studies", "on-release", "ebi-ftp", "embl-ebi-terms-of-use"),
+    # `ncbi-no-restrictions`, not `us-public-domain`: MANE is a joint NCBI / EMBL-EBI
+    # product with no licence file; NCBI "places no restrictions on the use or
+    # distribution" of its molecular data (data-licenses.md).
+    Source("mane", "mane", "MANE: matched RefSeq/Ensembl human transcripts (summary file)",
+           "on-release", "ncbi-ftp", "ncbi-no-restrictions"),
     Source("ror", "ror", "ROR: canonical institution identity (names, locations, relationships)",
            "on-release", "zenodo", "cc0"),
     # Not the annual bulk file: demand-driven fetch of caller-supplied iDs from
