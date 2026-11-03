@@ -272,6 +272,9 @@ class Settings(BaseSettings):
     # its zip under ``Download/BioGRID/Release-Archive/BIOGRID-<v>/``; the release
     # number is the version. See ``sources/biogrid/ingest.py``.
     biogrid_base_url: str = "https://downloads.thebiogrid.org/"
+    # IntAct (CC BY 4.0) — dated release directories (``<YYYY-MM-DD>/psimitab/intact.zip``);
+    # the date is the version. See ``sources/intact/ingest.py``.
+    intact_base_url: str = "https://ftp.ebi.ac.uk/pub/databases/intact/"
 
     # ROR — the versioned institution-registry bulk dump (CC0, confirmed at
     # ror.readme.io/docs/data-dump 2026-08-11). This is the Zenodo *concept*
