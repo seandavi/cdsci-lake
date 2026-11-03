@@ -1,7 +1,8 @@
-"""NCBI Gene — ``gene_info`` + ``gene2ensembl`` bulk dumps (issue #36).
+"""NCBI Gene — ``gene_info`` + ``gene2ensembl`` + ``gene_history`` bulk dumps (issue #36).
 
-Raw landing tables ``lake.ncbi_gene.gene_info`` (~71.5M rows, every organism)
-and ``lake.ncbi_gene.gene2ensembl``; the derived ``ncbi_gene.gene`` and
+Raw landing tables ``lake.ncbi_gene.gene_info`` (~71.5M rows, every organism),
+``lake.ncbi_gene.gene2ensembl`` and ``lake.ncbi_gene.gene_history`` (every
+withdrawn GeneID, keyed ``discontinued_gene_id``); the derived ``ncbi_gene.gene`` and
 ``ncbi_gene.mapping`` tables are SQL transform models under ``models/ncbi_gene/``
 (ADR-0015), not part of this ingest.
 
