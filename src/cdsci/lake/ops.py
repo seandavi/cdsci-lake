@@ -168,6 +168,8 @@ SOURCES: tuple[Source, ...] = (
            "on-release", "ncbi-ftp", "ncbi-no-restrictions"),
     Source("cellosaurus", "cellosaurus", "Cellosaurus: the cell-line registry (flat file, "
            "one row per line)", "on-release", "expasy-ftp", "cc-by-4.0"),
+    Source("eqtl_catalogue", "eqtl_catalogue", "eQTL Catalogue: QTL datasets and the FTP "
+           "paths of their summary statistics", "on-release", "github-tsv", "cc-by-4.0"),
     Source("ror", "ror", "ROR: canonical institution identity (names, locations, relationships)",
            "on-release", "zenodo", "cc0"),
     # Not the annual bulk file: demand-driven fetch of caller-supplied iDs from

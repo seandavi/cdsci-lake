@@ -244,6 +244,12 @@ class Settings(BaseSettings):
     # Cellosaurus (CC BY 4.0) — the flat file at one rolling URL, no dated copies;
     # the header's ` Version:` line is the version. See ``sources/cellosaurus/ingest.py``.
     cellosaurus_url: str = "https://ftp.expasy.org/databases/cellosaurus/cellosaurus.txt"
+    # eQTL Catalogue (CC BY 4.0) — the metadata repo at a git tag, so the bytes are
+    # immutable; the release number in ``dataset_metadata_r<N>.tsv`` is the version.
+    # See ``sources/eqtl_catalogue/ingest.py``.
+    eqtl_catalogue_url: str = (
+        "https://raw.githubusercontent.com/eQTL-Catalogue/eQTL-Catalogue-resources/v26.09.2"
+    )
 
     # ROR — the versioned institution-registry bulk dump (CC0, confirmed at
     # ror.readme.io/docs/data-dump 2026-08-11). This is the Zenodo *concept*
