@@ -178,6 +178,12 @@ SOURCES: tuple[Source, ...] = (
     Source("encode", "encode", "ENCODE portal: the Experiment and File inventory (files "
            "referenced, never landed)", "rolling", "encode-report-tsv",
            "encode-no-restrictions"),
+    # `duo-0000042`: BEDbase states no site-wide data licence; each record carries
+    # a DUO code, and every record of the 2026-09-01 snapshot is DUO:0000042
+    # (general research use) (data-licenses.md).
+    Source("bedbase", "bedbase", "BEDbase: the BED file and bedset catalog (monthly "
+           "Parquet snapshot; intervals referenced, never landed)", "monthly",
+           "bedbase-parquet-snapshot", "duo-0000042"),
     Source("ror", "ror", "ROR: canonical institution identity (names, locations, relationships)",
            "on-release", "zenodo", "cc0"),
     # Not the annual bulk file: demand-driven fetch of caller-supplied iDs from

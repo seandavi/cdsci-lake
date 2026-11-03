@@ -264,6 +264,10 @@ class Settings(BaseSettings):
     # search are paths under it; a live inventory, the retrieval date is the version.
     # See ``sources/encode/ingest.py``.
     encode_base_url: str = "https://www.encodeproject.org"
+    # BEDbase (per-record DUO licence) — the index of its monthly Parquet snapshots;
+    # dated files are immutable and kept, the snapshot date is the version. Never
+    # crawl the listing API. See ``sources/bedbase/ingest.py``.
+    bedbase_exports_url: str = "https://api.bedbase.org/v1/exports"
 
     # ROR — the versioned institution-registry bulk dump (CC0, confirmed at
     # ror.readme.io/docs/data-dump 2026-08-11). This is the Zenodo *concept*
