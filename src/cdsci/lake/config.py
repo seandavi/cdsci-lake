@@ -241,6 +241,9 @@ class Settings(BaseSettings):
     # the newest also under ``current/``; the release number is the version. See
     # ``sources/mane/ingest.py``.
     mane_base_url: str = "https://ftp.ncbi.nlm.nih.gov/refseq/MANE/MANE_human/"
+    # Cellosaurus (CC BY 4.0) — the flat file at one rolling URL, no dated copies;
+    # the header's ` Version:` line is the version. See ``sources/cellosaurus/ingest.py``.
+    cellosaurus_url: str = "https://ftp.expasy.org/databases/cellosaurus/cellosaurus.txt"
 
     # ROR — the versioned institution-registry bulk dump (CC0, confirmed at
     # ror.readme.io/docs/data-dump 2026-08-11). This is the Zenodo *concept*
