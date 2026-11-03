@@ -124,7 +124,8 @@ SOURCES: tuple[Source, ...] = (
     Source("uniprot", "uniprot", "UniProt accession<->EntrezGene ID mapping (whole dump)",
            "~8-weekly", "uniprot-ftp", "cc-by-4.0"),
     Source("ncbi_gene", "ncbi_gene",
-           "NCBI Gene bulk dumps: gene_info + gene2ensembl + gene_history (all taxa)",
+           "NCBI Gene bulk dumps: gene_info + gene2ensembl + gene_history + gene_orthologs"
+           " + gene_group (all taxa)",
            "nightly", "ncbi-ftp", "us-public-domain"),
     Source("ncbi_gene2pubmed", "ncbi_gene2pubmed", "NCBI gene2pubmed: gene↔PMID links (all taxa)",
            "nightly", "ncbi-ftp", "us-public-domain"),

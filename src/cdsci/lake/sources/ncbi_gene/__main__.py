@@ -7,7 +7,8 @@ from .ingest import ingest
 
 app = build_app(
     "ncbi_gene", ingest,
-    help="Land NCBI Gene's gene_info/gene2ensembl/gene_history dumps into lake.ncbi_gene.*.",
+    help="Land NCBI Gene's gene_info/gene2ensembl/gene_history/gene_orthologs/gene_group "
+    "dumps into lake.ncbi_gene.*.",
 )
 
 if __name__ == "__main__":
