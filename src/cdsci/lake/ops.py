@@ -170,6 +170,9 @@ SOURCES: tuple[Source, ...] = (
            "one row per line)", "on-release", "expasy-ftp", "cc-by-4.0"),
     Source("eqtl_catalogue", "eqtl_catalogue", "eQTL Catalogue: QTL datasets and the FTP "
            "paths of their summary statistics", "on-release", "github-tsv", "cc-by-4.0"),
+    Source("cellxgene", "cellxgene", "CELLxGENE Discover: the PUBLIC single-cell dataset "
+           "listing (matrices referenced, never landed)", "rolling", "czi-curation-api",
+           "cc-by-4.0"),
     Source("ror", "ror", "ROR: canonical institution identity (names, locations, relationships)",
            "on-release", "zenodo", "cc0"),
     # Not the annual bulk file: demand-driven fetch of caller-supplied iDs from
