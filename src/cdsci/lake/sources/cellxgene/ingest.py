@@ -21,6 +21,11 @@ text, unexploded. A key a record omits (``batch_condition`` often is) and JSON
 null both read as NULL. Keyed ``dataset_version_id``: raw's docs say one row per
 dataset version.
 
+**Each row is stamped with the Census build it joins through**, ``census_release``:
+the Census release manifest's ``stable`` alias (its LTS build), resolved at
+ingest, or given. It is compared like any column, so a new LTS restamps every
+row on the next load.
+
 **The shape is checked on the whole file before anything lands.** Reading by
 name turns a renamed key into a silent all-NULL column, so every declared key
 must occur in some record, every record must be an object with a
@@ -34,6 +39,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
+import httpx
 
 from ... import ops
 from ...config import Settings, get_settings
@@ -72,6 +78,14 @@ def download_listing(version: str, settings: Settings | None = None) -> Path:
     return download(s.cellxgene_datasets_url, raw_dir(_RAW, s) / f"{version}-datasets.json")
 
 
+def stable_census_release(settings: Settings | None = None) -> str:
+    """The Census release manifest's ``stable`` alias: the LTS build datasets join through."""
+    s = settings or get_settings()
+    resp = httpx.get(s.cellxgene_census_release_url, timeout=60, follow_redirects=True)
+    resp.raise_for_status()
+    return resp.json()["stable"]
+
+
 def _check(path: Path) -> None:
     """Every record an object with a ``dataset_version_id``; every key present somewhere."""
     with open(path, encoding="utf-8") as f:
@@ -89,12 +103,12 @@ def _check(path: Path) -> None:
         raise ValueError(f"cellxgene: {path} expected keys missing upstream: {sorted(missing)}")
 
 
-def _select_sql(path: Path, version: str, limit: int | None) -> str:
+def _select_sql(path: Path, version: str, census_release: str, limit: int | None) -> str:
     colstr = "{" + ", ".join(f"'{k}':'{v}'" for k, v in COLUMNS.items()) + "}"
     select = ", ".join(f"{k}::VARCHAR AS {k}" if t == "JSON" else k for k, t in COLUMNS.items())
     limit_sql = f" LIMIT {int(limit)}" if limit else ""
     return f"""
-        SELECT {select}, '{version}' AS retrieval_date
+        SELECT {select}, '{version}' AS retrieval_date, '{census_release}' AS census_release
         FROM read_json({csv_source([path])}, format='array', columns={colstr})
         {limit_sql}
     """
@@ -104,6 +118,7 @@ def curate(
     con: duckdb.DuckDBPyConnection,
     path: Path,
     version: str,
+    census_release: str,
     *,
     target: str | None = None,
     limit: int | None = None,
@@ -117,7 +132,7 @@ def curate(
     _check(path)
     target = target or f"{LAKE}.cellxgene.dataset"
     return upsert(
-        con, target, _select_sql(path, version, limit),
+        con, target, _select_sql(path, version, census_release, limit),
         key="dataset_version_id", prune=None if limit else "true",
     )
 
@@ -126,6 +141,7 @@ def ingest(
     *,
     file: str | None = None,
     version: str | None = None,
+    census_release: str | None = None,
     schema: str = "cellxgene",
     limit: int | None = None,
     settings: Settings | None = None,
@@ -133,7 +149,8 @@ def ingest(
     """End-to-end: download today's listing (unless ``file``) -> MERGE-upsert -> summary.
 
     ``version`` defaults to today's UTC date for a download; a local ``file``
-    needs it given, since nothing in the listing dates it.
+    needs it given, since nothing in the listing dates it. ``census_release``
+    defaults to the Census manifest's ``stable`` alias today.
     """
     s = settings or get_settings()
     if file:
@@ -143,11 +160,12 @@ def ingest(
     else:
         version = version or datetime.now(UTC).date().isoformat()
         path = download_listing(version, s)
+    census_release = census_release or stable_census_release(s)
     target = f"{LAKE}.{schema}.dataset"
     con = lake_connect(s)
     try:
         with ops.run(con, source="cellxgene", target=target, version=version) as r:
-            r.rows = curate(con, path, version, target=target, limit=limit)
+            r.rows = curate(con, path, version, census_release, target=target, limit=limit)
     finally:
         con.close()
-    return r.summary()
+    return {**r.summary(), "census_release": census_release}

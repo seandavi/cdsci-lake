@@ -21,8 +21,9 @@ from cdsci.lake.sources import cellxgene
 INGEST = importlib.import_module("cdsci.lake.sources.cellxgene.ingest")
 
 SNAP = "SELECT max(snapshot_id) FROM lake.snapshots()"
-ROWS = ("SELECT dataset_version_id, retrieval_date FROM lake.cellxgene.dataset "
+ROWS = ("SELECT dataset_version_id, retrieval_date, census_release FROM lake.cellxgene.dataset "
         "ORDER BY dataset_version_id")
+LTS = "2025-11-08"
 
 
 def record(version_id: str, **fields) -> dict:
@@ -62,8 +63,10 @@ def lake_settings(tmp_path: Path) -> Settings:
 def test_cellxgene_lands_the_listing_typed_and_a_new_crawl_replaces_the_last(
         lake_settings, tmp_path):
     f = listing(tmp_path / "2026-09-18-datasets.json", [V1, V2, V3])
-    summary = cellxgene.ingest(file=str(f), version="2026-09-18", settings=lake_settings)
-    assert (summary["version"], summary["rows"]) == ("2026-09-18", 3)
+    summary = cellxgene.ingest(file=str(f), version="2026-09-18", census_release=LTS,
+                               settings=lake_settings)
+    assert (summary["version"], summary["rows"], summary["census_release"]) == (
+        "2026-09-18", 3, LTS)
 
     con = lake_connect(lake_settings)
     try:
@@ -72,7 +75,7 @@ def test_cellxgene_lands_the_listing_typed_and_a_new_crawl_replaces_the_last(
         described = con.execute("DESCRIBE lake.cellxgene.dataset").fetchall()
         assert [(c[0], c[1]) for c in described] == [
             *[(k, t if t in typed else "VARCHAR") for k, t in cellxgene.COLUMNS.items()],
-            ("retrieval_date", "VARCHAR")]
+            ("retrieval_date", "VARCHAR"), ("census_release", "VARCHAR")]
         assert con.execute("""
             SELECT collection_name, title, mean_genes_per_cell, primary_cell_count, tombstone,
                    spatial, is_primary_data, batch_condition, organism, revised_at
@@ -87,16 +90,20 @@ def test_cellxgene_lands_the_listing_typed_and_a_new_crawl_replaces_the_last(
 
         # re-landing the same crawl writes nothing
         before = con.execute(SNAP).fetchone()[0]
-        cellxgene.curate(con, f, "2026-09-18")
+        cellxgene.curate(con, f, "2026-09-18", LTS)
         assert con.execute(SNAP).fetchone()[0] == before
 
         # a limited load never prunes; a full load of the next crawl drops a revised
         # dataset version and restamps every row, so the table is one crawl
         later = listing(tmp_path / "2026-11-03-datasets.json", [V1, V3])
         # curate returns the table's row count, not the rows written
-        assert cellxgene.curate(con, later, "2026-11-03", limit=1) == 3
-        assert cellxgene.curate(con, later, "2026-11-03") == 2
-        assert con.execute(ROWS).fetchall() == [("v1", "2026-11-03"), ("v3", "2026-11-03")]
+        assert cellxgene.curate(con, later, "2026-11-03", LTS, limit=1) == 3
+        assert cellxgene.curate(con, later, "2026-11-03", LTS) == 2
+        assert con.execute(ROWS).fetchall() == [
+            ("v1", "2026-11-03", LTS), ("v3", "2026-11-03", LTS)]
+        # a new Census LTS restamps every row
+        cellxgene.curate(con, later, "2026-11-03", "2026-05-01")
+        assert {r[2] for r in con.execute(ROWS).fetchall()} == {"2026-05-01"}
     finally:
         con.close()
 
@@ -104,34 +111,35 @@ def test_cellxgene_lands_the_listing_typed_and_a_new_crawl_replaces_the_last(
 def test_a_malformed_listing_fails_before_landing_and_keeps_the_table(lake_settings, tmp_path):
     con = lake_connect(lake_settings)
     try:
-        cellxgene.curate(con, listing(tmp_path / "seed.json", [V1, V2]), "2026-09-18")
+        cellxgene.curate(con, listing(tmp_path / "seed.json", [V1, V2]), "2026-09-18", LTS)
         before = con.execute(SNAP).fetchone()[0]
 
         # a record without its key, past a limited load's rows
         keyless = {k: v for k, v in V3.items() if k != "dataset_version_id"}
         with pytest.raises(ValueError, match="record 2 is not an object"):
             cellxgene.curate(con, listing(tmp_path / "keyless.json", [V1, V2, keyless]),
-                             "2026-11-03", limit=1)
+                             "2026-11-03", LTS, limit=1)
         with pytest.raises(ValueError, match="record 1 is not an object"):
             cellxgene.curate(con, listing(tmp_path / "scalar.json", [V1, "v2"]), "2026-11-03",
-                             limit=1)
+                             LTS, limit=1)
         # a renamed key, in every record
         renamed = [{("n_cells" if k == "cell_count" else k): v for k, v in r.items()}
                    for r in (V1, V2)]
         with pytest.raises(ValueError, match=r"missing upstream: \['cell_count'\]"):
-            cellxgene.curate(con, listing(tmp_path / "renamed.json", renamed), "2026-11-03")
+            cellxgene.curate(con, listing(tmp_path / "renamed.json", renamed), "2026-11-03", LTS)
         # not an array (an API error body), and a truncated download
         err = tmp_path / "error.json"
         err.write_text('{"detail":"Internal Server Error"}\n')
         with pytest.raises(ValueError, match="not a JSON array"):
-            cellxgene.curate(con, err, "2026-11-03")
+            cellxgene.curate(con, err, "2026-11-03", LTS)
         cut = tmp_path / "cut.json"
         cut.write_text(listing(tmp_path / "whole.json", [V1, V2, V3]).read_text()[:-200])
         with pytest.raises(json.JSONDecodeError):
-            cellxgene.curate(con, cut, "2026-11-03", limit=1)
+            cellxgene.curate(con, cut, "2026-11-03", LTS, limit=1)
 
         assert con.execute(SNAP).fetchone()[0] == before
-        assert con.execute(ROWS).fetchall() == [("v1", "2026-09-18"), ("v2", "2026-09-18")]
+        assert con.execute(ROWS).fetchall() == [
+            ("v1", "2026-09-18", LTS), ("v2", "2026-09-18", LTS)]
     finally:
         con.close()
 
@@ -139,14 +147,14 @@ def test_a_malformed_listing_fails_before_landing_and_keeps_the_table(lake_setti
 def test_an_empty_listing_is_refused_and_the_table_kept(lake_settings, tmp_path):
     con = lake_connect(lake_settings)
     try:
-        cellxgene.curate(con, listing(tmp_path / "seed.json", [V1]), "2026-09-18")
+        cellxgene.curate(con, listing(tmp_path / "seed.json", [V1]), "2026-09-18", LTS)
         before = con.execute(SNAP).fetchone()[0]
         empty = listing(tmp_path / "empty.json", [])
         for limit in (None, 1):
             with pytest.raises(ValueError, match="zero rows"):
-                cellxgene.curate(con, empty, "2026-11-03", limit=limit)
+                cellxgene.curate(con, empty, "2026-11-03", LTS, limit=limit)
         assert con.execute(SNAP).fetchone()[0] == before
-        assert con.execute(ROWS).fetchall() == [("v1", "2026-09-18")]
+        assert con.execute(ROWS).fetchall() == [("v1", "2026-09-18", LTS)]
     finally:
         con.close()
 
@@ -156,7 +164,7 @@ def test_a_local_file_needs_a_version(lake_settings, tmp_path):
         cellxgene.ingest(file=str(listing(tmp_path / "d.json", [V1])), settings=lake_settings)
 
 
-def test_the_default_run_downloads_todays_listing_into_the_raw_layer(
+def test_the_default_run_downloads_todays_listing_and_stamps_the_stable_census(
         lake_settings, tmp_path, monkeypatch):
     upstream = listing(tmp_path / "upstream.json", [V1, V2])
     fetched = []
@@ -166,9 +174,20 @@ def test_the_default_run_downloads_todays_listing_into_the_raw_layer(
         dest.parent.mkdir(parents=True, exist_ok=True)
         return Path(shutil.copy(upstream, dest))
 
+    class Manifest:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"stable": LTS, "latest": "2025-11-17"}
+
+    manifests = []
     monkeypatch.setattr(INGEST, "download", download)
+    monkeypatch.setattr(INGEST.httpx, "get", lambda url, **kw: manifests.append(url) or Manifest())
     summary = cellxgene.ingest(version="2026-11-03", settings=lake_settings)
-    assert (summary["version"], summary["rows"]) == ("2026-11-03", 2)
+    assert (summary["version"], summary["rows"], summary["census_release"]) == (
+        "2026-11-03", 2, LTS)
+    assert manifests == [lake_settings.cellxgene_census_release_url]
     [(url, dest)] = fetched
     assert url == lake_settings.cellxgene_datasets_url
     # keyed by version under the source's raw dir
