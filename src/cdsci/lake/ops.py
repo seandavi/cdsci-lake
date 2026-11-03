@@ -184,6 +184,8 @@ SOURCES: tuple[Source, ...] = (
     Source("bedbase", "bedbase", "BEDbase: the BED file and bedset catalog (monthly "
            "Parquet snapshot; intervals referenced, never landed)", "monthly",
            "bedbase-parquet-snapshot", "duo-0000042"),
+    Source("biogrid", "biogrid", "BioGRID: curated physical and genetic interactions, every "
+           "organism (ALL tab3)", "monthly", "biogrid-release-archive", "mit"),
     Source("ror", "ror", "ROR: canonical institution identity (names, locations, relationships)",
            "on-release", "zenodo", "cc0"),
     # Not the annual bulk file: demand-driven fetch of caller-supplied iDs from
