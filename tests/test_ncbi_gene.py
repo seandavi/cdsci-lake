@@ -3,7 +3,8 @@
 The fixtures are **real bytes**: header + rows sliced verbatim out of
 ``gene/DATA/gene_info.gz`` (the NEWENTRY placeholders that lead the file),
 ``GENE_INFO/Mammalia/Homo_sapiens.gene_info.gz`` (human rows, the only ones with
-populated Synonyms/dbXrefs) and ``gene/DATA/gene2ensembl.gz`` — so the column
+populated Synonyms/dbXrefs), ``gene/DATA/gene2ensembl.gz`` and
+``gene/DATA/gene_history.gz`` (the file's first rows, then its first human ones) — so the column
 spec, the ``-`` null marker and the ``|``/``:`` sub-delimiters are checked
 against what NCBI actually ships, not against a hand-typed guess.
 
@@ -26,6 +27,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 MODELS = Path(__file__).parent.parent / "transform" / "models"
 GENE_INFO = FIXTURES / "ncbi_gene_info_sample.tsv"
 GENE2ENSEMBL = FIXTURES / "ncbi_gene2ensembl_sample.tsv"
+GENE_HISTORY = FIXTURES / "ncbi_gene_history_sample.tsv"
 VERSION = "test-2026-08-11"
 
 
@@ -71,6 +73,48 @@ def test_land_gene2ensembl(landed):
         FROM lake.ncbi_gene.gene2ensembl WHERE gene_id = 27215448
     """).fetchone()
     assert row == (3483, "gene-A5N79_gp34", None, "YP_009243652.1")
+
+
+def test_land_gene_history_keeps_rows_with_no_successor(lake_settings: Settings):
+    """Most withdrawn ids have no successor (``gene_id`` NULL); none may be dropped."""
+    con = lake_connect(lake_settings)
+    try:
+        assert ncbi_gene.land(con, "gene_history", GENE_HISTORY, VERSION) == 8
+        assert con.execute(
+            "SELECT count(*) FROM lake.ncbi_gene.gene_history WHERE gene_id IS NULL"
+        ).fetchone()[0] == 6
+        assert con.execute("""
+            SELECT taxon_id, gene_id, discontinued_symbol, discontinue_date
+            FROM lake.ncbi_gene.gene_history WHERE discontinued_gene_id = 8
+        """).fetchone() == (9606, 7003, "AA", "20061122")
+    finally:
+        con.close()
+
+
+def test_land_gene_history_batched_prunes_on_its_key(lake_settings: Settings, tmp_path: Path):
+    """Shards on ``discontinued_gene_id``: every row lands, a dropped id is pruned, a
+    header-only dump trips the empty-load guard instead of pruning the table."""
+    con = lake_connect(lake_settings)
+    count = "SELECT count(*) FROM lake.ncbi_gene.gene_history"
+    lines = GENE_HISTORY.read_text().splitlines(keepends=True)
+    try:
+        for i in range(4):
+            ncbi_gene.land(con, "gene_history", GENE_HISTORY, VERSION, batch=(i, 4))
+        assert con.execute(count).fetchone()[0] == 8
+
+        dropped = tmp_path / "gene_history_no_4.tsv"
+        dropped.write_text("".join(ln for ln in lines if ln.split("\t")[2:3] != ["4"]))
+        for i in range(4):
+            ncbi_gene.land(con, "gene_history", dropped, VERSION, batch=(i, 4))
+        assert con.execute(count).fetchone()[0] == 7
+
+        header_only = tmp_path / "gene_history_header.tsv"
+        header_only.write_text(lines[0])
+        with pytest.raises(ValueError, match="refusing to prune"):
+            ncbi_gene.land(con, "gene_history", header_only, VERSION)
+        assert con.execute(count).fetchone()[0] == 7
+    finally:
+        con.close()
 
 
 def test_land_is_idempotent(landed):

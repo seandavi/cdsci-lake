@@ -1,4 +1,4 @@
-"""Land NCBI Gene's bulk dumps into ``lake.ncbi_gene.*`` (issue #36).
+"""Land NCBI Gene's bulk dumps into ``lake.ncbi_gene.*`` (issue #36, bioc-on-ice#183).
 
 NCBI Gene is the lake's **unversioned** case. There is no release number: the
 dumps under ``ftp.ncbi.nlm.nih.gov/gene/DATA/`` are regenerated nightly, so
@@ -71,19 +71,32 @@ DUMP_COLUMNS: dict[str, dict[str, str]] = {
         "rna_accession": "VARCHAR", "ensembl_rna_id": "VARCHAR",
         "protein_accession": "VARCHAR", "ensembl_protein_id": "VARCHAR",
     },
+    "gene_history": {
+        "taxon_id": "INTEGER", "gene_id": "BIGINT", "discontinued_gene_id": "BIGINT",
+        "discontinued_symbol": "VARCHAR", "discontinue_date": "VARCHAR",
+    },
 }
 
 # Natural key per dump. `gene_info` is one row per GeneID. `gene2ensembl` has no
 # single-column key -- one GeneID has a row per (transcript, protein) pair -- so
 # every identifier column is the key; the MERGE then degenerates to
 # insert-if-absent, which is correct because there is no non-key column to update.
+# `gene_history` is one row per withdrawn GeneID.
 DUMP_KEYS: dict[str, list[str]] = {
     "gene_info": ["gene_id"],
     "gene2ensembl": [
         "gene_id", "ensembl_gene_id", "rna_accession", "ensembl_rna_id",
         "protein_accession", "ensembl_protein_id",
     ],
+    "gene_history": ["discontinued_gene_id"],
 }
+
+# Column each dump is filtered non-NULL on and hash-sharded by; `gene_id` unless
+# listed. `gene_history.gene_id` is the id a discontinued one was merged into and
+# is NULL for ~96% of rows (retired outright), so that dump shards on its key:
+# `discontinued_gene_id` is never NULL and unique per row (checked against the
+# 27.7M-row dump of 2026-11-02).
+DUMP_SHARD_COLUMNS: dict[str, str] = {"gene_history": "discontinued_gene_id"}
 
 
 def _sql_str(value: str) -> str:
@@ -112,15 +125,16 @@ def _select_sql(
     columns: dict[str, str],
     limit: int | None,
     batch: tuple[int, int] | None,
+    shard: str = "gene_id",
 ) -> str:
     """Render the landing SELECT; ``batch=(i, n)`` keeps the ``i``-th of ``n``
-    ``hash(gene_id)``-mod shards -- the memory-bounding lever (module docstring).
+    ``hash(shard)``-mod shards -- the memory-bounding lever (module docstring).
     """
     columns_sql = ", ".join(f"'{c}': '{t}'" for c, t in columns.items())
-    where = ["gene_id IS NOT NULL"]
+    where = [f"{shard} IS NOT NULL"]
     if batch is not None:
         i, n = batch
-        where.append(f"(hash(gene_id) % {int(n)}) = {int(i)}")
+        where.append(f"(hash({shard}) % {int(n)}) = {int(i)}")
     limit_sql = f" LIMIT {int(limit)}" if limit else ""
     return f"""
         SELECT *, CAST({_sql_str(version)} AS VARCHAR) AS snapshot_version
@@ -184,11 +198,12 @@ def land(
     never prunes.
     """
     target = f"{LAKE}.{schema}.{name}"
-    sql = _select_sql(path, version, columns or DUMP_COLUMNS[name], limit, batch)
+    shard = DUMP_SHARD_COLUMNS.get(name, "gene_id")
+    sql = _select_sql(path, version, columns or DUMP_COLUMNS[name], limit, batch, shard)
     if limit or mode != "merge":
         prune = None
     elif batch is not None:
-        prune = f"(hash(gene_id) % {int(batch[1])}) = {int(batch[0])}"
+        prune = f"(hash({shard}) % {int(batch[1])}) = {int(batch[0])}"
     else:
         prune = "true"
     return _load(con, target, sql, key or DUMP_KEYS[name], mode=mode, prune=prune)
@@ -207,10 +222,13 @@ def ingest(
 ) -> dict:
     """End-to-end: download each dump (unless ``file``) → batched land → summary.
 
-    ``dump`` lands only one of ``gene_info`` / ``gene2ensembl``; omit it for both.
+    ``dump`` lands only one of ``gene_info`` / ``gene2ensembl`` / ``gene_history``;
+    omit it for all three. An unchanged dump MERGEs to nothing, so landing all
+    three costs downloads and reads, not rewrites.
     ``file`` overrides the download with one local path (and then requires
     ``dump``) -- the local-fixture idiom ``reliance``/``census_geo`` use.
-    ``batches`` shards the load by ``hash(gene_id) % batches``; 1 disables it.
+    ``batches`` shards the load by ``hash(<shard column>) % batches`` (see
+    :data:`DUMP_SHARD_COLUMNS`); 1 disables it.
     """
     s = settings or get_settings()
     version = version or _today_version()
