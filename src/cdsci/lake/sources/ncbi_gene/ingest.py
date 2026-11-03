@@ -56,6 +56,11 @@ _log = logger.bind(ctx="ncbi_gene")
 # One column spec per dump, in file order (see module docstring on auto_detect).
 # Upstream's '#tax_id' is named `taxon_id` here: with an explicit spec the names
 # come from this table, not from the header line.
+# gene_orthologs and gene_group share one five-column format (NCBI's README).
+_GENE_PAIR_COLUMNS = {
+    "taxon_id": "INTEGER", "gene_id": "BIGINT", "relationship": "VARCHAR",
+    "other_taxon_id": "INTEGER", "other_gene_id": "BIGINT",
+}
 DUMP_COLUMNS: dict[str, dict[str, str]] = {
     "gene_info": {
         "taxon_id": "INTEGER", "gene_id": "BIGINT", "symbol": "VARCHAR",
@@ -75,13 +80,18 @@ DUMP_COLUMNS: dict[str, dict[str, str]] = {
         "taxon_id": "INTEGER", "gene_id": "BIGINT", "discontinued_gene_id": "BIGINT",
         "discontinued_symbol": "VARCHAR", "discontinue_date": "VARCHAR",
     },
+    "gene_orthologs": _GENE_PAIR_COLUMNS,
+    "gene_group": _GENE_PAIR_COLUMNS,
 }
 
 # Natural key per dump. `gene_info` is one row per GeneID. `gene2ensembl` has no
 # single-column key -- one GeneID has a row per (transcript, protein) pair -- so
 # every identifier column is the key; the MERGE then degenerates to
 # insert-if-absent, which is correct because there is no non-key column to update.
-# `gene_history` is one row per withdrawn GeneID.
+# `gene_history` is one row per withdrawn GeneID. The gene-pair dumps are one row
+# per (gene, relationship, other gene): gene_group states some pairs twice under
+# two relationships ('Readthrough sibling' and 'Potential readthrough sibling'),
+# so the pair alone is not a key (unique in both dumps of 2026-11-03).
 DUMP_KEYS: dict[str, list[str]] = {
     "gene_info": ["gene_id"],
     "gene2ensembl": [
@@ -89,13 +99,16 @@ DUMP_KEYS: dict[str, list[str]] = {
         "protein_accession", "ensembl_protein_id",
     ],
     "gene_history": ["discontinued_gene_id"],
+    "gene_orthologs": ["gene_id", "relationship", "other_gene_id"],
+    "gene_group": ["gene_id", "relationship", "other_gene_id"],
 }
 
 # Column each dump is filtered non-NULL on and hash-sharded by; `gene_id` unless
 # listed. `gene_history.gene_id` is the id a discontinued one was merged into and
 # is NULL for ~96% of rows (retired outright), so that dump shards on its key:
 # `discontinued_gene_id` is never NULL and unique per row (checked against the
-# 27.7M-row dump of 2026-11-02).
+# 27.7M-row dump of 2026-11-02). gene_orthologs and gene_group keep `gene_id`: it
+# is never NULL in either (dumps of 2026-11-03).
 DUMP_SHARD_COLUMNS: dict[str, str] = {"gene_history": "discontinued_gene_id"}
 
 
@@ -222,9 +235,9 @@ def ingest(
 ) -> dict:
     """End-to-end: download each dump (unless ``file``) → batched land → summary.
 
-    ``dump`` lands only one of ``gene_info`` / ``gene2ensembl`` / ``gene_history``;
-    omit it for all three. An unchanged dump MERGEs to nothing, so landing all
-    three costs downloads and reads, not rewrites.
+    ``dump`` lands only one :data:`DUMP_COLUMNS` dump; omit it for all of them. An
+    unchanged dump MERGEs to nothing, so landing all costs downloads and reads,
+    not rewrites.
     ``file`` overrides the download with one local path (and then requires
     ``dump``) -- the local-fixture idiom ``reliance``/``census_geo`` use.
     ``batches`` shards the load by ``hash(<shard column>) % batches`` (see

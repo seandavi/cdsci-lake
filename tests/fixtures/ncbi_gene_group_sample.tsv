@@ -1,0 +1,9 @@
+#tax_id	GeneID	relationship	Other_tax_id	Other_GeneID
+3218	112277806	Related functional gene	3218	112291008
+3218	112284262	Related pseudogene	3218	112289856
+3218	112289856	Related functional gene	3218	112284262
+3218	112291008	Related pseudogene	3218	112277806
+9606	3455	Potential readthrough sibling	9606	3588
+9606	3455	Readthrough sibling	9606	3588
+9606	3588	Potential readthrough sibling	9606	3455
+9606	3588	Readthrough sibling	9606	3455

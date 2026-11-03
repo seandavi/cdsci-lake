@@ -4,7 +4,9 @@ The fixtures are **real bytes**: header + rows sliced verbatim out of
 ``gene/DATA/gene_info.gz`` (the NEWENTRY placeholders that lead the file),
 ``GENE_INFO/Mammalia/Homo_sapiens.gene_info.gz`` (human rows, the only ones with
 populated Synonyms/dbXrefs), ``gene/DATA/gene2ensembl.gz`` and
-``gene/DATA/gene_history.gz`` (the file's first rows, then its first human ones) — so the column
+``gene/DATA/gene_history.gz`` (the file's first rows, then its first human ones),
+``gene/DATA/gene_orthologs.gz`` (likewise) and ``gene/DATA/gene_group.gz`` (its first rows,
+then a human pair stated under two relationships) — so the column
 spec, the ``-`` null marker and the ``|``/``:`` sub-delimiters are checked
 against what NCBI actually ships, not against a hand-typed guess.
 
@@ -14,12 +16,15 @@ No network except the ``RUN_INTEGRATION``-gated test at the bottom.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 from cdsci.lake import Settings, lake_connect, ops, table_exists
 from cdsci.lake.sources import ncbi_gene
+from cdsci.lake.sources.ncbi_gene.__main__ import app
 from cdsci.lake.transform.models import load_models
 from cdsci.lake.transform.runner import run_model
 
@@ -28,6 +33,8 @@ MODELS = Path(__file__).parent.parent / "transform" / "models"
 GENE_INFO = FIXTURES / "ncbi_gene_info_sample.tsv"
 GENE2ENSEMBL = FIXTURES / "ncbi_gene2ensembl_sample.tsv"
 GENE_HISTORY = FIXTURES / "ncbi_gene_history_sample.tsv"
+GENE_ORTHOLOGS = FIXTURES / "ncbi_gene_orthologs_sample.tsv"
+GENE_GROUP = FIXTURES / "ncbi_gene_group_sample.tsv"
 VERSION = "test-2026-08-11"
 
 
@@ -113,6 +120,88 @@ def test_land_gene_history_batched_prunes_on_its_key(lake_settings: Settings, tm
         with pytest.raises(ValueError, match="refusing to prune"):
             ncbi_gene.land(con, "gene_history", header_only, VERSION)
         assert con.execute(count).fetchone()[0] == 7
+    finally:
+        con.close()
+
+
+def test_land_gene_pairs(lake_settings: Settings):
+    """Both pair dumps land whole; gene_group's pair stated under two relationships
+    keeps both rows, so ``relationship`` must be part of the key."""
+    con = lake_connect(lake_settings)
+    try:
+        assert ncbi_gene.land(con, "gene_orthologs", GENE_ORTHOLOGS, VERSION) == 6
+        assert con.execute("""
+            SELECT taxon_id, relationship, other_taxon_id FROM lake.ncbi_gene.gene_orthologs
+            WHERE gene_id = 1 AND other_gene_id = 101415481
+        """).fetchone() == (9606, "Ortholog", 9361)
+
+        assert ncbi_gene.land(con, "gene_group", GENE_GROUP, VERSION) == 8
+        assert con.execute("""
+            SELECT list(relationship ORDER BY relationship) FROM lake.ncbi_gene.gene_group
+            WHERE gene_id = 3455 AND other_gene_id = 3588
+        """).fetchone()[0] == ["Potential readthrough sibling", "Readthrough sibling"]
+    finally:
+        con.close()
+
+
+@pytest.mark.parametrize(("name", "path", "rows"), [
+    ("gene_orthologs", GENE_ORTHOLOGS, 6), ("gene_group", GENE_GROUP, 8),
+])
+def test_land_gene_pairs_batched_prunes_and_guards(
+    lake_settings: Settings, tmp_path: Path, name: str, path: Path, rows: int
+):
+    """Shards on ``gene_id``: every row lands, an unchanged re-land is a no-op, a
+    dropped row is pruned, a header-only dump trips the empty-load guard."""
+    con = lake_connect(lake_settings)
+    count = f"SELECT count(*) FROM lake.ncbi_gene.{name}"
+    snapshot = "SELECT max(snapshot_id) FROM lake.snapshots()"
+    lines = path.read_text().splitlines(keepends=True)
+    try:
+        for i in range(4):
+            ncbi_gene.land(con, name, path, VERSION, batch=(i, 4))
+        assert con.execute(count).fetchone()[0] == rows
+
+        before = con.execute(snapshot).fetchone()[0]
+        for i in range(4):
+            ncbi_gene.land(con, name, path, VERSION, batch=(i, 4))
+        assert con.execute(snapshot).fetchone()[0] == before
+
+        dropped = tmp_path / f"{name}_no_last.tsv"
+        dropped.write_text("".join(lines[:-1]))
+        for i in range(4):
+            ncbi_gene.land(con, name, dropped, VERSION, batch=(i, 4))
+        assert con.execute(count).fetchone()[0] == rows - 1
+
+        header_only = tmp_path / f"{name}_header.tsv"
+        header_only.write_text(lines[0])
+        with pytest.raises(ValueError, match="refusing to prune"):
+            ncbi_gene.land(con, name, header_only, VERSION)
+        assert con.execute(count).fetchone()[0] == rows - 1
+    finally:
+        con.close()
+
+
+def test_run_dump_lands_only_that_dump(
+    lake_settings: Settings, monkeypatch: pytest.MonkeyPatch
+):
+    """``run --dump gene_group`` downloads and lands gene_group and nothing else."""
+    fetched: list[str] = []
+
+    def fake_download(name: str, version: str, settings: Settings | None = None) -> Path:
+        fetched.append(name)
+        return GENE_GROUP
+
+    module = sys.modules["cdsci.lake.sources.ncbi_gene.ingest"]
+    monkeypatch.setattr(module, "download_dump", fake_download)
+    monkeypatch.setattr(module, "get_settings", lambda: lake_settings)
+    result = CliRunner().invoke(app, ["run", "--dump", "gene_group", "--version", VERSION])
+    assert result.exit_code == 0, result.output
+    assert fetched == ["gene_group"]
+
+    con = lake_connect(lake_settings)
+    try:
+        assert con.execute("SELECT count(*) FROM lake.ncbi_gene.gene_group").fetchone()[0] == 8
+        assert not table_exists(con, "gene_orthologs")
     finally:
         con.close()
 
