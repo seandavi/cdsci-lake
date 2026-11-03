@@ -129,6 +129,9 @@ def curate(
     tombstoned); ``limit`` never prunes. ``retrieval_date`` is compared like any
     column, so a new crawl restamps every row: the table is one crawl, never a mix.
     """
+    # limit=0 is falsy: it would read every row and prune as a full load
+    if limit is not None and limit < 1:
+        raise ValueError(f"cellxgene: limit must be positive, got {limit}")
     _check(path)
     target = target or f"{LAKE}.cellxgene.dataset"
     return upsert(

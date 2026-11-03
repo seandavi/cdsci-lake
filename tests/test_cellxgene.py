@@ -144,6 +144,22 @@ def test_a_malformed_listing_fails_before_landing_and_keeps_the_table(lake_setti
         con.close()
 
 
+def test_a_nonpositive_limit_is_refused_and_never_prunes(lake_settings, tmp_path):
+    con = lake_connect(lake_settings)
+    try:
+        cellxgene.curate(con, listing(tmp_path / "seed.json", [V1, V2]), "2026-09-18", LTS)
+        before = con.execute(SNAP).fetchone()[0]
+        later = listing(tmp_path / "later.json", [V1])
+        for limit in (0, -1):
+            with pytest.raises(ValueError, match="limit must be positive"):
+                cellxgene.curate(con, later, "2026-11-03", LTS, limit=limit)
+        assert con.execute(SNAP).fetchone()[0] == before
+        assert con.execute(ROWS).fetchall() == [
+            ("v1", "2026-09-18", LTS), ("v2", "2026-09-18", LTS)]
+    finally:
+        con.close()
+
+
 def test_an_empty_listing_is_refused_and_the_table_kept(lake_settings, tmp_path):
     con = lake_connect(lake_settings)
     try:
