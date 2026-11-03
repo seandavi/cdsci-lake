@@ -173,6 +173,11 @@ SOURCES: tuple[Source, ...] = (
     Source("cellxgene", "cellxgene", "CELLxGENE Discover: the PUBLIC single-cell dataset "
            "listing (matrices referenced, never landed)", "rolling", "czi-curation-api",
            "cc-by-4.0"),
+    # `encode-no-restrictions`: ENCODE names no licence instrument, only free use
+    # "without restrictions" and a citation request (data-licenses.md).
+    Source("encode", "encode", "ENCODE portal: the Experiment and File inventory (files "
+           "referenced, never landed)", "rolling", "encode-report-tsv",
+           "encode-no-restrictions"),
     Source("ror", "ror", "ROR: canonical institution identity (names, locations, relationships)",
            "on-release", "zenodo", "cc0"),
     # Not the annual bulk file: demand-driven fetch of caller-supplied iDs from

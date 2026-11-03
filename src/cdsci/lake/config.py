@@ -260,6 +260,10 @@ class Settings(BaseSettings):
     cellxgene_census_release_url: str = (
         "https://census.cellxgene.cziscience.com/cellxgene-census/v1/release.json"
     )
+    # ENCODE portal (no use restrictions; cite the ENCODE Consortium) — report.tsv and
+    # search are paths under it; a live inventory, the retrieval date is the version.
+    # See ``sources/encode/ingest.py``.
+    encode_base_url: str = "https://www.encodeproject.org"
 
     # ROR — the versioned institution-registry bulk dump (CC0, confirmed at
     # ror.readme.io/docs/data-dump 2026-08-11). This is the Zenodo *concept*
