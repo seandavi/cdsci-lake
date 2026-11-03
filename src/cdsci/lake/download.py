@@ -59,6 +59,7 @@ def download(
     dest: Path,
     *,
     params: dict | None = None,
+    headers: dict | None = None,
     resume: bool = True,
     chunk_size: int = 1 << 20,
 ) -> Path:
@@ -66,6 +67,7 @@ def download(
 
     Returns ``dest`` (renamed from ``.part`` on completion). If ``dest`` already
     exists it is returned untouched — re-running an ingest does not re-download.
+    ``headers`` are sent with every request, e.g. a User-Agent.
     """
     if dest.exists():
         _log.debug("cached, skipping download: {}", dest.name)
@@ -85,11 +87,11 @@ def download(
         reraise=True,
     )
     def _fetch(start: int) -> None:
-        headers = {"Range": f"bytes={start}-"} if start else {}
+        sent = {**(headers or {}), **({"Range": f"bytes={start}-"} if start else {})}
         mode = "ab" if start else "wb"
         with (
             httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client,
-            client.stream("GET", url, params=params, headers=headers) as resp,
+            client.stream("GET", url, params=params, headers=sent) as resp,
             open(part, mode) as fh,
         ):
             # Server ignored Range (200) or rejected it (416/400/501) → the
