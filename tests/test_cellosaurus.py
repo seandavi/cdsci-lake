@@ -135,6 +135,8 @@ def test_cellosaurus_lands_every_line_verbatim_and_a_new_release_replaces_the_la
     ([*HELA[:-1], *HYBRID], "opens an entry before the last one is closed"),
     # a truncated download
     ([*HELA, *HYBRID[:-1]], "does not end with '//'"),
+    # an entry after a terminator that does not open with ID (review, cdsci-lake#145)
+    ([*HELA, "AC   CVCL_BAD", "DR   EFO; EFO_BAD", "//"], "starts an entry without an ID line"),
 ])
 def test_a_malformed_file_fails_before_landing_and_keeps_the_table(
         lake_settings, tmp_path, body, error):

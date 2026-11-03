@@ -113,12 +113,16 @@ def _parse_sql(path: Path) -> str:
 def _stage(con: duckdb.DuckDBPyConnection, path: Path, version: str) -> None:
     """Parse the whole file into a temp table and check its structure; raise before landing."""
     con.execute(f"CREATE OR REPLACE TEMP TABLE {_STAGE} AS {_parse_sql(path)}")
-    lines, entries, found, malformed, first_malformed, no_ac, unclosed, last = con.execute(f"""
+    (lines, entries, found, malformed, first_malformed, no_ac, unclosed, no_id,
+     last) = con.execute(f"""
         SELECT count(*), count(*) FILTER (code = 'ID'), any_value(cellosaurus_version),
                count(*) FILTER (malformed), min(line_number) FILTER (malformed),
                min(line_number) FILTER (code IS NOT NULL AND accession IS NULL),
                -- an ID line follows the header (NULL code) or a terminator
                min(line_number) FILTER (code = 'ID' AND coalesce(prev, '//') <> '//'),
+               -- and the converse: the line after the header or a terminator opens with ID
+               min(line_number) FILTER (code IS NOT NULL AND code <> 'ID'
+                                        AND coalesce(prev, '//') = '//'),
                arg_max(code, line_number) FILTER (code IS NOT NULL)
         FROM (SELECT *, lag(code) OVER (ORDER BY line_number) AS prev FROM {_STAGE})
     """).fetchone()
@@ -139,6 +143,8 @@ def _stage(con: duckdb.DuckDBPyConnection, path: Path, version: str) -> None:
     if unclosed:
         raise ValueError(f"cellosaurus: {path} line {unclosed} opens an entry before the "
                          "last one is closed by '//'")
+    if no_id:
+        raise ValueError(f"cellosaurus: {path} line {no_id} starts an entry without an ID line")
     if last != "//":
         raise ValueError(f"cellosaurus: {path} does not end with '//' (truncated?)")
 
