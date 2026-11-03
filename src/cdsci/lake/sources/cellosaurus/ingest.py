@@ -90,13 +90,14 @@ def _parse_sql(path: Path) -> str:
               FROM l WHERE NOT (line_number = n AND line = '')),
         -- Entries are '//'-terminated, so a line's entry is the number of
         -- terminators before it. The accession is the entry's AC line; the ID
-        -- line comes first, so it cannot simply be carried downwards.
+        -- line comes first, so it cannot simply be carried downwards. A running
+        -- sum less the line's own terminator, not a frame ending at 1 PRECEDING:
+        -- DuckDB evaluates that frame with a FILTER quadratically (148 s here).
         e AS (SELECT *, CASE WHEN body THEN left(line, 2) END AS code,
                      CASE WHEN NOT body THEN line WHEN line <> '//' THEN substr(line, 6) END
                          AS value,
-                     count(*) FILTER (body AND line = '//') OVER (
-                         ORDER BY line_number ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)
-                         AS entry
+                     sum((body AND line = '//')::INT) OVER (ORDER BY line_number)
+                         - (body AND line = '//')::INT AS entry
               FROM b)
         SELECT line_number,
                CASE WHEN body THEN max(value) FILTER (code = 'AC') OVER (PARTITION BY entry) END

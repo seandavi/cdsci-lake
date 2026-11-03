@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib
 import shutil
+import time
 from pathlib import Path
 
 import pytest
@@ -195,3 +196,29 @@ def test_the_default_run_downloads_the_rolling_file_keyed_by_its_version(
     assert fetched == [lake_settings.cellosaurus_url]
     raw = tmp_path / "lake" / "raw" / "cellosaurus"
     assert sorted(p.name for p in raw.iterdir()) == ["57.0-cellosaurus.txt"]
+
+
+def test_the_parse_is_linear_in_the_file(lake_settings, tmp_path):
+    # A 1 PRECEDING window frame made the parse quadratic: 148 s on the real
+    # 3.2M-line file, ~28 min under lake_connect's 4 threads. 200k lines took
+    # ~6 s that way; linear, they take well under one.
+    entries = 200_000 // len(HELA)
+    lines = [*header()]
+    for i in range(entries):
+        lines += [HELA[0], f"AC   CVCL_{i:06d}", *HELA[2:]]
+    txt = flat(tmp_path / "big.txt", lines)
+    # line_number -> the CVCL_ accession of the entry it falls in
+    expect = (f"'CVCL_' || lpad(((line_number - {len(header())} - 1) // {len(HELA)})"
+              "::VARCHAR, 6, '0')")
+    con = lake_connect(lake_settings)
+    try:
+        start = time.perf_counter()
+        INGEST._stage(con, txt, "56.0")
+        elapsed = time.perf_counter() - start
+        assert con.execute(f"""
+            SELECT count(*), count(DISTINCT accession),
+                   count(*) FILTER (accession <> {expect})
+            FROM {INGEST._STAGE}""").fetchone() == (len(lines), entries, 0)
+        assert elapsed < 3, f"parsing {len(lines):,} lines took {elapsed:.1f}s"
+    finally:
+        con.close()
