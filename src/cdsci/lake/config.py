@@ -250,6 +250,12 @@ class Settings(BaseSettings):
     eqtl_catalogue_url: str = (
         "https://raw.githubusercontent.com/eQTL-Catalogue/eQTL-Catalogue-resources/v26.09.2"
     )
+    # CELLxGENE Discover (CC BY 4.0) — the PUBLIC dataset listing, one live JSON array
+    # with no dated copies; the retrieval date is the version. See
+    # ``sources/cellxgene/ingest.py``.
+    cellxgene_datasets_url: str = (
+        "https://api.cellxgene.cziscience.com/curation/v1/datasets?visibility=PUBLIC"
+    )
 
     # ROR — the versioned institution-registry bulk dump (CC0, confirmed at
     # ror.readme.io/docs/data-dump 2026-08-11). This is the Zenodo *concept*
