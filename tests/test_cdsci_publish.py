@@ -89,3 +89,14 @@ def test_concordance_detects_row_count_column_type_and_dropped_table(con, tmp_pa
     new["tables"] = []
     diffs = concordance(old, new)
     assert diffs == ["annotation.widget: dropped"]
+
+
+def test_provenance_dates_serialize(con, tmp_path):
+    con.execute("CREATE TABLE src.release AS SELECT 'acs' AS source, DATE '2026-11-01' AS fetched")
+    out = tmp_path / "release"
+    m = publish(con, out, tables=TABLES, docs=_docs, base_url=out.as_uri(),
+                db_file="product.duckdb", code_dir=HERE,
+                provenance_sql="SELECT * FROM src.release")
+    written = json.loads((out / "manifest.json").read_text())
+    assert written["provenance"] == [{"source": "acs", "fetched": "2026-11-01"}]
+    assert m["provenance"][0]["source"] == "acs"
