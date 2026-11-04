@@ -275,6 +275,10 @@ class Settings(BaseSettings):
     # IntAct (CC BY 4.0) — dated release directories (``<YYYY-MM-DD>/psimitab/intact.zip``);
     # the date is the version. See ``sources/intact/ingest.py``.
     intact_base_url: str = "https://ftp.ebi.ac.uk/pub/databases/intact/"
+    # PubTator3 (US public domain) — five ``<kind>2pubtator3.gz`` rewritten in place about
+    # monthly, none archived; the retrieval date is the version. See
+    # ``sources/pubtator3/ingest.py``.
+    pubtator3_base_url: str = "https://ftp.ncbi.nlm.nih.gov/pub/lu/PubTator3/"
     # RNAcentral (CC0 from release 20) — numbered release directories
     # (``releases/<NN>.0/id_mapping/id_mapping.tsv.gz``); the number is the version.
     # See ``sources/rnacentral/ingest.py``.

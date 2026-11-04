@@ -188,6 +188,9 @@ SOURCES: tuple[Source, ...] = (
            "organism (ALL tab3)", "monthly", "biogrid-release-archive", "mit"),
     Source("intact", "intact", "IntAct: curated molecular interaction evidence, every "
            "organism (PSI-MI MITAB 2.7)", "on-release", "ebi-ftp", "cc-by-4.0"),
+    Source("pubtator3", "pubtator3", "PubTator3: text-mined and curated paper-concept "
+           "annotations over PubMed (gene, disease, chemical, species, mutation)", "monthly",
+           "ncbi-ftp", "us-public-domain"),
     Source("rnacentral", "rnacentral", "RNAcentral: ncRNA sequences cross-referenced to "
            "their member databases, every organism (id_mapping)", "on-release", "ebi-ftp", "cc0"),
     # `mixed`: each ontology carries its own licence (data-licenses.md).
