@@ -188,6 +188,10 @@ SOURCES: tuple[Source, ...] = (
            "organism (ALL tab3)", "monthly", "biogrid-release-archive", "mit"),
     Source("intact", "intact", "IntAct: curated molecular interaction evidence, every "
            "organism (PSI-MI MITAB 2.7)", "on-release", "ebi-ftp", "cc-by-4.0"),
+    # `mixed`: each ontology carries its own licence (data-licenses.md).
+    Source("obo", "obo", "OBO Foundry ontologies (CL, UBERON, MONDO, EFO, HsapDv, MmusDv, "
+           "GO, DOID): OBO Graphs JSON nodes and edges", "on-release", "obo-graphs-json",
+           "mixed"),
     Source("ror", "ror", "ROR: canonical institution identity (names, locations, relationships)",
            "on-release", "zenodo", "cc0"),
     # Not the annual bulk file: demand-driven fetch of caller-supplied iDs from
