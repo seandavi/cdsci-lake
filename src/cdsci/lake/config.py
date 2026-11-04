@@ -279,6 +279,10 @@ class Settings(BaseSettings):
     # monthly, none archived; the retrieval date is the version. See
     # ``sources/pubtator3/ingest.py``.
     pubtator3_base_url: str = "https://ftp.ncbi.nlm.nih.gov/pub/lu/PubTator3/"
+    # RNAcentral (CC0 from release 20) — numbered release directories
+    # (``releases/<NN>.0/id_mapping/id_mapping.tsv.gz``); the number is the version.
+    # See ``sources/rnacentral/ingest.py``.
+    rnacentral_base_url: str = "https://ftp.ebi.ac.uk/pub/databases/RNAcentral/"
     # OBO Foundry ontologies (per-ontology licence) — each one's OBO Graphs JSON: the
     # newest release, and a dated release by upstream's own name for it (``{version}``:
     # a GitHub tag, or GO's release directory). The file's ``graphs[0].meta.version``

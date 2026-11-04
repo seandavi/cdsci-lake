@@ -191,6 +191,8 @@ SOURCES: tuple[Source, ...] = (
     Source("pubtator3", "pubtator3", "PubTator3: text-mined and curated paper-concept "
            "annotations over PubMed (gene, disease, chemical, species, mutation)", "monthly",
            "ncbi-ftp", "us-public-domain"),
+    Source("rnacentral", "rnacentral", "RNAcentral: ncRNA sequences cross-referenced to "
+           "their member databases, every organism (id_mapping)", "on-release", "ebi-ftp", "cc0"),
     # `mixed`: each ontology carries its own licence (data-licenses.md).
     Source("obo", "obo", "OBO Foundry ontologies (CL, UBERON, MONDO, EFO, HsapDv, MmusDv, "
            "GO, DOID): OBO Graphs JSON nodes and edges", "on-release", "obo-graphs-json",
