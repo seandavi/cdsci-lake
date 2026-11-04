@@ -43,10 +43,11 @@ re-run takes 65 s at 12.8 GB peak RSS with ``batches=1`` and 346 s at 2.0 GB wit
 at 47.8 GB unchanged, 367 s at 59.3 GB on a new dump.
 
 ``mode="append"`` skips the MERGE's read of the growing target for the initial
-bulk load, and refuses a slice that already holds rows. ``mode="merge"`` (the default) is idempotent and prunes lines a
-new dump no longer has. ``pubtator3_version`` is excluded from change detection
-(ADR-0003), so identical content retrieved on another date writes nothing and the
-stamp is the retrieval date of the dump a row last changed in.
+bulk load, and refuses a slice that already holds rows. ``mode="merge"`` (the
+default) is idempotent and prunes lines a new dump no longer has.
+``pubtator3_version`` is excluded from change detection (ADR-0003), so identical
+content retrieved on another date writes nothing and the stamp is the retrieval
+date of the dump a row last changed in.
 
 License: US Government Work (NCBI/NLM), public domain, per the directory's
 README.txt.
