@@ -64,7 +64,7 @@ namespace = true
 
 [dependency-groups]
 dev = [
-    "cdsci-publish",
+    "cdsci-publish[upload,hf]",
     # dev-only: validates manifest.json against cdsci.publish's manifest.schema.json
     # in tests; not a runtime dependency of cdsci-publish itself.
     "jsonschema>=4.23.0",

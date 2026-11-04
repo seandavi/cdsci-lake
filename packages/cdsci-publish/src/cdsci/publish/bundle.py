@@ -70,6 +70,19 @@ def restore_sql(tables, base_url):
     return ";\n".join(stmts) + ";\n"
 
 
+def check_files(bundle, manifest):
+    """Every table's Parquet in `bundle` matches its manifest sha256, streamed; SystemExit if not.
+
+    Disk-bound: sha256 runs ~1.6 GB/s, so a cold 94 GB bundle takes about six minutes,
+    against an hours-long upload.
+    """
+    for t in manifest["tables"]:
+        with (bundle / t["path"]).open("rb") as f:
+            if hashlib.file_digest(f, "sha256").hexdigest() != t["sha256"]:
+                raise SystemExit(f"{bundle}/{t['path']} does not match its manifest.json "
+                                 "sha256; re-publish this bundle")
+
+
 def _git_sha(cwd):
     """The build's code version; None outside a checkout."""
     try:
