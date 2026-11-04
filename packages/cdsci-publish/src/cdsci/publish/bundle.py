@@ -154,6 +154,7 @@ def publish(
     if provenance_sql is not None:
         prov = con.sql(provenance_sql)
         provenance = [dict(zip(prov.columns, r, strict=False)) for r in prov.fetchall()]
+    # default=str: provenance rows may carry dates/timestamps (cancer-on-ice's do).
     now = datetime.now(UTC)
     manifest = {
         "manifest_version": MANIFEST_VERSION,
@@ -169,7 +170,7 @@ def publish(
     (out / "views.sql").write_text(views)
     (out / "restore.sql").write_text(restore_sql(built, base_url))
     _build_db(out / db_file, views, base_url, out)
-    (out / "manifest.json.tmp").write_text(json.dumps(manifest, indent=2) + "\n")
+    (out / "manifest.json.tmp").write_text(json.dumps(manifest, indent=2, default=str) + "\n")
     (out / "manifest.json.tmp").replace(out / "manifest.json")
     print(f"{len(built)} tables, {sum(t['row_count'] for t in built):,} rows, "
           f"{sum(t['bytes'] for t in built):,} bytes -> {out}")
