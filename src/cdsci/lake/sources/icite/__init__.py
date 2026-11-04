@@ -7,6 +7,6 @@ center layer maintains today (``cu_openalex.cancer_center.enrich``, ADR-0018):
 once iCite is in the lake, RCR is a join, free for any cohort or peer (ADR-0021).
 """
 
-from .ingest import curate, download_snapshot, ingest, resolve_latest
+from .ingest import curate, curate_citations, download_snapshot, ingest, resolve_latest
 
-__all__ = ["curate", "download_snapshot", "ingest", "resolve_latest"]
+__all__ = ["curate", "curate_citations", "download_snapshot", "ingest", "resolve_latest"]
