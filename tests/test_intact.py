@@ -258,3 +258,32 @@ def test_the_default_run_downloads_the_newest_release(lake_settings, tmp_path, m
     # keyed by version under the source's raw dir, unzipped beside the download
     assert dest.parent.name == "2026-10-17" and dest.parent.parent.name == "intact"
     assert (dest.parent / "intact.txt").exists() and (dest.parent / "intact_negative.txt").exists()
+
+
+@pytest.mark.parametrize("missing", ["intact.txt", "intact_negative.txt"])
+def test_an_archive_missing_a_member_is_refused_and_the_table_kept(
+        lake_settings, tmp_path, missing):
+    # review r1 (#153): the other member alone would land as a full load and prune
+    # every row of the missing file
+    intact.ingest(file=str(zipped(tmp_path / "ok", "2026-01-09", [R1, R2], [NEG])),
+                  settings=lake_settings)
+    con = lake_connect(lake_settings)
+    try:
+        before = (con.execute(SNAP).fetchone()[0],
+                  con.execute("SELECT count(*) FROM lake.intact.interaction").fetchone()[0])
+    finally:
+        con.close()
+    d = tmp_path / "bad" / "2026-02-01" / "psimitab"
+    d.mkdir(parents=True)
+    with zipfile.ZipFile(d / "intact.zip", "w") as z:
+        for name, body in (("intact.txt", [R1, R2]), ("intact_negative.txt", [NEG])):
+            if name != missing:
+                z.writestr(name, "".join(r + "\n" for r in ["\t".join(intact.COLUMNS), *body]))
+    with pytest.raises(ValueError, match="not exactly"):
+        intact.ingest(file=str(d / "intact.zip"), settings=lake_settings)
+    con = lake_connect(lake_settings)
+    try:
+        assert (con.execute(SNAP).fetchone()[0],
+                con.execute("SELECT count(*) FROM lake.intact.interaction").fetchone()[0]) == before
+    finally:
+        con.close()

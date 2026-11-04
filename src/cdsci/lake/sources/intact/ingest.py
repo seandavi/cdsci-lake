@@ -109,6 +109,9 @@ def latest(settings: Settings | None = None) -> str:
     return max(found)
 
 
+MEMBERS = ("intact.txt", "intact_negative.txt")
+
+
 def download_release(version: str, settings: Settings | None = None) -> Path:
     """Download one release's ``psimitab/intact.zip`` into the raw layer, keyed by ``version``."""
     s = settings or get_settings()
@@ -208,6 +211,11 @@ def ingest(
         raise ValueError(f"intact: version {version!r} is not a release date YYYY-MM-DD")
     archive = archive or download_release(version, s)
     paths = unzip(archive, raw_dir(_RAW, s) / version)
+    # A full load prunes on the whole table: an archive missing either member would
+    # land the other as authoritative and delete every row of the missing file.
+    names = sorted(p.name for p in paths)
+    if names != sorted(MEMBERS):
+        raise ValueError(f"intact: {archive} holds {names}, not exactly {sorted(MEMBERS)}")
     target = f"{LAKE}.{schema}.interaction"
     con = lake_connect(s)
     try:
