@@ -275,6 +275,10 @@ class Settings(BaseSettings):
     # IntAct (CC BY 4.0) — dated release directories (``<YYYY-MM-DD>/psimitab/intact.zip``);
     # the date is the version. See ``sources/intact/ingest.py``.
     intact_base_url: str = "https://ftp.ebi.ac.uk/pub/databases/intact/"
+    # RNAcentral (CC0 from release 20) — numbered release directories
+    # (``releases/<NN>.0/id_mapping/id_mapping.tsv.gz``); the number is the version.
+    # See ``sources/rnacentral/ingest.py``.
+    rnacentral_base_url: str = "https://ftp.ebi.ac.uk/pub/databases/RNAcentral/"
     # OBO Foundry ontologies (per-ontology licence) — each one's OBO Graphs JSON: the
     # newest release, and a dated release by upstream's own name for it (``{version}``:
     # a GitHub tag, or GO's release directory). The file's ``graphs[0].meta.version``
