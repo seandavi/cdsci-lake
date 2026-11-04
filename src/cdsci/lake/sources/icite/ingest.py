@@ -11,7 +11,7 @@ Three steps, medallion-style (ADR-0012):
 ``icite.metadata`` leads with the **join-focused** typed projection (identifiers +
 the impact metrics); those 17 columns are a contract other readers depend on. The
 rest of the snapshot's columns follow, typed (bioc-on-ice#183): ``authors``, the
-translation fields, the PMID lists as ``BIGINT[]`` and ``last_modified``. It mirrors
+translation fields, the PMID lists as ``BIGINT[]`` and ``last_modified`` (UTC). It mirrors
 the latest snapshot: a PMID iCite withdrew is pruned. ``icite.citation`` is the
 graph exploded from ``references``.
 """
@@ -34,7 +34,7 @@ SHARDS = 16  # icite.citation is merged one cited_pmid % SHARDS slice at a time
 # Columns after the original 17 (bioc-on-ice#183): added in place to an older table.
 ADDED = {"authors": "VARCHAR", "molecular_cellular": "DOUBLE", "provisional": "BOOLEAN",
          "x_coord": "DOUBLE", "y_coord": "DOUBLE", "cited_by_clin": "BIGINT[]",
-         "cited_by": "BIGINT[]", "references": "BIGINT[]", "last_modified": "TIMESTAMPTZ"}
+         "cited_by": "BIGINT[]", "references": "BIGINT[]", "last_modified": "TIMESTAMP"}
 _RAW = "icite"  # raw-download subdir name
 
 
@@ -141,8 +141,9 @@ def _select_sql(csv_paths: list[Path] | str, version: str, limit: int | None) ->
             {_pmids("cited_by_clin")}                         AS cited_by_clin,
             {_pmids("cited_by")}                              AS cited_by,
             {_pmids('"references"')}                          AS "references",
-            -- printed as '2026-08-30T03:38:37.156Z[Etc/UTC]'
-            TRY_CAST(regexp_replace(last_modified, '\[.*\]$', '') AS TIMESTAMPTZ)
+            -- printed in UTC as '2026-08-30T03:38:37.156Z[Etc/UTC]': a naive TIMESTAMP,
+            -- so the session time zone never shifts it
+            TRY_CAST(regexp_replace(last_modified, '\[.*\]$', '') AS TIMESTAMP)
                                                               AS last_modified
         FROM read_csv(
             {csv_source(csv_paths)},

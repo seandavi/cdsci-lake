@@ -60,7 +60,7 @@ def test_typed_columns_are_unchanged(tmp_path: Path):
             ("authors", "VARCHAR"), ("molecular_cellular", "DOUBLE"),
             ("provisional", "BOOLEAN"), ("x_coord", "DOUBLE"), ("y_coord", "DOUBLE"),
             ("cited_by_clin", "BIGINT[]"), ("cited_by", "BIGINT[]"), ("references", "BIGINT[]"),
-            ("last_modified", "TIMESTAMP WITH TIME ZONE")]
+            ("last_modified", "TIMESTAMP")]
     finally:
         con.close()
 
@@ -71,7 +71,7 @@ def test_added_columns_are_typed_from_the_csv(tmp_path: Path):
         icite.curate(con, [CSV], "2026-08")
         row = con.execute(
             "SELECT authors, molecular_cellular, provisional, x_coord, y_coord, cited_by_clin, "
-            "cited_by, \"references\", last_modified = TIMESTAMPTZ '2026-08-30 03:38:37.156+00' "
+            "cited_by, \"references\", last_modified = TIMESTAMP '2026-08-30 03:38:37.156' "
             "FROM lake.icite.metadata WHERE pmid = 23456789").fetchone()
         assert row == ("Ann Smith, Bo Li", 0.0, False, 0.0, 1.0, None, [30000001, 30000002],
                        [30000001, 30000001, 99999999], True)
