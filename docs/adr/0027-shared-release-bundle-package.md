@@ -1,6 +1,6 @@
 # 0027. A shared `cdsci-publish` package for the release-bundle mechanics
 
-- Status: Proposed (owner review is the PR)
+- Status: Accepted — owner decision, 2026-11-04 (open questions below remain open)
 - Date: 2026-11-04
 
 Tracking: cdsci-lake program map #95. Amends
