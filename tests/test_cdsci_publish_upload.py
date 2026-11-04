@@ -156,13 +156,14 @@ def test_a_release_that_is_not_a_date_is_refused(tmp_path):
         _upload(bundle, bucket, apply=True)
 
 
-def test_an_incomplete_dated_folder_never_displaces_a_complete_one(tmp_path):
+def test_an_incomplete_dated_folder_is_never_pruned_nor_counted(tmp_path):
     bucket, bundle = _bucket(tmp_path, dated=("v2026-10-25",)), _bundle(tmp_path)
-    (bucket / "v2026-10-27").mkdir()  # interrupted, older than this release: pruned outright
-    (bucket / "v2026-11-06").mkdir()  # interrupted, newer: left alone
+    # Either may be another run's upload in progress: neither counts, neither is pruned.
+    (bucket / "v2026-10-27").mkdir()
+    (bucket / "v2026-11-06").mkdir()
     _upload(bundle, bucket, apply=True, retention=keep_newest(1))
     assert sorted(p.name for p in bucket.iterdir()) == [
-        "latest", f"v{RELEASE}", "v2026-11-06", "vnotadate"]
+        "latest", "v2026-10-27", f"v{RELEASE}", "v2026-11-06", "vnotadate"]
 
 
 def test_a_partial_listing_prunes_less_never_more(tmp_path):

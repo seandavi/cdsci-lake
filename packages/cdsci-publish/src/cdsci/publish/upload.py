@@ -16,8 +16,8 @@ Rules kept from the products:
 - `latest/` loses its manifest.json before anything in it is overwritten, so an
   interrupted replacement never looks complete.
 - Every Parquet file is re-hashed against its manifest sha256 before anything is written.
-- Only completed dated folders count for retention; an incomplete one older than this
-  release is pruned outright, a newer one is left alone. The release being uploaded is
+- Only completed dated folders count for retention or are pruned; an incomplete one may be
+  another run's upload in progress, so it is never deleted here. The release being uploaded is
   always kept. Folders whose name is not `v{YYYY-MM-DD}` of a real date are never touched.
 - Each file is sent to its exact key through pyarrow's `copy_files`, retried: R2 rejects a
   multipart upload whose non-trailing parts differ in length (a buffered `.open("wb")` hit
@@ -162,7 +162,10 @@ def _expired(fs, root, current, retention, today):
     complete = {n for n in names if _exists(fs, f"{root}/{n}/manifest.json")}
     kept = retention({_date(n) for n in complete}, _date(current), today)
     keep = {f"v{d.isoformat()}" for d in kept} | {current}
-    return sorted(n for n in names if n not in keep and (n in complete or n < current))
+    # ponytail: an incomplete folder may be another run's upload in progress, so it is never
+    # pruned; abandoned ones are left for a person to delete. A per-root upload lock would
+    # let them be swept automatically.
+    return sorted(n for n in complete if n not in keep)
 
 
 def _prune(fs, root, current, retention, today, apply):

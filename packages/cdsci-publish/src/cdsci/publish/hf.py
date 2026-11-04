@@ -51,8 +51,6 @@ def hf_push(bundle: Path, api, *, repo, tag, card, apply=False, extra_files=(), 
     manifest_bytes = (bundle / "manifest.json").read_bytes()
     manifest = json.loads(manifest_bytes)
     message = message or f"{repo} release {tag} (v{manifest['release']})"
-    if apply:
-        api.create_repo(repo, repo_type="dataset", private=False, exist_ok=True)
     try:
         tags = {t.name for t in api.list_repo_refs(repo, repo_type="dataset").tags}
         remote = api.list_repo_files(repo, repo_type="dataset")
@@ -87,6 +85,8 @@ def hf_push(bundle: Path, api, *, repo, tag, card, apply=False, extra_files=(), 
     if not apply:
         print(f"dry run: would push {repo}@{tag}; nothing written; --apply to push")
         return None
+    # Created only now, after the bundle checked out: an invalid bundle writes nothing.
+    api.create_repo(repo, repo_type="dataset", private=False, exist_ok=True)
     commit = api.create_commit(repo, ops + deletes, repo_type="dataset", commit_message=message)
     for attempt in range(TAG_ATTEMPTS):
         try:

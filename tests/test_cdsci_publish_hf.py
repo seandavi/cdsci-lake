@@ -136,7 +136,7 @@ def test_a_second_run_with_the_same_manifest_is_a_no_op(bundle, hub, capsys):
     _push(bundle, h, apply=True)
     assert _push(bundle, h, apply=True) is None
     assert [c[0] for c in h.calls] == ["create_repo", "create_commit", "create_tag",
-                                       "create_repo", "hf_hub_download"]
+                                       "hf_hub_download"]
     assert capsys.readouterr().out.endswith(
         f"{REPO}@2026-11 already exists with this manifest.json; nothing to do\n")
 
@@ -146,7 +146,7 @@ def test_an_existing_tag_with_another_manifest_fails(bundle, hub):
             files=[".gitattributes"])
     with pytest.raises(SystemExit, match="exists with a different manifest.json"):
         _push(bundle, h, apply=True)
-    assert [c[0] for c in h.calls] == ["create_repo", "hf_hub_download"]
+    assert [c[0] for c in h.calls] == ["hf_hub_download"]
 
 
 def test_parquet_changed_after_publish_is_refused(bundle, hub):
@@ -154,7 +154,7 @@ def test_parquet_changed_after_publish_is_refused(bundle, hub):
     h = hub(files=[".gitattributes"])
     with pytest.raises(SystemExit, match="gene.parquet does not match its manifest"):
         _push(bundle, h, apply=True)
-    assert [c[0] for c in h.calls] == ["create_repo"]
+    assert h.calls == []  # an invalid bundle writes nothing, not even the repo
 
 
 def test_a_failed_tag_is_retried_by_the_next_run(bundle, hub):

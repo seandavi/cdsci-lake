@@ -107,8 +107,9 @@ Behaviours chosen, and from where:
   never overwritten; an interrupted one is retried; a complete one with this bundle's
   files finishes only `latest/` (bioc). `latest/` loses its manifest.json before any
   overwrite; every Parquet file is re-hashed against its manifest sha256 first; the
-  release must be a real date; only complete dated folders count for retention and an
-  incomplete one older than this release is pruned outright (cancer). Prune-only around
+  release must be a real date; only complete dated folders count for retention or are
+  pruned (cancer's counting; an incomplete one may be another run's upload in progress,
+  so it is left for a person, per review of #161). Prune-only around
   the release `latest/` serves (bioc). `extra_files` copied verbatim beside manifest.json
   replaces cancer's hard-coded `gate.json`.
 - Retention is a pure function `(complete dates, current, today) -> dates to keep`,
