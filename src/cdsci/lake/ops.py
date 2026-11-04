@@ -188,6 +188,8 @@ SOURCES: tuple[Source, ...] = (
            "organism (ALL tab3)", "monthly", "biogrid-release-archive", "mit"),
     Source("intact", "intact", "IntAct: curated molecular interaction evidence, every "
            "organism (PSI-MI MITAB 2.7)", "on-release", "ebi-ftp", "cc-by-4.0"),
+    Source("rnacentral", "rnacentral", "RNAcentral: ncRNA sequences cross-referenced to "
+           "their member databases, every organism (id_mapping)", "on-release", "ebi-ftp", "cc0"),
     # `mixed`: each ontology carries its own licence (data-licenses.md).
     Source("obo", "obo", "OBO Foundry ontologies (CL, UBERON, MONDO, EFO, HsapDv, MmusDv, "
            "GO, DOID): OBO Graphs JSON nodes and edges", "on-release", "obo-graphs-json",
