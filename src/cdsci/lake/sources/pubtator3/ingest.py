@@ -37,7 +37,8 @@ pass over the gzip and one more MERGE and prune read of the whole target. Measur
 on species (49.0M rows, local scratch lake, 4 threads, 2026-11-04): an unchanged
 re-run takes 65 s at 12.8 GB peak RSS with ``batches=1`` and 346 s at 2.0 GB with
 20, of which 279 s is the 20 gzip passes; a new dump (every line rewritten) takes
-102 s at 16.4 GB with 1 and 194 s at 8.2 GB with 4.
+102 s at 16.4 GB with 1 and 194 s at 8.2 GB with 4. Disease (168M) with 1: 233 s
+at 47.8 GB unchanged, 367 s at 59.3 GB on a new dump.
 
 ``mode="append"`` skips the MERGE's read of the growing target for the initial
 bulk load, and refuses a slice that already holds rows. ``mode="merge"`` (the default) is idempotent and prunes lines a
