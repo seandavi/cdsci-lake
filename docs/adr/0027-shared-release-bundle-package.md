@@ -126,7 +126,48 @@ Behaviours chosen, and from where:
 - Not moved: the gate-proof check (`gate.json` matches manifest.json) and cancer's
   "the tag already holds this manifest" pre-upload check. Both are product ordering
   policy around the gate, which is the next step; a product runs them before calling
-  `upload` / `hf_push`.
+  `upload` / `hf_push`. (The proof check moved in step 4c, as `check_proof`.)
+
+### Step 4c: the release gate (2026-11-04)
+
+`cdsci.publish.gate` holds the acceptance check a product runs on a built bundle before
+`upload` / `hf_push`, the best of bioc-on-ice's `gate.py` (which called
+`cdsci.lake.publish.verify.verify_release_over_release`, the ADR-0013/0025-era model this
+package supersedes) and cancer-on-ice's port of it. Stdlib + duckdb only; it does not
+import `cdsci.lake`. Everything product-specific is a parameter of `gate(bundle,
+reference, ...)`: the README queries, the catalog the views live under, the keys and
+references to check (bioc builds them from its `TableContract`s), the row-count bounds and
+whether growth fails, the two owner-approved column allow-lists, and `extra_checks` for
+the product's own rules (cancer's `value_null_unless_reported`, bioc's
+`contract_declared` policy). A check is a `Check(name, passed, required, detail)` named
+tuple, replacing `AcceptanceCheck` for this purpose.
+
+Behaviours chosen, and from where:
+
+- Reads the bundle's Parquet and manifest.json, and the reference's manifest.json only
+  (both). Required: the bundle has tables and each table's manifest row count, columns
+  and types match its Parquet (both); against the reference, which must list tables, no
+  table is missing, columns and types are unchanged, row counts stay within bounds (both);
+  declared keys not null and unique, declared references covered (bioc, from the old
+  verifier, now keyed by plain mappings). README queries are warnings only (both).
+- The reference must be a strictly older YYYY-MM-DD release (both). It is fetched with
+  urllib and a named User-Agent, since Cloudflare refuses urllib's default; a 404 is a
+  first release and runs the bundle checks only; anything else fails closed (cancer). A
+  local directory is read directly (bioc's tests).
+- Row counts: shrinking below `low` times the reference fails; growing past `high` times
+  it fails by default, or warns when the product says growth is legitimate
+  (`growth_required=False`, cancer's new-vintage rationale). Default bounds are bioc's
+  (0.9, 1.5); cancer passes (0.8, 3.0). A reference count of 0 bounds nothing above.
+- Column changes: a table in `allow_dropped` may lose exactly the columns named for it
+  (bioc's `--allow-schema-change` × row-history columns); one in `allow_column_change` may
+  change in any way, the exact diff recorded (bioc's `--allow-column-change`). Both are
+  written to gate.json as `schema_changes` and `column_changes`, bioc's keys.
+- gate.json is bound to manifest.json by sha256 and not written when the manifest changed
+  while the gate ran (cancer); `check_proof(bundle)` is the pre-upload check both products
+  duplicated.
+- Not adopted: bioc's DuckDB `read_text` fetch of the reference (no User-Agent control),
+  bioc's symmetric-set column detail (cancer's diff is more exact, and bioc's own
+  `column_diff` describes it), the old verifier's `AcceptanceReport` / `run_id`.
 
 ## Consequences
 

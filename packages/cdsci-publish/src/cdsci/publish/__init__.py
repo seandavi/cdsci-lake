@@ -4,9 +4,9 @@ Parquet + DuckDB views + manifest.json, the format bioc-on-ice (ADR-0014) and
 omicidx (ADR-0004) already publish. Domain meaning -- table lists, column docs,
 provenance, base URL -- stays with the product; this package owns the mechanics.
 
-`cdsci.publish.upload` (extra `[upload]`, pyarrow) and `cdsci.publish.hf` (extra `[hf]`,
-huggingface-hub) are imported by module, not re-exported here, so the base install stays
-light.
+`cdsci.publish.gate` (the release gate, base install), `cdsci.publish.upload` (extra
+`[upload]`, pyarrow) and `cdsci.publish.hf` (extra `[hf]`, huggingface-hub) are imported by
+module, not re-exported here, so the base install stays light.
 """
 
 import json

@@ -7,9 +7,9 @@ table as flat Parquet, plus a product's own `<product>.duckdb`, `views.sql`,
 
 Domain meaning (table lists, column docs, provenance, base URL) stays with the
 product. This package owns only the mechanics: streaming each SELECT to Parquet,
-building the DuckDB views, writing the manifest, uploading the bundle to a bucket
-(`v{release}/` + `latest/`, with retention) and pushing it to a Hugging Face dataset
-repo as one tagged commit.
+building the DuckDB views, writing the manifest, gating the bundle against the previous
+release, uploading it to a bucket (`v{release}/` + `latest/`, with retention) and
+pushing it to a Hugging Face dataset repo as one tagged commit.
 
 ## Install
 
@@ -45,6 +45,31 @@ manifest = publish(
 (table set, row counts, column names/types, docs) and returns a list of
 human-readable differences, ignoring build-time fields (timestamps, git_sha,
 bytes, sha256).
+
+## Gate
+
+```python
+from cdsci.publish.gate import check_proof, gate, readme_queries
+
+passed, checks = gate(
+    Path("release"), "https://data.example.org/latest",   # or a directory, or None
+    queries=readme_queries(Path("README.md"), fence="sql bundle"),  # optional checks
+    catalog="bioc",                           # views as bioc.<schema>.<table> (optional)
+    keys={"annotation.gene": ("gene_id",)},   # not null and unique
+    references={"annotation.exon": {"gene_id": "annotation.gene.gene_id"}},
+    row_bounds=(0.9, 1.5), growth_required=True,  # shrink below 0.9x fails; past 1.5x fails
+    allow_dropped={"annotation.gene": ("valid_from", "valid_to")},  # owner-approved
+    allow_column_change=(),                   # owner-approved: any change, recorded
+    extra_checks=lambda con, manifest, ref: [...],  # the product's own Check(...)s
+)
+check_proof(Path("release"))  # before upload / hf_push: gate.json matches manifest.json
+```
+
+Reads the bundle's Parquet and manifest.json, and the reference's `manifest.json` only.
+The reference must be an older release; an HTTP 404 there means a first release and runs
+the bundle checks alone. A pass prints the report and writes `gate.json` into the bundle,
+bound to its `manifest.json` by sha256; pass it to `upload` / `hf_push` as an
+`extra_files` entry.
 
 ## Upload
 
