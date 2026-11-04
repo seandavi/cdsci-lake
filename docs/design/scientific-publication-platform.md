@@ -7,6 +7,8 @@ Scope: `cdsci-lake`, `bioc-on-ice`, `cancer-on-ice`, optional Iceberg publicatio
 Primary audience: platform maintainers, public-data-product maintainers, client builders, and operators
 
 > This document proposes an architecture. It records current implementation evidence where relevant, but it is not yet a replacement for the repositories' accepted ADRs or specifications. Decisions that contradict an accepted ADR or `SPEC.md` must update that governing document when implemented.
+>
+> **2026-11-04** — bioc-on-ice ADR-0014, omicidx ADR-0004 and cdsci-lake [ADR-0027](../adr/0027-shared-release-bundle-package.md) have already dropped this document's Frozen DuckLake as the primary public query path in favor of flat Parquet + co-published DuckDB views; this draft is not yet reconciled with that.
 
 ## Executive summary
 

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/seandavi/cdsci-lake/blob/main/packages/cdsci-publish/src/cdsci/publish/manifest.schema.json",
+  "title": "Release bundle manifest",
+  "description": "manifest.json shape for a cdsci-publish release bundle (ADR-0027). additionalProperties is true throughout so a product (or a future omicidx adoption) can carry extra fields such as lake_snapshot_id; within manifest_version 1, new fields must be additive.",
+  "type": "object",
+  "required": ["manifest_version", "release", "published_at", "git_sha", "base_url", "tables"],
+  "additionalProperties": true,
+  "properties": {
+    "manifest_version": { "const": 1 },
+    "release": { "type": "string" },
+    "published_at": { "type": "string" },
+    "git_sha": { "type": ["string", "null"] },
+    "base_url": { "type": "string" },
+    "provenance": { "type": "array" },
+    "tables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["schema", "table", "path", "row_count", "bytes", "sha256", "columns"],
+        "additionalProperties": true,
+        "properties": {
+          "schema": { "type": "string" },
+          "table": { "type": "string" },
+          "path": { "type": "string" },
+          "row_count": { "type": "integer", "minimum": 0 },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "sha256": { "type": "string" },
+          "comment": { "type": ["string", "null"] },
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "type"],
+              "additionalProperties": true,
+              "properties": {
+                "name": { "type": "string" },
+                "type": { "type": "string" },
+                "doc": { "type": ["string", "null"] }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

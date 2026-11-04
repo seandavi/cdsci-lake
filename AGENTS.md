@@ -28,7 +28,7 @@ When code, documentation, and an accepted ADR disagree, stop and surface the con
 
 - **Internal DuckLake writes use DuckDB/DuckLake.** `upsert_latest_snapshot` is the internal silver-table model; history depends on retained DuckLake snapshots.
 - **Production public Iceberg writes use PyIceberg only.** Do not use DuckDB `DELETE`, `UPDATE`, `MERGE`, or `CREATE OR REPLACE` against a production public Iceberg table. The current DuckDB Iceberg target is not a pattern to extend.
-- **Public release semantics are format-neutral.** Immutable manifest + Arrow-compatible schema + Parquet define a release; Frozen DuckLake is the primary query adapter and Iceberg is optional interoperability.
+- **Public release semantics are format-neutral.** Immutable manifest + Arrow-compatible schema + Parquet define a release. For the products shipping under bioc-on-ice ADR-0014 / omicidx ADR-0004 / cdsci-lake ADR-0027, the public format is flat Parquet plus co-published DuckDB views (`views.sql`); a Frozen DuckLake catalog was tried and dropped (no real `ATTACH` traffic, doubled bundle size). Iceberg stays optional interoperability.
 - **Temporal models are explicit.** Name `append_immutable`, `upsert_latest_snapshot`, `scd2_release`, or approved `scd2_bitemporal`; never describe a table only as “versioned.”
 - **Domain meaning stays domain-local.** Shared modules own mechanics and validation, not biological or cancer schema values.
 - **DuckDock never exposes the mutable internal lake.** Public artifacts may not contain private bucket locations, local paths, credentials, restricted assets, watermarks, or raw logs.

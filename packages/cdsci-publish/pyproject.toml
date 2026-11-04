@@ -1,0 +1,29 @@
+[project]
+name = "cdsci-publish"
+version = "0.1.0"
+description = "Shared release-bundle mechanics: Parquet + DuckDB views + manifest.json for public product releases"
+readme = "README.md"
+authors = [{ name = "Sean Davis", email = "seandavi@gmail.com" }]
+requires-python = ">=3.11"
+dependencies = [
+    "duckdb>=1.5.3",
+    "fsspec",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.11,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# PEP 420 namespace package, sibling of cdsci.lake (see cdsci-lake's root pyproject.toml):
+# `cdsci` is the namespace, `publish` the module. No __init__.py at src/cdsci/.
+module-name = "cdsci.publish"
+module-root = "src"
+namespace = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

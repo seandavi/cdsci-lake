@@ -45,6 +45,16 @@ transform = [
 requires = ["uv_build>=0.8.11,<0.9.0"]
 build-backend = "uv_build"
 
+[tool.uv.workspace]
+# cdsci-lake itself stays at the repo root (consumers pin it by git rev, no
+# subdirectory); packages/ holds sibling cdsci.* distributions (ADR-0027).
+members = ["packages/cdsci-publish"]
+
+[tool.uv.sources]
+# Dev-only: tests import cdsci.publish directly. cdsci-lake's own runtime
+# dependencies do not include cdsci-publish.
+cdsci-publish = { workspace = true }
+
 [tool.uv.build-backend]
 # PEP 420 namespace package: `cdsci` is the namespace, `lake` the module. No
 # __init__.py at src/cdsci/ — sibling cdsci.* packages may live in other repos.
@@ -54,6 +64,10 @@ namespace = true
 
 [dependency-groups]
 dev = [
+    "cdsci-publish",
+    # dev-only: validates manifest.json against cdsci.publish's manifest.schema.json
+    # in tests; not a runtime dependency of cdsci-publish itself.
+    "jsonschema>=4.23.0",
     "pyarrow>=25.0.1",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
