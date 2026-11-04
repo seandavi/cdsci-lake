@@ -137,6 +137,26 @@ def test_a_local_file_must_name_its_release(lake_settings, tmp_path):
     assert (result["version"], result["rows"]) == ("27", 1)
 
 
+def test_a_release_before_20_is_refused_for_its_licence(lake_settings, tmp_path, monkeypatch):
+    # the registry declares cc0, which holds from release 20 on
+    monkeypatch.setattr(INGEST, "download", lambda url, dest: pytest.fail("downloaded"))
+    old = gz(tmp_path / "releases" / "19.0" / "id_mapping" / "id_mapping.tsv.gz", [R1])
+    with pytest.raises(ValueError, match="predates CC0"):
+        rnacentral.ingest(file=str(old), settings=lake_settings)
+    for version in ("19", "019", "0"):
+        with pytest.raises(ValueError, match="EMBL-EBI's Terms of use"):
+            rnacentral.ingest(version=version, settings=lake_settings)
+    monkeypatch.setattr(INGEST, "latest", lambda s: "19")
+    with pytest.raises(ValueError, match="predates CC0"):
+        rnacentral.ingest(settings=lake_settings)
+    con = lake_connect(lake_settings)
+    try:
+        with pytest.raises(ValueError, match="predates CC0"):
+            rnacentral.curate(con, old, "19", batches=1)
+    finally:
+        con.close()
+
+
 def test_the_default_run_downloads_the_current_release(lake_settings, tmp_path, monkeypatch):
     upstream = gz(tmp_path / "up.tsv.gz", [R1, R2])
     fetched = []

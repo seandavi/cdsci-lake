@@ -58,6 +58,21 @@ COLUMNS = {"urs": "VARCHAR", "database": "VARCHAR", "external_id": "VARCHAR",
 _log = logger.bind(ctx="rnacentral")
 
 
+def _release(version: str) -> str:
+    """``version``, refused unless a release number of 20 or later.
+
+    It is interpolated into a URL, a path and the SQL; and releases before 20
+    remain under EMBL-EBI's Terms of use, not the CC0 the registry declares
+    (rnacentral.org/license, docs/data-licenses.md).
+    """
+    if not re.fullmatch(NUMBER, version):
+        raise ValueError(f"rnacentral: version {version!r} is not a release number")
+    if int(version) < 20:
+        raise ValueError(f"rnacentral: release {version} predates CC0 (release 20 on); "
+                         "earlier releases remain under EMBL-EBI's Terms of use")
+    return version
+
+
 def latest(settings: Settings | None = None) -> str:
     """The number of the release ``current_release/`` names, e.g. ``28``."""
     s = settings or get_settings()
@@ -131,6 +146,7 @@ def curate(
     lines = _check(path)
     # no shard may be empty: an empty load refuses to prune a shard that holds rows
     batches = min(batches, lines)
+    version = _release(version)
     target = target or f"{LAKE}.rnacentral.id_mapping"
     select = f"SELECT *, '{version}' AS rnacentral_release FROM ({_read(path)})"
     if limit:
@@ -169,9 +185,7 @@ def ingest(
                              "pass version")
     else:
         version = version or latest(s)
-    # the version is interpolated into a URL, a path and the SQL
-    if not re.fullmatch(NUMBER, version):
-        raise ValueError(f"rnacentral: version {version!r} is not a release number")
+    version = _release(version)
     path = path or download_release(version, s)
     target = f"{LAKE}.{schema}.id_mapping"
     con = lake_connect(s)
