@@ -91,6 +91,43 @@ parameter or a module-level list, not inline logic.
   stays), then Croissant metadata generated from `manifest.json` once the
   contract has more than one producer to generate it from.
 
+### Step 4b: the upload and the Hugging Face push (2026-11-04)
+
+`cdsci.publish.upload` and `cdsci.publish.hf` hold the bucket upload and the Hugging
+Face push, the best of bioc-on-ice's and cancer-on-ice's copies (both descend from
+omicidx's `publish_bundle` / `hf_release`). Each is behind an extra, `[upload]`
+(pyarrow) and `[hf]` (huggingface-hub); the base install is unchanged. Neither reads a
+credential: the caller passes a pyarrow filesystem (`r2_filesystem(account, key,
+secret)` builds the R2 one from values the product resolved) or an `HfApi`.
+
+Behaviours chosen, and from where:
+
+- Upload: `v{release}/` then `latest/`, each with views/restore/DB regenerated for its
+  own URL, manifest.json last (all three). A completed dated folder of other files is
+  never overwritten; an interrupted one is retried; a complete one with this bundle's
+  files finishes only `latest/` (bioc). `latest/` loses its manifest.json before any
+  overwrite; every Parquet file is re-hashed against its manifest sha256 first; the
+  release must be a real date; only complete dated folders count for retention or are
+  pruned (cancer's counting; an incomplete one may be another run's upload in progress,
+  so it is left for a person, per review of #161). Prune-only around
+  the release `latest/` serves (bioc). `extra_files` copied verbatim beside manifest.json
+  replaces cancer's hard-coded `gate.json`.
+- Retention is a pure function `(complete dates, current, today) -> dates to keep`,
+  `current` always kept: `keep_newest(n)` (bioc ADR-0016, 4), `keep_daily_weekly(daily,
+  weekly)` (omicidx, 7 + 5 ISO weeks) and `keep_monthly(months, grace_days)` (cancer
+  ADR-0001, 12 + 7). A product passes one, or its own callable.
+- Push: one `create_commit`, remote files not in the release deleted, `.gitattributes`
+  kept (omicidx); download-relative `views.sql`/`restore.sql`, the product's DuckDB file
+  not pushed, nothing at `hf://` (bioc); an existing tag is a no-op only when it holds
+  this manifest.json byte for byte and fails otherwise, and a 409 on the tag right after
+  its commit is retried (cancer). The tag string and the dataset-card builder are
+  parameters: the card is product prose, not shared; omicidx's card with `hf://` query
+  examples was not adopted (bioc ADR-0016's 429 rationale).
+- Not moved: the gate-proof check (`gate.json` matches manifest.json) and cancer's
+  "the tag already holds this manifest" pre-upload check. Both are product ordering
+  policy around the gate, which is the next step; a product runs them before calling
+  `upload` / `hf_push`.
+
 ## Consequences
 
 - This amends bioc-on-ice ADR-0015(a), which decided against a shared release

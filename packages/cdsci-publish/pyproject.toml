@@ -10,6 +10,12 @@ dependencies = [
     "fsspec",
 ]
 
+[project.optional-dependencies]
+# Step 4b (ADR-0027): the R2 upload and the Hugging Face push. Heavy clients stay
+# behind extras so a bundle-only consumer installs neither.
+upload = ["pyarrow>=25.0.1"]
+hf = ["huggingface-hub>=2.2.0"]
+
 [build-system]
 requires = ["uv_build>=0.8.11,<0.9.0"]
 build-backend = "uv_build"
