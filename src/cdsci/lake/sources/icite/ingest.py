@@ -18,6 +18,7 @@ graph exploded from ``references``.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 
 import duckdb
@@ -97,6 +98,13 @@ def _is_data(path: Path) -> bool:
     return path.suffix.lower() in {".csv", ".tsv", ".gz"}
 
 
+def _exists(con: duckdb.DuckDBPyConnection, target: str) -> bool:
+    return bool(con.execute(
+        "SELECT 1 FROM information_schema.tables WHERE table_catalog = ? "
+        "AND table_schema = ? AND table_name = ?", target.split("."),
+    ).fetchone())
+
+
 def _pmids(col: str) -> str:
     """A space-separated PMID list as BIGINT[]; NULL when upstream prints none."""
     return f"TRY_CAST(string_split(NULLIF({col}, ''), ' ') AS BIGINT[])"
@@ -108,10 +116,11 @@ def _select_sql(csv_paths: list[Path] | str, version: str, limit: int | None) ->
     Reads every column as text (``all_varchar``) and casts in SQL, so a monthly
     schema tweak upstream never breaks the scan. ``max_line_size`` because
     ``cited_by`` is a paper's whole citing-PMID list on one line (2.3 MB for the
-    most-cited paper in 2026-08), over DuckDB's default; without it
-    ``ignore_errors`` silently drops those rows.
+    most-cited paper in 2026-08), over DuckDB's default. A malformed record fails
+    the scan rather than being skipped: a full load prunes, so a skipped record
+    would be deleted as if iCite had withdrawn it.
     """
-    limit_sql = f" LIMIT {int(limit)}" if limit else ""
+    limit_sql = f" LIMIT {limit}" if limit is not None else ""
     return f"""
         SELECT
             TRY_CAST(pmid AS BIGINT)                          AS pmid,
@@ -148,7 +157,7 @@ def _select_sql(csv_paths: list[Path] | str, version: str, limit: int | None) ->
         FROM read_csv(
             {csv_source(csv_paths)},
             header = true, all_varchar = true, sample_size = -1,
-            quote = '"', escape = '"', ignore_errors = true, max_line_size = 268435456
+            quote = '"', escape = '"', max_line_size = 268435456
         )
         WHERE TRY_CAST(pmid AS BIGINT) IS NOT NULL{limit_sql}
     """
@@ -172,17 +181,17 @@ def curate(
     snapshot (``limit`` loads do not prune). A table from before ``ADDED`` gains
     those columns in place first.
     """
+    # limit=0 is falsy: it would read every row and prune as a full load
+    if limit is not None and (not isinstance(limit, int) or limit < 1):
+        raise ValueError(f"icite: limit must be a positive int, got {limit!r}")
     target = target or f"{LAKE}.{_TABLE}"
-    exists = con.execute(
-        "SELECT 1 FROM information_schema.tables WHERE table_catalog = ? "
-        "AND table_schema = ? AND table_name = ?", target.split("."),
-    ).fetchone()
-    if exists:
+    if _exists(con, target):
         for name, sql_type in ADDED.items():
             con.execute(f'ALTER TABLE {target} ADD COLUMN IF NOT EXISTS "{name}" {sql_type}')
     return upsert(
         con, target, _select_sql(csv_paths, version, limit),
-        key="pmid", exclude_change_cols=["snapshot_version"], prune=None if limit else "true",
+        key="pmid", exclude_change_cols=["snapshot_version"],
+        prune=None if limit is not None else "true",
     )
 
 
@@ -201,6 +210,10 @@ def curate_citations(
     record, so it is not used. Exploded once, then merged ``SHARDS`` times on
     ``shard = cited_pmid % SHARDS`` so one MERGE holds ~1/16 of the graph; with
     ``prune`` each shard mirrors the load (pass False for partial loads).
+
+    A shard the load leaves empty while other shards have edges is authoritative
+    (its last edge moved), so its rows are deleted here: ``upsert`` refuses an empty
+    pruning load. A wholly empty load still goes through ``upsert`` and is refused.
     """
     metadata = metadata or f"{LAKE}.{_TABLE}"
     target = target or f"{LAKE}.icite.citation"
@@ -210,8 +223,17 @@ def curate_citations(
         FROM (SELECT pmid AS citing_pmid, unnest("references") AS cited_pmid FROM {metadata})
         WHERE cited_pmid IS NOT NULL
     """)
+    any_edges = con.execute("SELECT 1 FROM _icite_edges LIMIT 1").fetchone()
     rows = 0
     for shard in range(SHARDS):
+        if (prune and any_edges and _exists(con, target)
+                and not con.execute(f"SELECT 1 FROM _icite_edges WHERE shard = {shard} "
+                                    "LIMIT 1").fetchone()):
+            run = ops.active_run()
+            with run.attribute(target.split(".")[-1]) if run is not None else nullcontext():
+                con.execute(f"DELETE FROM {target} WHERE shard = {shard}")
+            rows = con.execute(f"SELECT count(*) FROM {target}").fetchone()[0]
+            continue
         rows = upsert(
             con, target, f"SELECT * FROM _icite_edges WHERE shard = {shard}",
             key=["citing_pmid", "cited_pmid"], prune=f"shard = {shard}" if prune else None,
@@ -243,7 +265,7 @@ def ingest(
         with ops.run(con, source="icite", target=f"{LAKE}.{schema}.citation",
                      version=version) as c:
             c.rows = curate_citations(con, metadata=target,
-                                      target=f"{LAKE}.{schema}.citation", prune=not limit)
+                                      target=f"{LAKE}.{schema}.citation", prune=limit is None)
     finally:
         con.close()
     return {**r.summary(), "citation": c.summary()}

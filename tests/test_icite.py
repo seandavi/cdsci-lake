@@ -5,7 +5,11 @@ The fixture (``fixtures/icite_sample.csv``) has the 2026-08 snapshot's 25 column
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
+
+import duckdb
+import pytest
 
 from cdsci.lake import Settings, lake_connect, upsert
 from cdsci.lake.sources import icite
@@ -120,5 +124,107 @@ def test_citations_are_the_distinct_references(tmp_path: Path):
         assert con.execute(snap).fetchone()[0] == before
         con.execute("UPDATE lake.icite.metadata SET \"references\" = NULL WHERE pmid = 30000002")
         assert icite.curate_citations(con) == 3
+    finally:
+        con.close()
+
+
+SNAP = "SELECT max(snapshot_id) FROM lake.snapshots()"
+ROWS = "SELECT * FROM lake.icite.metadata ORDER BY pmid"
+
+
+def test_a_malformed_record_fails_the_load_and_keeps_the_table(tmp_path: Path):
+    """A record that does not parse fails the load instead of being skipped, which a
+    full load would then prune as if iCite had withdrawn that PMID."""
+    con = lake_connect(_settings(tmp_path))
+    try:
+        icite.curate(con, [CSV], "2026-08")
+        before, rows = con.execute(SNAP).fetchone()[0], con.execute(ROWS).fetchall()
+        lines = CSV.read_text().splitlines()
+        bad = tmp_path / "bad.csv"
+        bad.write_text("\n".join(line + ",stray" if line.startswith("30000002,") else line
+                                 for line in lines) + "\n")
+        # ignore_errors would skip it; strict, the scan fails (the sniffer or the reader)
+        with pytest.raises(duckdb.Error):
+            icite.curate(con, [bad], "2026-09")
+        assert con.execute(SNAP).fetchone()[0] == before
+        assert con.execute(ROWS).fetchall() == rows
+    finally:
+        con.close()
+
+
+def test_a_non_positive_limit_is_refused_and_the_table_kept(tmp_path: Path):
+    con = lake_connect(_settings(tmp_path))
+    try:
+        icite.curate(con, [CSV], "2026-08")
+        before, rows = con.execute(SNAP).fetchone()[0], con.execute(ROWS).fetchall()
+        one = tmp_path / "one.csv"
+        one.write_text("\n".join(CSV.read_text().splitlines()[:2]) + "\n")
+        for limit in (0, -1, 1.5, "1"):
+            with pytest.raises(ValueError, match="limit must be a positive int"):
+                icite.curate(con, [one], "2026-09", limit=limit)  # type: ignore[arg-type]
+        assert con.execute(SNAP).fetchone()[0] == before
+        assert con.execute(ROWS).fetchall() == rows
+    finally:
+        con.close()
+
+
+EDGES = "SELECT citing_pmid, cited_pmid, shard FROM lake.icite.citation ORDER BY ALL"
+# 23456789 drops its only edge into shard 15 (99999999) and gains one into shard 14
+MOVED = [(23456789, 30000001, 1), (23456789, 30000014, 14),
+         (30000001, 23456789, 5), (30000002, 23456789, 5)]
+
+
+def _move_an_edge(con) -> None:
+    icite.curate(con, [CSV], "2026-08")
+    icite.curate_citations(con)
+    assert 15 in {r[2] for r in con.execute(EDGES).fetchall()}
+    con.execute("UPDATE lake.icite.metadata SET \"references\" = [30000001, 30000014] "
+                "WHERE pmid = 23456789")
+
+
+def test_a_shard_that_empties_converges(tmp_path: Path):
+    con = lake_connect(_settings(tmp_path))
+    try:
+        _move_an_edge(con)
+        assert icite.curate_citations(con) == 4
+        assert con.execute(EDGES).fetchall() == MOVED
+        before = con.execute(SNAP).fetchone()[0]
+        icite.curate_citations(con)
+        assert con.execute(SNAP).fetchone()[0] == before
+    finally:
+        con.close()
+
+
+def test_a_wholly_empty_citation_load_is_still_refused(tmp_path: Path):
+    con = lake_connect(_settings(tmp_path))
+    try:
+        icite.curate(con, [CSV], "2026-08")
+        icite.curate_citations(con)
+        con.execute("UPDATE lake.icite.metadata SET \"references\" = NULL")
+        with pytest.raises(ValueError, match="zero rows"):
+            icite.curate_citations(con)
+        assert len(con.execute(EDGES).fetchall()) == 4
+    finally:
+        con.close()
+
+
+def test_a_retry_after_a_mid_load_failure_converges(tmp_path: Path, monkeypatch):
+    con = lake_connect(_settings(tmp_path))
+    try:
+        _move_an_edge(con)
+
+        def fail_at_shard_14(con, target, source_sql, *args, **kwargs):
+            if source_sql.endswith("shard = 14"):
+                raise RuntimeError("injected")
+            return upsert(con, target, source_sql, *args, **kwargs)
+
+        monkeypatch.setattr(importlib.import_module("cdsci.lake.sources.icite.ingest"),
+                            "upsert", fail_at_shard_14)
+        with pytest.raises(RuntimeError, match="injected"):
+            icite.curate_citations(con)
+        assert con.execute(EDGES).fetchall() != MOVED
+        monkeypatch.undo()
+        assert icite.curate_citations(con) == 4
+        assert con.execute(EDGES).fetchall() == MOVED
     finally:
         con.close()
