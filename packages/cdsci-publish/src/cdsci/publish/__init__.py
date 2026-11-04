@@ -8,11 +8,11 @@ provenance, base URL -- stays with the product; this package owns the mechanics.
 import json
 from importlib import resources
 
-from .bundle import MANIFEST_VERSION, publish, restore_sql, views_sql
+from .bundle import MANIFEST_VERSION, build_db, publish, restore_sql, sql_literal, views_sql
 from .concordance import concordance
 
-__all__ = ["MANIFEST_VERSION", "concordance", "manifest_schema", "publish", "restore_sql",
-           "views_sql"]
+__all__ = ["MANIFEST_VERSION", "build_db", "concordance", "manifest_schema", "publish",
+           "restore_sql", "sql_literal", "views_sql"]
 
 
 def manifest_schema() -> dict:

@@ -100,3 +100,18 @@ def test_provenance_dates_serialize(con, tmp_path):
     written = json.loads((out / "manifest.json").read_text())
     assert written["provenance"] == [{"source": "acs", "fetched": "2026-11-01"}]
     assert m["provenance"][0]["source"] == "acs"
+
+
+def test_non_empty_out_is_refused(con, tmp_path):
+    (tmp_path / "stale.parquet").write_text("left over")
+    with pytest.raises(ValueError, match="not empty"):
+        publish(con, tmp_path, tables=TABLES, docs=_docs, base_url=tmp_path.as_uri(),
+                db_file="product.duckdb", code_dir=HERE)
+
+
+def test_unknown_table_creates_nothing(con, tmp_path):
+    out = tmp_path / "release"
+    with pytest.raises(ValueError, match="not a published table"):
+        publish(con, out, tables=TABLES, docs=_docs, base_url=out.as_uri(),
+                db_file="product.duckdb", code_dir=HERE, only=["annotation.nope"])
+    assert not out.exists()
