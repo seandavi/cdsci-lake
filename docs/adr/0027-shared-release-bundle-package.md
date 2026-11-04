@@ -54,7 +54,9 @@ parameter or a module-level list, not inline logic.
 - `cdsci.publish` owns the mechanics extracted unchanged in behaviour from
   bioc-on-ice's `publish.py`: `views_sql`, `restore_sql`, `_build_db` (and its
   `_HttpAsLocal` fsspec trick for building before anything is uploaded),
-  `_git_sha`, `_lit`, `_url`, and `publish(...)`. Every product-specific value
+  `_git_sha`, `_lit`, `_url`, and `publish(...)` (`_build_db` and `_lit` are public as
+  `build_db` and `sql_literal` since step 4; `publish` refuses a non-empty output
+  directory, cancer-on-ice's rule, and a caller re-running after a crash clears its own). Every product-specific value
   is a parameter: the table list, the doc lookup, the provenance query (a SQL
   string or `None`), the DB file name, the base URL, and the code checkout
   `_git_sha` reads (so a product's publish reports its own commit, not

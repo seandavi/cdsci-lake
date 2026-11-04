@@ -26,7 +26,8 @@ TableSpec = tuple[str, str, str]
 DocsLookup = Callable[[str], tuple[str | None, dict[str, str]]]
 
 
-def _lit(s):
+def sql_literal(s):
+    """`s` as a single-quoted SQL string literal."""
     return "'" + s.replace("'", "''") + "'"
 
 
@@ -39,11 +40,11 @@ def views_sql(tables, base_url):
     stmts = [f"CREATE SCHEMA IF NOT EXISTS {s}" for s in sorted({t["schema"] for t in tables})]
     for t in tables:
         name = f"{t['schema']}.{t['table']}"
-        url = _lit(_url(base_url, t))
+        url = sql_literal(_url(base_url, t))
         stmts.append(f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM read_parquet({url})")
         if t["comment"]:
-            stmts.append(f"COMMENT ON VIEW {name} IS {_lit(t['comment'])}")
-        stmts += [f'COMMENT ON COLUMN {name}."{c["name"]}" IS {_lit(c["doc"])}'
+            stmts.append(f"COMMENT ON VIEW {name} IS {sql_literal(t['comment'])}")
+        stmts += [f'COMMENT ON COLUMN {name}."{c["name"]}" IS {sql_literal(c["doc"])}'
                   for c in t["columns"] if c["doc"]]
     return ";\n".join(stmts) + ";\n"
 
@@ -52,7 +53,8 @@ def restore_sql(tables, base_url):
     """A materialised local copy of every table, then a row-count check against manifest.json."""
     stmts = [f"CREATE SCHEMA IF NOT EXISTS {s}" for s in sorted({t["schema"] for t in tables})]
     stmts += [f"CREATE OR REPLACE TABLE {t['schema']}.{t['table']} AS "
-              f"SELECT * FROM read_parquet({_lit(_url(base_url, t))})" for t in tables]
+              f"SELECT * FROM read_parquet({sql_literal(_url(base_url, t))})" for t in tables]
+    manifest_url = sql_literal(base_url + "/manifest.json")
     counts = "\n    UNION ALL ".join(
         f"SELECT '{t['schema']}' AS schema, '{t['table']}' AS \"table\", count(*) AS n "
         f"FROM {t['schema']}.{t['table']}" for t in tables)
@@ -62,7 +64,7 @@ def restore_sql(tables, base_url):
         "string_agg(r.schema || '.' || r.\"table\", ', ')) END AS restore_check\n"
         f"FROM (\n    {counts}\n) r\n"
         "LEFT JOIN (SELECT t.schema, t.\"table\", t.row_count FROM "
-        f"(SELECT unnest(tables) AS t FROM read_json({_lit(base_url + '/manifest.json')}))) m\n"
+        f"(SELECT unnest(tables) AS t FROM read_json({manifest_url}))) m\n"
         '  ON r.schema = m.schema AND r."table" = m."table"\n'
         "WHERE m.row_count IS DISTINCT FROM r.n")
     return ";\n".join(stmts) + ";\n"
@@ -81,7 +83,7 @@ class _HttpAsLocal(DirFileSystem):
     protocol = ("http", "https")
 
 
-def _build_db(path, sql, base_url, out):
+def build_db(path, sql, base_url, out):
     """Write `<db_file>` from views.sql before anything is at `base_url`.
 
     DuckDB binds a view (reads the Parquet footer) when it is created, so an https base
@@ -118,7 +120,7 @@ def publish(
 
     Each table streams to `<schema>/<table>.parquet` (ZSTD) through COPY, so nothing is
     materialised in Python. manifest.json is written last, atomically: it marks the bundle
-    complete, so a stale one from an earlier run is removed first.
+    complete. `out` must be new or empty.
 
     `tables`: the product's `(schema, table, SELECT)` list. `docs`: `"schema.table"` ->
     `(comment, {column: doc})`. `code_dir`: the product's own checkout, for
@@ -130,7 +132,11 @@ def publish(
     if unknown:
         raise ValueError(f"not a published table: {sorted(unknown)}")
     base_url = base_url.rstrip("/")
-    (out / "manifest.json").unlink(missing_ok=True)
+    # A new or empty `out` only: nothing from an earlier run can sit beside a manifest
+    # that does not list it. A caller re-running after a crash clears its own directory.
+    if out.exists() and any(out.iterdir()):
+        raise ValueError(f"{out} is not empty: publish into a new directory")
+    out.mkdir(parents=True, exist_ok=True)
     # Row order is not part of the bundle, and keeping it makes COPY buffer much more.
     con.execute("SET preserve_insertion_order = false")
     built = []
@@ -138,12 +144,12 @@ def publish(
         name = f"{schema}.{table}"
         path = out / schema / f"{table}.parquet"
         path.parent.mkdir(parents=True, exist_ok=True)
-        copy_sql = f"COPY ({sql}) TO {_lit(str(path))} (FORMAT parquet, COMPRESSION zstd)"
+        copy_sql = f"COPY ({sql}) TO {sql_literal(str(path))} (FORMAT parquet, COMPRESSION zstd)"
         n = con.execute(copy_sql).fetchone()[0]
         with path.open("rb") as f:
             sha256 = hashlib.file_digest(f, "sha256").hexdigest()
         comment, col_docs = docs(name)
-        cols = con.sql(f"DESCRIBE SELECT * FROM read_parquet({_lit(str(path))})").fetchall()
+        cols = con.sql(f"DESCRIBE SELECT * FROM read_parquet({sql_literal(str(path))})").fetchall()
         columns = [{"name": c[0], "type": c[1], "doc": col_docs.get(c[0])} for c in cols]
         built.append({"schema": schema, "table": table, "path": f"{schema}/{table}.parquet",
                       "row_count": n, "bytes": path.stat().st_size, "sha256": sha256,
@@ -169,7 +175,7 @@ def publish(
     views = views_sql(built, base_url)
     (out / "views.sql").write_text(views)
     (out / "restore.sql").write_text(restore_sql(built, base_url))
-    _build_db(out / db_file, views, base_url, out)
+    build_db(out / db_file, views, base_url, out)
     (out / "manifest.json.tmp").write_text(json.dumps(manifest, indent=2, default=str) + "\n")
     (out / "manifest.json.tmp").replace(out / "manifest.json")
     print(f"{len(built)} tables, {sum(t['row_count'] for t in built):,} rows, "
