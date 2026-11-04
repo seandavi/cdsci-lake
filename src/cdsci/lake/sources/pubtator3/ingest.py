@@ -30,6 +30,8 @@ it and renumber every line after it), the Type column is the file's own kind on
 every row, every PMID is a number, and a file with no rows is refused. The checked
 line count is the extent a full load is authoritative for: lines past it are
 deleted first, so a shrinking dump also clears a batch slice it no longer reaches.
+That delete and every batch's merge are one transaction per table (one snapshot):
+a failure part way leaves the table as it was.
 
 **One batch by default.** ``batches`` shards the load by ``line_number % batches``,
 the memory lever ``ncbi_gene.land`` uses, but each batch is one more single-threaded
@@ -163,7 +165,7 @@ def land(
     return con.execute(f"SELECT count(*) FROM {target}").fetchone()[0]
 
 
-def _drop_lines_past(con: duckdb.DuckDBPyConnection, target: str, n: int, run: ops.Run) -> None:
+def _drop_lines_past(con: duckdb.DuckDBPyConnection, target: str, n: int) -> None:
     """Delete the lines past a checked dump's ``n``, before its batches merge.
 
     A batch slice the dump no longer reaches (gene shrunk to 2 lines, ``batches=3``:
@@ -173,8 +175,7 @@ def _drop_lines_past(con: duckdb.DuckDBPyConnection, target: str, n: int, run: o
     catalog, schema, table = target.split(".")
     if con.execute("SELECT 1 FROM information_schema.tables WHERE table_catalog = ? "
                    "AND table_schema = ? AND table_name = ?", [catalog, schema, table]).fetchone():
-        with run.attribute(table):
-            con.execute(f"DELETE FROM {target} WHERE line_number > {int(n)};")
+        con.execute(f"DELETE FROM {target} WHERE line_number > {int(n)};")
 
 
 def ingest(
@@ -199,6 +200,9 @@ def ingest(
         raise ValueError(f"pubtator3: kind must be one of {list(KINDS)}, got {kind!r}")
     if limit is not None and limit < 1:
         raise ValueError(f"pubtator3: limit must be positive, got {limit}")
+    # batches=0 would delete the extent and merge nothing
+    if type(batches) is not int or batches < 1:
+        raise ValueError(f"pubtator3: batches must be a positive int, got {batches!r}")
     if directory and not version:
         raise ValueError("pubtator3: a local directory has no retrieval date; pass version")
     version = version or date.today().isoformat()
@@ -214,12 +218,15 @@ def ingest(
         with ops.run(con, source="pubtator3", target=f"{LAKE}.{schema}", version=version) as r:
             lines = {k: _check(con, k, root / file_name(k)) for k in kinds}
             for k in kinds:
-                if mode == "merge" and limit is None:
-                    _drop_lines_past(con, f"{LAKE}.{schema}.{k}_annotation", lines[k], r)
-                for i in range(batches):
-                    counts[f"{k}_annotation"] = land(
-                        con, k, root / file_name(k), version, schema=schema, limit=limit,
-                        batch=(i, batches) if batches > 1 else None, mode=mode)
+                # one transaction: the batches' upserts join it (attribute is re-entrant),
+                # so the extent delete never commits without the merges that follow it
+                with r.attribute(f"{k}_annotation"):
+                    if mode == "merge" and limit is None:
+                        _drop_lines_past(con, f"{LAKE}.{schema}.{k}_annotation", lines[k])
+                    for i in range(batches):
+                        counts[f"{k}_annotation"] = land(
+                            con, k, root / file_name(k), version, schema=schema, limit=limit,
+                            batch=(i, batches) if batches > 1 else None, mode=mode)
                 _log.info("{}_annotation <- {:,} rows", k, counts[f"{k}_annotation"])
             r.rows = sum(counts.values())
     finally:

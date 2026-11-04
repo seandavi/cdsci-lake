@@ -113,7 +113,69 @@ def test_pubtator3_lands_each_file_verbatim_and_idempotently(lake_settings, tmp_
             after = con.execute(SNAP).fetchone()[0]
         finally:
             con.close()
-    assert after == before + 2  # the shrinking run's line delete and merge; the retry none
+    assert after == before + 1  # the shrinking run's line delete and merges; the retry none
+
+
+def test_a_failure_after_the_extent_delete_leaves_the_table_unchanged(
+        lake_settings, tmp_path, monkeypatch):
+    a, b, c, d = DUMP["gene"]
+    pubtator3.ingest(directory=str(dump(tmp_path / "d1", {"gene": [a, b, c, d]})), kind="gene",
+                     version="2026-09-19", settings=lake_settings)
+    con = lake_connect(lake_settings)
+    try:
+        before, landed = con.execute(SNAP).fetchone()[0], rows(con, "gene")
+    finally:
+        con.close()
+    # shrink plus a middle insertion: d moves from line 4, which the extent delete drops, to 3
+    x = "104\tGene\t1\tX\tPubTator3"
+    nxt = str(dump(tmp_path / "d2", {"gene": [a, x, d]}))
+    real_land, calls = INGEST.land, []
+
+    def land(*args, **kwargs):  # the first batch merges, the second fails
+        calls.append(kwargs["batch"])
+        if len(calls) == 2:
+            raise RuntimeError("injected")
+        return real_land(*args, **kwargs)
+
+    monkeypatch.setattr(INGEST, "land", land)
+    with pytest.raises(RuntimeError, match="injected"):
+        pubtator3.ingest(directory=nxt, kind="gene", version="2026-10-06", batches=2,
+                         settings=lake_settings)
+    assert calls == [(0, 2), (1, 2)]
+    monkeypatch.undo()
+    con = lake_connect(lake_settings)
+    try:
+        assert con.execute(SNAP).fetchone()[0] == before
+        assert rows(con, "gene") == landed
+    finally:
+        con.close()
+
+    # the retry lands the new dump exactly; a further run writes nothing
+    for _ in range(2):
+        pubtator3.ingest(directory=nxt, kind="gene", version="2026-10-06", batches=2,
+                         settings=lake_settings)
+        con = lake_connect(lake_settings)
+        try:
+            assert [(r[0], r[1], r[3], r[-1]) for r in rows(con, "gene")] == [
+                (1, "100", "7157", "2026-09-19"), (2, "104", "1", "2026-10-06"),
+                (3, "102", "672", "2026-10-06")]
+            after = con.execute(SNAP).fetchone()[0]
+        finally:
+            con.close()
+    assert after == before + 1
+
+    # batches=0 would delete line 3 and merge nothing: refused before any write
+    one = str(dump(tmp_path / "d3", {"gene": [a]}))
+    for bad in (0, -1, 1.5, "2"):
+        with pytest.raises(ValueError, match="batches must be a positive int"):
+            pubtator3.ingest(directory=one, kind="gene", version="2026-11-04",
+                             batches=bad, settings=lake_settings)
+    con = lake_connect(lake_settings)
+    try:
+        assert con.execute(SNAP).fetchone()[0] == after
+        assert len(rows(con, "gene")) == 3
+    finally:
+        con.close()
 
 
 def test_append_lands_an_empty_table_and_refuses_a_second_time(lake_settings, tmp_path):
