@@ -12,7 +12,6 @@ import gzip
 import importlib
 from pathlib import Path
 
-import duckdb
 import pytest
 
 from cdsci.lake import Settings, lake_connect
@@ -78,16 +77,21 @@ def test_pubtator3_lands_each_file_verbatim_and_idempotently(lake_settings, tmp_
     finally:
         con.close()
 
-    # the same dump again, in a different batching, writes nothing
+    # the same dump again, in a different batching or retrieved on a later date, writes
+    # nothing: pubtator3_version is out of change detection (ADR-0003)
     pubtator3.ingest(directory=str(d), version="2026-09-19", batches=2, settings=lake_settings)
+    pubtator3.ingest(directory=str(d), version="2026-09-20", settings=lake_settings)
     con = lake_connect(lake_settings)
     try:
         assert con.execute(SNAP).fetchone()[0] == before
+        assert {r[-1] for r in rows(con, "gene")} == {"2026-09-19"}
     finally:
         con.close()
 
-    # a limited load never prunes; a full load of the next dump drops lines and restamps
-    nxt = dump(tmp_path / "d2", {**DUMP, "gene": DUMP["gene"][:2]})
+    # a limited load never prunes; a full load of the next dump drops lines and
+    # restamps only the line that changed
+    changed = DUMP["gene"][1].replace("CNTN2", "CNTN2|TAG-1")
+    nxt = dump(tmp_path / "d2", {**DUMP, "gene": [DUMP["gene"][0], changed]})
     pubtator3.ingest(directory=str(nxt), kind="gene", version="2026-10-06", limit=1,
                      settings=lake_settings)
     con = lake_connect(lake_settings)
@@ -95,18 +99,21 @@ def test_pubtator3_lands_each_file_verbatim_and_idempotently(lake_settings, tmp_
         assert len(rows(con, "gene")) == 4
     finally:
         con.close()
-    # (with batches=3 its line_number % 3 = 0 slice would be empty, which upsert's
-    # empty-load guard refuses rather than prune)
-    pubtator3.ingest(directory=str(nxt), kind="gene", version="2026-10-06", batches=2,
-                     settings=lake_settings)
-    con = lake_connect(lake_settings)
-    try:
-        assert [(r[0], r[-1]) for r in rows(con, "gene")] == [(1, "2026-10-06"),
-                                                              (2, "2026-10-06")]
-        # the other kinds were not part of this run
-        assert rows(con, "disease")[0][-1] == "2026-09-19"
-    finally:
-        con.close()
+    # batches=3: the dump no longer reaches line_number % 3 = 0, an empty load that
+    # upsert alone refuses to prune; and a retry of the same dump writes nothing
+    for _ in range(2):
+        pubtator3.ingest(directory=str(nxt), kind="gene", version="2026-10-06", batches=3,
+                         settings=lake_settings)
+        con = lake_connect(lake_settings)
+        try:
+            assert [(r[0], r[4], r[-1]) for r in rows(con, "gene")] == [
+                (1, "p53|TP53", "2026-09-19"), (2, "CNTN2|TAG-1", "2026-10-06")]
+            # the other kinds were not part of this run
+            assert rows(con, "disease")[0][-1] == "2026-09-19"
+            after = con.execute(SNAP).fetchone()[0]
+        finally:
+            con.close()
+    assert after == before + 2  # the shrinking run's line delete and merge; the retry none
 
 
 def test_append_lands_an_empty_table_and_refuses_a_second_time(lake_settings, tmp_path):
@@ -129,9 +136,11 @@ def test_append_lands_an_empty_table_and_refuses_a_second_time(lake_settings, tm
     ({"species": ["PMID\tSpecies\t9606\thuman\tPubTator3"]}, ValueError, "non-numeric PMID"),
     # past a limited load's rows, so only the whole-file check sees it
     ({"species": [*DUMP["species"] * 20000, "100\tSpecies\t9606\thuman"]},
-     duckdb.InvalidInputException, "Expected Number of Columns"),
+     ValueError, "line 20001 has 4 fields"),
     ({"species": [*DUMP["species"] * 20000, "100\tSpecies\t9606\thuman\tPubTator3\tx"]},
-     duckdb.InvalidInputException, "Expected Number of Columns"),
+     ValueError, "line 20001 has 6 fields"),
+    # DuckDB's read skips a blank line and would renumber every line after it
+    ({"species": [*DUMP["species"] * 3, "", *DUMP["species"]]}, ValueError, "line 4 has 1 fields"),
 ])
 def test_a_bad_file_fails_before_any_file_lands(lake_settings, tmp_path, bad, error, match):
     pubtator3.ingest(directory=str(dump(tmp_path / "d1", DUMP)), version="2026-09-19",
@@ -154,6 +163,26 @@ def test_a_bad_file_fails_before_any_file_lands(lake_settings, tmp_path, bad, er
         con.close()
 
 
+def test_a_record_replaced_by_a_blank_line_fails_a_full_merge(lake_settings, tmp_path):
+    d = dump(tmp_path / "d1", DUMP)
+    pubtator3.ingest(directory=str(d), kind="gene", version="2026-09-19", settings=lake_settings)
+    con = lake_connect(lake_settings)
+    try:
+        before, landed = con.execute(SNAP).fetchone()[0], rows(con, "gene")
+    finally:
+        con.close()
+    blank = dump(tmp_path / "d2", {"gene": [*DUMP["gene"][:2], "", DUMP["gene"][3]]})
+    with pytest.raises(ValueError, match="line 3 has 1 fields"):
+        pubtator3.ingest(directory=str(blank), kind="gene", version="2026-10-06",
+                         settings=lake_settings)
+    con = lake_connect(lake_settings)
+    try:
+        assert con.execute(SNAP).fetchone()[0] == before
+        assert rows(con, "gene") == landed
+    finally:
+        con.close()
+
+
 def test_arguments_are_checked(lake_settings, tmp_path):
     d = str(dump(tmp_path / "d1", DUMP))
     for kwargs, match in (({"directory": d}, "pass version"),
@@ -164,6 +193,13 @@ def test_arguments_are_checked(lake_settings, tmp_path):
                            "limit must be positive")):
         with pytest.raises(ValueError, match=match):
             pubtator3.ingest(settings=lake_settings, **kwargs)
+    # land() is exported: called directly, limit=0 must not read as a full pruning load
+    con = lake_connect(lake_settings)
+    try:
+        with pytest.raises(ValueError, match="limit must be positive"):
+            pubtator3.land(con, "gene", Path(d) / "gene2pubtator3.gz", "2026-09-19", limit=0)
+    finally:
+        con.close()
 
 
 def test_the_default_run_downloads_the_five_dumps(lake_settings, tmp_path, monkeypatch):
