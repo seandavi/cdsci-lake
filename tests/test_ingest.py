@@ -86,10 +86,12 @@ def test_icite_ingest_records_ops_run(lake_settings: Settings):
 
     con = lake_connect(lake_settings)
     try:
+        # The citation graph is loaded second, as its own run.
         last = ops.last_run(con, "icite")
         assert last["status"] == "success"
-        assert last["target"] == summary["table"]
-        assert last["snapshot_after"] == summary["snapshot"]
+        assert last["target"] == summary["citation"]["table"]
+        assert last["snapshot_after"] == summary["citation"]["snapshot"]
+        assert summary["citation"]["rows"] == 4
     finally:
         con.close()
 

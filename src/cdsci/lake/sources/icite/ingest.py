@@ -8,10 +8,12 @@ Three steps, medallion-style (ADR-0012):
    unzip it. Re-running does not re-download.
 #. **curate** — DuckDB scans the CSV and writes the typed ``lake.icite`` table.
 
-The curated projection is **join-focused**: identifiers + the impact metrics
-(RCR, percentile, counts, field rate). The bulky ``cited_by`` / ``references``
-PMID-list columns are intentionally left out of this table — they belong in a
-separate citation-graph table if/when a consumer needs them.
+``icite.metadata`` leads with the **join-focused** typed projection (identifiers +
+the impact metrics); those 17 columns are a contract other readers depend on. After
+them come every upstream column verbatim as text (``RAW_TEXT``: the free names as
+upstream spells them, the rest ``<name>_text``) and ``snapshot``, the label of the
+load that last saw the row, so bioc-on-ice can publish the snapshot exactly
+(bioc-on-ice#183). ``icite.citation`` is the graph exploded from ``references``.
 """
 
 from __future__ import annotations
@@ -27,6 +29,16 @@ from ...download import download, get_json, unzip
 
 _FIGSHARE = "https://api.figshare.com/v2"
 _TABLE = "icite.metadata"  # lake table (schema.table)
+SHARDS = 16  # icite.citation is merged one cited_pmid % SHARDS slice at a time
+
+# Upstream columns kept verbatim as text after the typed ones. Free names are upstream's;
+# names a typed column already holds get ``_text`` (title and journal are already verbatim).
+_FREE = ("authors", "relative_citation_ratio", "molecular_cellular", "provisional",
+         "x_coord", "y_coord", "cited_by_clin", "cited_by", "references", "last_modified")
+_TAKEN = ("pmid", "doi", "year", "is_research_article", "nih_percentile", "human", "animal",
+          "apt", "is_clinical", "citation_count", "citations_per_year",
+          "expected_citations_per_year", "field_citation_rate")
+RAW_TEXT = {**{c: c for c in _FREE}, **{c: f"{c}_text" for c in _TAKEN}}
 _RAW = "icite"  # raw-download subdir name
 
 
@@ -93,11 +105,13 @@ def _select_sql(csv_paths: list[Path] | str, version: str, limit: int | None) ->
     """Typed, join-focused projection over the iCite metadata CSV.
 
     Reads every column as text (``all_varchar``) and casts in SQL, so a monthly
-    schema tweak upstream never breaks the scan. The bulky ``cited_by`` /
-    ``references`` PMID-list columns are intentionally dropped (they belong in a
-    citation-graph / open-citations table, not the per-paper metrics table).
+    schema tweak upstream never breaks the scan. ``max_line_size`` because
+    ``cited_by`` is a paper's whole citing-PMID list on one line (2.3 MB for the
+    most-cited paper in 2026-08), over DuckDB's default; without it
+    ``ignore_errors`` silently drops those rows.
     """
     limit_sql = f" LIMIT {int(limit)}" if limit else ""
+    raw = "".join(f',\n            "{c}" AS "{name}"' for c, name in RAW_TEXT.items())
     return f"""
         SELECT
             TRY_CAST(pmid AS BIGINT)                          AS pmid,
@@ -118,11 +132,12 @@ def _select_sql(csv_paths: list[Path] | str, version: str, limit: int | None) ->
             TRY_CAST(apt AS DOUBLE)                           AS apt,
             TRY_CAST(human AS DOUBLE)                         AS human,
             TRY_CAST(animal AS DOUBLE)                        AS animal,
-            CAST({_sql_str(version)} AS VARCHAR)              AS snapshot_version
+            CAST({_sql_str(version)} AS VARCHAR)              AS snapshot_version{raw},
+            CAST({_sql_str(version)} AS VARCHAR)              AS snapshot
         FROM read_csv(
             {csv_source(csv_paths)},
             header = true, all_varchar = true, sample_size = -1,
-            quote = '"', escape = '"', ignore_errors = true
+            quote = '"', escape = '"', ignore_errors = true, max_line_size = 268435456
         )
         WHERE TRY_CAST(pmid AS BIGINT) IS NOT NULL{limit_sql}
     """
@@ -141,12 +156,64 @@ def curate(
     A monthly snapshot mostly *updates* existing PMIDs (citations accrue) and
     inserts new ones — a textbook MERGE. Keying on ``pmid`` keeps DuckLake
     time-travel meaningful month over month (see :func:`cdsci.lake.upsert`).
+
+    ``snapshot`` is compared, so every row a load sees carries its label and a
+    row iCite withdrew keeps the older one: the current snapshot is
+    ``WHERE snapshot = <label>``. Rows are never pruned. A table from before the
+    verbatim columns gains them here (NULL until a load sees the row).
     """
     target = target or f"{LAKE}.{_TABLE}"
+    exists = con.execute(
+        "SELECT 1 FROM information_schema.tables WHERE table_catalog = ? "
+        "AND table_schema = ? AND table_name = ?", target.split("."),
+    ).fetchone()
+    if exists:
+        for name in (*RAW_TEXT.values(), "snapshot"):
+            con.execute(f'ALTER TABLE {target} ADD COLUMN IF NOT EXISTS "{name}" VARCHAR')
     return upsert(
         con, target, _select_sql(csv_paths, version, limit),
         key="pmid", exclude_change_cols=["snapshot_version"],
     )
+
+
+def curate_citations(
+    con: duckdb.DuckDBPyConnection,
+    version: str,
+    *,
+    metadata: str | None = None,
+    target: str | None = None,
+    prune: bool = True,
+) -> int:
+    """Explode ``metadata``'s ``references`` for ``version`` into ``icite.citation``.
+
+    One row per distinct (citing_pmid, cited_pmid), as printed upstream: the NIH
+    Open Citation Collection (928,458,585 edges in 2026-08). ``cited_by`` is the
+    same graph from the other end, short the edges whose cited paper has no iCite
+    record, so it is not used. Exploded once, then merged ``SHARDS`` times on
+    ``shard = cited_pmid % SHARDS`` so one MERGE holds ~1/16 of the graph; with
+    ``prune`` each shard mirrors the load (pass False for partial loads).
+    """
+    metadata = metadata or f"{LAKE}.{_TABLE}"
+    target = target or f"{LAKE}.icite.citation"
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _icite_edges AS
+        SELECT DISTINCT citing_pmid, cited_pmid,
+               (cited_pmid::BIGINT % {SHARDS})::INTEGER AS shard
+        FROM (SELECT pmid_text AS citing_pmid,
+                     unnest(str_split("references", ' ')) AS cited_pmid
+              FROM {metadata}
+              WHERE snapshot = {_sql_str(version)}
+                AND "references" IS NOT NULL AND "references" <> '')
+        WHERE cited_pmid <> ''
+    """)
+    rows = 0
+    for shard in range(SHARDS):
+        rows = upsert(
+            con, target, f"SELECT * FROM _icite_edges WHERE shard = {shard}",
+            key=["citing_pmid", "cited_pmid"], prune=f"shard = {shard}" if prune else None,
+        )
+    con.execute("DROP TABLE _icite_edges")
+    return rows
 
 
 def ingest(
@@ -157,7 +224,7 @@ def ingest(
     limit: int | None = None,
     settings: Settings | None = None,
 ) -> dict:
-    """End-to-end: (download unless ``file`` given) → upsert → return a summary."""
+    """End-to-end: (download unless ``file`` given) → upsert both tables → a summary."""
     s = settings or get_settings()
     if file:
         paths: list[Path] | str = file
@@ -169,6 +236,10 @@ def ingest(
     try:
         with ops.run(con, source="icite", target=target, version=version) as r:
             r.rows = curate(con, paths, version, target=target, limit=limit)
+        with ops.run(con, source="icite", target=f"{LAKE}.{schema}.citation",
+                     version=version) as c:
+            c.rows = curate_citations(con, version, metadata=target,
+                                      target=f"{LAKE}.{schema}.citation", prune=not limit)
     finally:
         con.close()
-    return r.summary()
+    return {**r.summary(), "citation": c.summary()}
