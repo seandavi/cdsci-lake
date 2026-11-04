@@ -1,4 +1,4 @@
-"""Offline tests for iCite's verbatim columns and citation graph (bioc-on-ice#183).
+"""Offline tests for iCite's added columns and citation graph (bioc-on-ice#183).
 
 The fixture (``fixtures/icite_sample.csv``) has the 2026-08 snapshot's 25 columns.
 """
@@ -9,7 +9,6 @@ from pathlib import Path
 
 from cdsci.lake import Settings, lake_connect, upsert
 from cdsci.lake.sources import icite
-from cdsci.lake.sources.icite.ingest import RAW_TEXT
 
 CSV = Path(__file__).parent / "fixtures" / "icite_sample.csv"
 
@@ -44,7 +43,7 @@ def _settings(tmp_path: Path) -> Settings:
 
 
 def test_typed_columns_are_unchanged(tmp_path: Path):
-    """The 17 typed columns keep their names, order, types and values; verbatim ones follow."""
+    """The 17 typed columns keep their names, order, types and values; ADDED follow."""
     con = lake_connect(_settings(tmp_path))
     try:
         icite.curate(con, [CSV], "2026-08")
@@ -57,46 +56,47 @@ def test_typed_columns_are_unchanged(tmp_path: Path):
         for a, b in (("old", "lake.icite.metadata"), ("lake.icite.metadata", "old")):
             assert con.execute(f"SELECT count(*) FROM (SELECT {cols} FROM {a} EXCEPT ALL "
                                f"SELECT {cols} FROM {b})").fetchone()[0] == 0
-        assert [c[0] for c in new[17:]] == [*RAW_TEXT.values(), "snapshot"]
-        assert {c[1] for c in new[17:]} == {"VARCHAR"}
+        assert [(c[0], c[1]) for c in new[17:]] == [
+            ("authors", "VARCHAR"), ("molecular_cellular", "DOUBLE"),
+            ("provisional", "BOOLEAN"), ("x_coord", "DOUBLE"), ("y_coord", "DOUBLE"),
+            ("cited_by_clin", "BIGINT[]"), ("cited_by", "BIGINT[]"), ("references", "BIGINT[]"),
+            ("last_modified", "TIMESTAMP WITH TIME ZONE")]
     finally:
         con.close()
 
 
-def test_verbatim_columns_reproduce_the_csv(tmp_path: Path):
-    """Every upstream column round-trips as printed, under its upstream or ``_text`` name."""
+def test_added_columns_are_typed_from_the_csv(tmp_path: Path):
     con = lake_connect(_settings(tmp_path))
     try:
         icite.curate(con, [CSV], "2026-08")
-        raw = ", ".join(f'"{c}"' for c in RAW_TEXT)
-        got = ", ".join(f'"{n}"' for n in RAW_TEXT.values())
-        csv = (f"SELECT {raw}, title, journal FROM read_csv('{CSV}', header = true, "
-               "all_varchar = true) WHERE pmid <> 'notapmid'")
-        lake = f"SELECT {got}, title, journal FROM lake.icite.metadata"
-        for a, b in ((csv, lake), (lake, csv)):
-            assert con.execute(f"SELECT count(*) FROM ({a} EXCEPT ALL {b})").fetchone()[0] == 0
-        assert con.execute("SELECT doi_text, relative_citation_ratio FROM lake.icite.metadata "
-                           "WHERE pmid = 23456789").fetchone() == ("10.1002/CNCR.27976", "2.51")
+        row = con.execute(
+            "SELECT authors, molecular_cellular, provisional, x_coord, y_coord, cited_by_clin, "
+            "cited_by, \"references\", last_modified = TIMESTAMPTZ '2026-08-30 03:38:37.156+00' "
+            "FROM lake.icite.metadata WHERE pmid = 23456789").fetchone()
+        assert row == ("Ann Smith, Bo Li", 0.0, False, 0.0, 1.0, None, [30000001, 30000002],
+                       [30000001, 30000001, 99999999], True)
+        assert con.execute("SELECT authors, provisional, cited_by FROM lake.icite.metadata "
+                           "WHERE pmid = 30000002").fetchone() == (None, True, None)
     finally:
         con.close()
 
 
-def test_a_pre_existing_table_gains_the_columns(tmp_path: Path):
-    """The production table has only the 17 typed columns: a load adds the rest in place,
-    leaves the typed values alone, and a row the new load does not carry stays, its new
-    columns NULL, so the current snapshot is WHERE snapshot = <label>."""
+def test_a_pre_existing_table_gains_the_columns_and_mirrors_the_snapshot(tmp_path: Path):
+    """The production table has only the 17 typed columns: a full load adds ADDED in
+    place, leaves the typed values alone, and prunes a PMID the snapshot no longer has."""
     con = lake_connect(_settings(tmp_path))
     try:
         upsert(con, "lake.icite.metadata",
                f"SELECT * FROM ({TYPED}) UNION ALL SELECT 1, NULL, 1990, 'withdrawn', NULL, "
                "NULL, NULL, 0, NULL, NULL, NULL, false, false, NULL, NULL, NULL, '2026-05'",
                key="pmid", exclude_change_cols=["snapshot_version"])
-        icite.curate(con, [CSV], "2026-09")
-        assert con.execute("SELECT count(*) FROM lake.icite.metadata").fetchone()[0] == 4
-        assert con.execute("SELECT pmid FROM lake.icite.metadata WHERE snapshot = '2026-09' "
-                           "ORDER BY pmid").fetchall() == [(23456789,), (30000001,), (30000002,)]
-        assert con.execute("SELECT title, snapshot, cited_by FROM lake.icite.metadata "
-                           "WHERE pmid = 1").fetchone() == ("withdrawn", None, None)
+        assert icite.curate(con, [CSV], "2026-09") == 3
+        # The added columns were NULL, so every row changed: the first such load rewrites all.
+        assert con.execute("SELECT pmid, snapshot_version FROM lake.icite.metadata "
+                           "ORDER BY pmid").fetchall() == [
+            (23456789, "2026-09"), (30000001, "2026-09"), (30000002, "2026-09")]
+        assert con.execute("SELECT count(*) FROM lake.icite.metadata "
+                           "WHERE cited_by IS NOT NULL").fetchone()[0] == 2
     finally:
         con.close()
 
@@ -107,18 +107,18 @@ def test_citations_are_the_distinct_references(tmp_path: Path):
     con = lake_connect(_settings(tmp_path))
     try:
         icite.curate(con, [CSV], "2026-08")
-        assert icite.curate_citations(con, "2026-08") == 4
+        assert icite.curate_citations(con) == 4
         edges = con.execute("SELECT citing_pmid, cited_pmid, shard FROM lake.icite.citation "
                             "ORDER BY ALL").fetchall()
-        assert edges == [("23456789", "30000001", 30000001 % 16),
-                         ("23456789", "99999999", 99999999 % 16),
-                         ("30000001", "23456789", 23456789 % 16),
-                         ("30000002", "23456789", 23456789 % 16)]
+        assert edges == [(23456789, 30000001, 30000001 % 16),
+                         (23456789, 99999999, 99999999 % 16),
+                         (30000001, 23456789, 23456789 % 16),
+                         (30000002, 23456789, 23456789 % 16)]
         snap = "SELECT max(snapshot_id) FROM lake.snapshots()"
         before = con.execute(snap).fetchone()[0]
-        icite.curate_citations(con, "2026-08")
+        icite.curate_citations(con)
         assert con.execute(snap).fetchone()[0] == before
-        con.execute("UPDATE lake.icite.metadata SET \"references\" = '' WHERE pmid = 30000002")
-        assert icite.curate_citations(con, "2026-08") == 3
+        con.execute("UPDATE lake.icite.metadata SET \"references\" = NULL WHERE pmid = 30000002")
+        assert icite.curate_citations(con) == 3
     finally:
         con.close()

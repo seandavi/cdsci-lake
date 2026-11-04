@@ -1,5 +1,5 @@
 pmid,doi,year,title,authors,journal,is_research_article,relative_citation_ratio,nih_percentile,human,animal,molecular_cellular,apt,is_clinical,citation_count,citations_per_year,expected_citations_per_year,field_citation_rate,provisional,x_coord,y_coord,cited_by_clin,cited_by,references,last_modified
-23456789,10.1002/CNCR.27976,2013,"Hospital volume, survival, and multimodality therapy","Ann Smith, Bo Li",Cancer,Yes,2.51,88.4,1.0,0.0,0.000,0.75,No,142,9.4,3.7,5.12,No,0.000,1.000,,30000001 30000002,30000001 30000001 99999999,2026-08-01 00:00:00
-30000001,10.1016/J.CELL.2018.01.001,2018,"A study of, commas in titles",Cy Doe,Cell,Yes,1.05,55.0,0.5,0.5,0.000,0.40,No,40,5.0,4.8,6.01,No,0.433,0.250,,23456789,23456789,2026-08-01 00:00:00
-30000002,,2020,No DOI here,,Nature,Yes,0.80,42.1,1.0,0.0,0.000,0.30,No,12,2.0,2.5,3.30,Yes,0.000,1.000,,,23456789,2026-08-01 00:00:00
+23456789,10.1002/CNCR.27976,2013,"Hospital volume, survival, and multimodality therapy","Ann Smith, Bo Li",Cancer,Yes,2.51,88.4,1.0,0.0,0.000,0.75,No,142,9.4,3.7,5.12,No,0.000,1.000,,30000001 30000002,30000001 30000001 99999999,2026-08-30T03:38:37.156Z[Etc/UTC]
+30000001,10.1016/J.CELL.2018.01.001,2018,"A study of, commas in titles",Cy Doe,Cell,Yes,1.05,55.0,0.5,0.5,0.000,0.40,No,40,5.0,4.8,6.01,No,0.433,0.250,,23456789,23456789,2026-08-30T03:38:37.156Z[Etc/UTC]
+30000002,,2020,No DOI here,,Nature,Yes,0.80,42.1,1.0,0.0,0.000,0.30,No,12,2.0,2.5,3.30,Yes,0.000,1.000,,,23456789,2026-08-30T03:38:37.156Z[Etc/UTC]
 notapmid,10.9/notapmidrow,,Bad pmid row should drop,,,No,,,,,,,No,,,,,,,,,,,

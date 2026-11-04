@@ -9,11 +9,11 @@ Three steps, medallion-style (ADR-0012):
 #. **curate** — DuckDB scans the CSV and writes the typed ``lake.icite`` table.
 
 ``icite.metadata`` leads with the **join-focused** typed projection (identifiers +
-the impact metrics); those 17 columns are a contract other readers depend on. After
-them come every upstream column verbatim as text (``RAW_TEXT``: the free names as
-upstream spells them, the rest ``<name>_text``) and ``snapshot``, the label of the
-load that last saw the row, so bioc-on-ice can publish the snapshot exactly
-(bioc-on-ice#183). ``icite.citation`` is the graph exploded from ``references``.
+the impact metrics); those 17 columns are a contract other readers depend on. The
+rest of the snapshot's columns follow, typed (bioc-on-ice#183): ``authors``, the
+translation fields, the PMID lists as ``BIGINT[]`` and ``last_modified``. It mirrors
+the latest snapshot: a PMID iCite withdrew is pruned. ``icite.citation`` is the
+graph exploded from ``references``.
 """
 
 from __future__ import annotations
@@ -31,14 +31,10 @@ _FIGSHARE = "https://api.figshare.com/v2"
 _TABLE = "icite.metadata"  # lake table (schema.table)
 SHARDS = 16  # icite.citation is merged one cited_pmid % SHARDS slice at a time
 
-# Upstream columns kept verbatim as text after the typed ones. Free names are upstream's;
-# names a typed column already holds get ``_text`` (title and journal are already verbatim).
-_FREE = ("authors", "relative_citation_ratio", "molecular_cellular", "provisional",
-         "x_coord", "y_coord", "cited_by_clin", "cited_by", "references", "last_modified")
-_TAKEN = ("pmid", "doi", "year", "is_research_article", "nih_percentile", "human", "animal",
-          "apt", "is_clinical", "citation_count", "citations_per_year",
-          "expected_citations_per_year", "field_citation_rate")
-RAW_TEXT = {**{c: c for c in _FREE}, **{c: f"{c}_text" for c in _TAKEN}}
+# Columns after the original 17 (bioc-on-ice#183): added in place to an older table.
+ADDED = {"authors": "VARCHAR", "molecular_cellular": "DOUBLE", "provisional": "BOOLEAN",
+         "x_coord": "DOUBLE", "y_coord": "DOUBLE", "cited_by_clin": "BIGINT[]",
+         "cited_by": "BIGINT[]", "references": "BIGINT[]", "last_modified": "TIMESTAMPTZ"}
 _RAW = "icite"  # raw-download subdir name
 
 
@@ -101,6 +97,11 @@ def _is_data(path: Path) -> bool:
     return path.suffix.lower() in {".csv", ".tsv", ".gz"}
 
 
+def _pmids(col: str) -> str:
+    """A space-separated PMID list as BIGINT[]; NULL when upstream prints none."""
+    return f"TRY_CAST(string_split(NULLIF({col}, ''), ' ') AS BIGINT[])"
+
+
 def _select_sql(csv_paths: list[Path] | str, version: str, limit: int | None) -> str:
     """Typed, join-focused projection over the iCite metadata CSV.
 
@@ -111,7 +112,6 @@ def _select_sql(csv_paths: list[Path] | str, version: str, limit: int | None) ->
     ``ignore_errors`` silently drops those rows.
     """
     limit_sql = f" LIMIT {int(limit)}" if limit else ""
-    raw = "".join(f',\n            "{c}" AS "{name}"' for c, name in RAW_TEXT.items())
     return f"""
         SELECT
             TRY_CAST(pmid AS BIGINT)                          AS pmid,
@@ -132,8 +132,18 @@ def _select_sql(csv_paths: list[Path] | str, version: str, limit: int | None) ->
             TRY_CAST(apt AS DOUBLE)                           AS apt,
             TRY_CAST(human AS DOUBLE)                         AS human,
             TRY_CAST(animal AS DOUBLE)                        AS animal,
-            CAST({_sql_str(version)} AS VARCHAR)              AS snapshot_version{raw},
-            CAST({_sql_str(version)} AS VARCHAR)              AS snapshot
+            CAST({_sql_str(version)} AS VARCHAR)              AS snapshot_version,
+            NULLIF(authors, '')                               AS authors,
+            TRY_CAST(molecular_cellular AS DOUBLE)            AS molecular_cellular,
+            lower(provisional) IN ('yes','true','1')          AS provisional,
+            TRY_CAST(x_coord AS DOUBLE)                       AS x_coord,
+            TRY_CAST(y_coord AS DOUBLE)                       AS y_coord,
+            {_pmids("cited_by_clin")}                         AS cited_by_clin,
+            {_pmids("cited_by")}                              AS cited_by,
+            {_pmids('"references"')}                          AS "references",
+            -- printed as '2026-08-30T03:38:37.156Z[Etc/UTC]'
+            TRY_CAST(regexp_replace(last_modified, '\[.*\]$', '') AS TIMESTAMPTZ)
+                                                              AS last_modified
         FROM read_csv(
             {csv_source(csv_paths)},
             header = true, all_varchar = true, sample_size = -1,
@@ -157,10 +167,9 @@ def curate(
     inserts new ones — a textbook MERGE. Keying on ``pmid`` keeps DuckLake
     time-travel meaningful month over month (see :func:`cdsci.lake.upsert`).
 
-    ``snapshot`` is compared, so every row a load sees carries its label and a
-    row iCite withdrew keeps the older one: the current snapshot is
-    ``WHERE snapshot = <label>``. Rows are never pruned. A table from before the
-    verbatim columns gains them here (NULL until a load sees the row).
+    A full load prunes the PMIDs the snapshot no longer has, so the table is the
+    snapshot (``limit`` loads do not prune). A table from before ``ADDED`` gains
+    those columns in place first.
     """
     target = target or f"{LAKE}.{_TABLE}"
     exists = con.execute(
@@ -168,25 +177,24 @@ def curate(
         "AND table_schema = ? AND table_name = ?", target.split("."),
     ).fetchone()
     if exists:
-        for name in (*RAW_TEXT.values(), "snapshot"):
-            con.execute(f'ALTER TABLE {target} ADD COLUMN IF NOT EXISTS "{name}" VARCHAR')
+        for name, sql_type in ADDED.items():
+            con.execute(f'ALTER TABLE {target} ADD COLUMN IF NOT EXISTS "{name}" {sql_type}')
     return upsert(
         con, target, _select_sql(csv_paths, version, limit),
-        key="pmid", exclude_change_cols=["snapshot_version"],
+        key="pmid", exclude_change_cols=["snapshot_version"], prune=None if limit else "true",
     )
 
 
 def curate_citations(
     con: duckdb.DuckDBPyConnection,
-    version: str,
     *,
     metadata: str | None = None,
     target: str | None = None,
     prune: bool = True,
 ) -> int:
-    """Explode ``metadata``'s ``references`` for ``version`` into ``icite.citation``.
+    """Explode ``metadata``'s ``references`` into ``icite.citation``.
 
-    One row per distinct (citing_pmid, cited_pmid), as printed upstream: the NIH
+    One row per distinct (citing_pmid, cited_pmid): the NIH
     Open Citation Collection (928,458,585 edges in 2026-08). ``cited_by`` is the
     same graph from the other end, short the edges whose cited paper has no iCite
     record, so it is not used. Exploded once, then merged ``SHARDS`` times on
@@ -197,14 +205,9 @@ def curate_citations(
     target = target or f"{LAKE}.icite.citation"
     con.execute(f"""
         CREATE OR REPLACE TEMP TABLE _icite_edges AS
-        SELECT DISTINCT citing_pmid, cited_pmid,
-               (cited_pmid::BIGINT % {SHARDS})::INTEGER AS shard
-        FROM (SELECT pmid_text AS citing_pmid,
-                     unnest(str_split("references", ' ')) AS cited_pmid
-              FROM {metadata}
-              WHERE snapshot = {_sql_str(version)}
-                AND "references" IS NOT NULL AND "references" <> '')
-        WHERE cited_pmid <> ''
+        SELECT DISTINCT citing_pmid, cited_pmid, (cited_pmid % {SHARDS})::INTEGER AS shard
+        FROM (SELECT pmid AS citing_pmid, unnest("references") AS cited_pmid FROM {metadata})
+        WHERE cited_pmid IS NOT NULL
     """)
     rows = 0
     for shard in range(SHARDS):
@@ -238,7 +241,7 @@ def ingest(
             r.rows = curate(con, paths, version, target=target, limit=limit)
         with ops.run(con, source="icite", target=f"{LAKE}.{schema}.citation",
                      version=version) as c:
-            c.rows = curate_citations(con, version, metadata=target,
+            c.rows = curate_citations(con, metadata=target,
                                       target=f"{LAKE}.{schema}.citation", prune=not limit)
     finally:
         con.close()
