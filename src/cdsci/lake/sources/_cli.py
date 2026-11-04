@@ -81,7 +81,7 @@ def _echo_summary(summary: dict[str, Any]) -> None:
     typer.echo(f"{target} <- {rows:,} rows (status={summary.get('status')}) — {delta}")
 
 
-def build_app(name: str, ingest: Callable[..., dict], *, help: str) -> typer.Typer:  # noqa: A002
+def build_app(name: str, ingest: Callable[..., dict | list[dict]], *, help: str) -> typer.Typer:  # noqa: A002
     """A ready-to-run typer app for a registered source: ``--log-level`` + a generated ``run``.
 
     ``name`` must be one of :data:`ops.SOURCES`'s names -- an unregistered source
@@ -102,7 +102,10 @@ def build_app(name: str, ingest: Callable[..., dict], *, help: str) -> typer.Typ
     app = base_app(help)
 
     def run(**kwargs: Any) -> None:
-        _echo_summary(source.ingest(**kwargs))
+        result = source.ingest(**kwargs)
+        # one summary per run; a source with one run per slice (obo) returns a list
+        for summary in result if isinstance(result, list) else [result]:
+            _echo_summary(summary)
 
     run.__signature__ = _run_signature(source.ingest)  # type: ignore[attr-defined]
     app.command("run")(run)

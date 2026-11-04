@@ -275,6 +275,33 @@ class Settings(BaseSettings):
     # IntAct (CC BY 4.0) — dated release directories (``<YYYY-MM-DD>/psimitab/intact.zip``);
     # the date is the version. See ``sources/intact/ingest.py``.
     intact_base_url: str = "https://ftp.ebi.ac.uk/pub/databases/intact/"
+    # OBO Foundry ontologies (per-ontology licence) — each one's OBO Graphs JSON: the
+    # newest release, and a dated release by upstream's own name for it (``{version}``:
+    # a GitHub tag, or GO's release directory). The file's ``graphs[0].meta.version``
+    # is the version. See ``sources/obo/ingest.py``.
+    obo_urls: dict[str, str] = {
+        "cl": "https://purl.obolibrary.org/obo/cl.json",
+        "uberon": "https://purl.obolibrary.org/obo/uberon.json",
+        "mondo": "https://purl.obolibrary.org/obo/mondo.json",
+        "efo": "https://github.com/EBISPOT/efo/releases/latest/download/efo.json",
+        "hsapdv": "https://purl.obolibrary.org/obo/hsapdv.json",
+        "mmusdv": "https://purl.obolibrary.org/obo/mmusdv.json",
+        "go": "https://purl.obolibrary.org/obo/go/go-basic.json",
+        "doid": "https://purl.obolibrary.org/obo/doid.json",
+    }
+    obo_release_urls: dict[str, str] = {
+        "cl": "https://github.com/obophenotype/cell-ontology/releases/download/{version}/cl.json",
+        "uberon": "https://github.com/obophenotype/uberon/releases/download/{version}/uberon.json",
+        "mondo": "https://github.com/monarch-initiative/mondo/releases/download/{version}/mondo.json",
+        "efo": "https://github.com/EBISPOT/efo/releases/download/{version}/efo.json",
+        "hsapdv": "https://github.com/obophenotype/developmental-stage-ontologies/releases/"
+                  "download/{version}/hsapdv.json",
+        "mmusdv": "https://github.com/obophenotype/developmental-stage-ontologies/releases/"
+                  "download/{version}/mmusdv.json",
+        "go": "https://release.geneontology.org/{version}/ontology/go-basic.json",
+        "doid": "https://raw.githubusercontent.com/DiseaseOntology/HumanDiseaseOntology/"
+                "{version}/src/ontology/doid.json",
+    }
 
     # ROR — the versioned institution-registry bulk dump (CC0, confirmed at
     # ror.readme.io/docs/data-dump 2026-08-11). This is the Zenodo *concept*
