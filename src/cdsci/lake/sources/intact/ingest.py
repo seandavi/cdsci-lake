@@ -141,7 +141,8 @@ def _read(path: Path) -> str:
     name = path.name.replace("'", "''")
     # The CSV scan is order-preserving and row_number() OVER () streams in that
     # order, so the n-th row is the n-th data line (checked to be one record each);
-    # verified under 4 and 16 threads on DuckDB 1.5.4 (tests/test_intact.py).
+    # on DuckDB 1.5.4, checked under 8 threads by tests/test_intact.py (cdsci-lake#143)
+    # and on every line of the 2026-01-09 release (bioc-on-ice#183).
     return (f"SELECT '{name}' AS file_name, row_number() OVER ()::INTEGER AS line_number, * "
             f"FROM read_csv({csv_source([path])}, delim='\\t', header=true, auto_detect=false, "
             f"columns={columns}, quote='', escape='', nullstr='-', max_line_size=268435456)")
