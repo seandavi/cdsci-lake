@@ -275,6 +275,10 @@ class Settings(BaseSettings):
     # IntAct (CC BY 4.0) — dated release directories (``<YYYY-MM-DD>/psimitab/intact.zip``);
     # the date is the version. See ``sources/intact/ingest.py``.
     intact_base_url: str = "https://ftp.ebi.ac.uk/pub/databases/intact/"
+    # PubTator3 (US public domain) — five ``<kind>2pubtator3.gz`` rewritten in place about
+    # monthly, none archived; the retrieval date is the version. See
+    # ``sources/pubtator3/ingest.py``.
+    pubtator3_base_url: str = "https://ftp.ncbi.nlm.nih.gov/pub/lu/PubTator3/"
     # OBO Foundry ontologies (per-ontology licence) — each one's OBO Graphs JSON: the
     # newest release, and a dated release by upstream's own name for it (``{version}``:
     # a GitHub tag, or GO's release directory). The file's ``graphs[0].meta.version``
