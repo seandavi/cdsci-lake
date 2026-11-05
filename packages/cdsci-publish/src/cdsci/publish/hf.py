@@ -5,9 +5,11 @@ The best of bioc-on-ice's and cancer-on-ice's `hf.py` (both descend from omicidx
 `hf_release`). The push sends the bundle's Parquet and manifest.json as they are, plus
 `extra_files` (a gate proof, say), and generates three files: views.sql and restore.sql
 over paths relative to the download directory (the bundle's own copies read the bucket),
-and README.md, the dataset card the product's `card` builds. The product's `<db_file>`
-is not pushed: its views read the bucket. Nothing points at `hf://`: anonymous reads
-there are rate-limited (HTTP 429).
+and README.md, the dataset card the product's `card` builds. A bundle's croissant.json is
+pushed the same way, its contentUrls download-relative like the SQL (not Hub resolve URLs:
+the Hub generates its own Croissant for the repo, and anonymous Hub reads rate-limit).
+The product's `<db_file>` is not pushed: its views read the bucket. Nothing points at
+`hf://`: anonymous reads there are rate-limited (HTTP 429).
 
 Rules kept from the products:
 
@@ -37,6 +39,7 @@ from huggingface_hub import CommitOperationAdd, CommitOperationDelete
 from huggingface_hub.errors import HfHubHTTPError, RepositoryNotFoundError
 
 from .bundle import check_files, restore_sql, views_sql
+from .croissant import relocate
 
 TAG_ATTEMPTS, TAG_WAIT_S = 5, 10
 
@@ -71,6 +74,9 @@ def hf_push(bundle: Path, api, *, repo, tag, card, apply=False, extra_files=(), 
         "restore.sql": restore_sql(tables, "."),
         "README.md": card(tag, manifest, tables),
     }
+    if (bundle / "croissant.json").exists():
+        doc = relocate(json.loads((bundle / "croissant.json").read_text()), ".")
+        generated["croissant.json"] = json.dumps(doc, indent=2) + "\n"
     files = [t["path"] for t in tables] + ["manifest.json", *extra_files]
     ops = [CommitOperationAdd(p, bundle / p) for p in files]
     ops += [CommitOperationAdd(p, text.encode()) for p, text in generated.items()]

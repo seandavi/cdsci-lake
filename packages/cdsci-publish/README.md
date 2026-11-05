@@ -41,6 +41,42 @@ manifest = publish(
 )
 ```
 
+## Croissant
+
+Pass `dataset=` to `publish(...)` and the bundle also gets `croissant.json`,
+[Croissant 1.1](https://docs.mlcommons.org/croissant/docs/croissant-spec-1.1.html) JSON-LD
+generated from the manifest: a `FileObject` per table (contentUrl, sha256, contentSize)
+and a `RecordSet` per table with a `Field` per column (the DuckDB type mapped to a
+Croissant data type, the column doc as description, `LIST` as `isArray`, `STRUCT` as
+`subField`). `upload` and `hf_push` carry it along, contentUrls regenerated per folder
+(`v{release}/`, `latest/`) or download-relative (Hugging Face), like `views.sql`.
+
+```python
+publish(
+    ...,
+    dataset={                                  # merged onto the sc:Dataset; the spec requires
+        "name": "biocOnIce",                   # name, description, url and license
+        "description": "...",
+        "url": "https://github.com/seandavi/bioc-on-ice",
+        "license": "https://creativecommons.org/licenses/by/4.0/",
+        "creator": {"@type": "Person", "name": "Sean Davis"},
+        "citeAs": "...", "keywords": ["genomics"],
+        "@context": {"wdt": "http://www.wikidata.org/prop/direct/"},  # extra prefixes
+    },
+    field_semantics={                          # optional, per column, merged onto the Field
+        "annotation.gene": {"gene_id": {"equivalentProperty": "wdt:P594"}},
+    },
+)
+```
+
+`version` is the manifest's `release` and `datePublished` its `published_at` unless
+`dataset` overrides them. A column whose DuckDB type has no Croissant data type (`BLOB`,
+`MAP`, ...) is emitted as `sc:Text` with the raw type in its description;
+`cdsci.publish.croissant.unmapped(doc)` lists them. The manifest's `provenance` rows are
+not emitted (no clean PROV-O mapping yet). `croissant(manifest, dataset=..., field_semantics=...)`
+is also callable on its own, stdlib only; the dev group's `mlcroissant` validates the output
+in tests.
+
 `cdsci.publish.concordance(old_manifest, new_manifest)` compares two manifests
 (table set, row counts, column names/types, docs) and returns a list of
 human-readable differences, ignoring build-time fields (timestamps, git_sha,

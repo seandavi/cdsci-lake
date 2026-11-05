@@ -22,9 +22,10 @@ from .bundle import (
     views_sql,
 )
 from .concordance import concordance
+from .croissant import croissant
 
-__all__ = ["MANIFEST_VERSION", "build_db", "check_files", "concordance", "manifest_schema",
-           "publish", "restore_sql", "sql_literal", "views_sql"]
+__all__ = ["MANIFEST_VERSION", "build_db", "check_files", "concordance", "croissant",
+           "manifest_schema", "publish", "restore_sql", "sql_literal", "views_sql"]
 
 
 def manifest_schema() -> dict:

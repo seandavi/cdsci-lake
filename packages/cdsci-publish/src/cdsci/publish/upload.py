@@ -2,7 +2,8 @@
 
 The best of bioc-on-ice's and cancer-on-ice's `upload.py` (both descend from omicidx's
 `publish_bundle`). Each folder gets the bundle's Parquet plus its own views.sql,
-restore.sql and `<db_file>`, regenerated for that folder's public URL, so a pinned
+restore.sql, `<db_file>` (and croissant.json, when the bundle has one), regenerated for
+that folder's public URL, so a pinned
 `v{release}/` keeps reading its own Parquet and `latest/` reads `latest/`. manifest.json
 goes last in each folder: it marks the folder complete. Then dated folders the product's
 retention policy does not keep are pruned. Dry run unless `apply`: everything is built
@@ -42,6 +43,7 @@ from pathlib import Path
 from pyarrow import fs as pafs
 
 from .bundle import build_db, check_files, restore_sql, views_sql
+from .croissant import relocate
 
 DATED = re.compile(r"v\d{4}-\d{2}-\d{2}")
 
@@ -142,8 +144,13 @@ def _folder(fs, root, bundle, manifest, folder, public_url, db_file, extra_files
             json.dumps({**manifest, "base_url": base}, indent=2) + "\n")
         for name in extra_files:
             shutil.copy(bundle / name, tmp / name)
+        generated = ["views.sql", "restore.sql", db_file]
+        if (bundle / "croissant.json").exists():
+            doc = relocate(json.loads((bundle / "croissant.json").read_text()), base)
+            (tmp / "croissant.json").write_text(json.dumps(doc, indent=2) + "\n")
+            generated.append("croissant.json")
         build_db(tmp / db_file, views, base, bundle)
-        for name in ("views.sql", "restore.sql", db_file, *extra_files, "manifest.json"):
+        for name in (*generated, *extra_files, "manifest.json"):
             _put(fs, tmp / name, f"{root}/{folder}/{name}", apply)
 
 
