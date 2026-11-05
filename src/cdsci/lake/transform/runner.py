@@ -22,8 +22,13 @@ class ModelTestFailure(Exception):
     """A model's ``.test.sql`` assertion returned rows (it must return zero)."""
 
 
-def run_model(con: duckdb.DuckDBPyConnection, model: Model) -> int:
-    """``CREATE OR REPLACE {TABLE|VIEW} {LAKE}.{model.target} AS (model.sql)``; returns row count.
+def run_model(con: duckdb.DuckDBPyConnection, model: Model, *, writer: str = "cdsci") -> int | None:
+    """``CREATE OR REPLACE {TABLE|VIEW} {LAKE}.{model.target} AS (model.sql)``; returns the
+    table's row count, or None for a view (counting a view runs its whole query).
+
+    ``writer`` is the producer the model belongs to (ADR-0011): its runs, snapshots
+    and assets are attributed ``<writer>:<model>``. Another producer running its own
+    models (omicidx) passes its name.
 
     Self-registers ``model.target`` as a ``lake_ops.source`` on every call
     (cheap delete-then-insert, ADR-0011 §4's "idempotent and self-healing"
@@ -41,7 +46,7 @@ def run_model(con: duckdb.DuckDBPyConnection, model: Model) -> int:
     target = f"{LAKE}.{model.target}"
     ops.register_sources(
         con,
-        writer="cdsci",
+        writer=writer,
         sources=(
             ops.Source(
                 model.target, schema, model.description,
@@ -54,11 +59,12 @@ def run_model(con: duckdb.DuckDBPyConnection, model: Model) -> int:
         with r.attribute(table):
             con.execute(f"CREATE SCHEMA IF NOT EXISTS {LAKE}.{schema};")
             con.execute(f"CREATE OR REPLACE {kind} {target} AS ({model.sql});")
-        r.rows = con.execute(f"SELECT count(*) FROM {target}").fetchone()[0]
+        if kind == "TABLE":
+            r.rows = con.execute(f"SELECT count(*) FROM {target}").fetchone()[0]
         ops.ensure_column_comments(con, target, model.column_comments)
         _run_tests(con, model, target)
         ops.register_asset(
-            con, ref=target, writer="cdsci", asset_type="lake_table", name=model.target
+            con, ref=target, writer=writer, asset_type="lake_table", name=model.target
         )
         _record_lineage(con, model, target)
     return r.rows
@@ -124,12 +130,14 @@ def _record_lineage(con: duckdb.DuckDBPyConnection, model: Model, target: str) -
     bound.info("lineage: {} table(s), {} column edge(s)", len(deps), len(edges))
 
 
-def run_all(con: duckdb.DuckDBPyConnection, models: dict[str, Model]) -> dict[str, int]:
-    """Run every model in dependency order; return ``{target: row_count}``.
+def run_all(
+    con: duckdb.DuckDBPyConnection, models: dict[str, Model], *, writer: str = "cdsci"
+) -> dict[str, int | None]:
+    """Run every model in dependency order; return ``{target: row_count}`` (None for views).
 
     Order comes from :func:`cdsci.lake.transform.graph.topological_order` — a
     dependency always runs before anything reading it.
     """
     order = topological_order(build_graph(models))
     logger.info("transform: running {} model(s) in order: {}", len(order), order)
-    return {target: run_model(con, models[target]) for target in order}
+    return {target: run_model(con, models[target], writer=writer) for target in order}

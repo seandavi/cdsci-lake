@@ -91,6 +91,23 @@ def test_run_model_creates_table_and_records_run(lake_settings: Settings):
         con.close()
 
 
+def test_run_model_view_for_another_writer_is_not_counted(lake_settings: Settings):
+    # omicidx runs its own view models: attributed to omicidx, and no count(*) of the view
+    con = lake_connect(lake_settings)
+    try:
+        model = Model("xf.v1", "SELECT 1 AS x", Path("xf/v1.sql"), materialized="view")
+        assert run_model(con, model, writer="omicidx") is None
+        assert con.execute("SELECT x FROM lake.xf.v1").fetchall() == [(1,)]
+        assert con.execute(
+            "SELECT writer FROM ops.lake_ops.source WHERE name = 'xf.v1'"
+        ).fetchone() == ("omicidx",)
+        assert con.execute(
+            "SELECT status, rows_after FROM ops.lake_ops.run WHERE source = 'xf.v1'"
+        ).fetchone() == ("success", None)
+    finally:
+        con.close()
+
+
 def test_run_model_records_and_replaces_lineage(lake_settings: Settings):
     """ADR-0021 / #114: table + column lineage land in lake_ops under the run's
     run_id, SELECT * resolves via the catalog, and a re-run with changed SQL
