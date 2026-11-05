@@ -249,27 +249,22 @@ PubMed authors and grant ids, GWAS Catalog SNP and trait ids (1.2M + 1.3M).
   adopts the package; it does not happen in this PR.
 - `cdsci.lake.publish` (`ReleaseManifest`, `TableFileIndex`, Frozen DuckLake,
   the ADR-0025-era per-dataset release model) is superseded as the path for
-  product releases. It is not touched or removed in this PR: `bioc-on-ice`
-  does not import it today, and nothing here depends on it. It retires once
-  every importer of `cdsci.lake.publish` for product release-building is
-  gone; `docs/design/scientific-publication-platform.md` is not rewritten
-  here beyond a pointer to this ADR.
+  product releases. It was deleted by cdsci-lake#166 once every importer had
+  moved (omicidx#260, bioc-on-ice#263, nextflow_telemetry#429). The
+  `lake_ops.publication_receipt` ledger table it wrote is no longer created or
+  read; existing rows in a deployed ledger are left for the owner to drop.
+  `docs/design/scientific-publication-platform.md` stays as a superseded
+  historical draft with a pointer to this ADR.
 - This repo's `AGENTS.md` said public release semantics make "Frozen DuckLake
   ... the primary query adapter." That line is now wrong for the products
   that ship under ADR-0014/ADR-0004: flat Parquet plus DuckDB views is the
   public format, with Iceberg as optional interoperability. This PR corrects
   that line in `AGENTS.md`; see the open question on DuckDock below.
 
-## Open questions for the owner
+## Open questions for the owner (resolved 2026-11-04/05)
 
-1. **DuckDock.** `duckdock` (dormant since 2026-09-22) is built on
-   `cdsci.lake.publish`'s `ReleaseManifest` and Frozen DuckLake. Archive it, or
-   re-point it at the `cdsci.publish` manifest contract once a second product
-   adopts this package?
-2. **The design doc.** `docs/design/scientific-publication-platform.md`
-   still names a Frozen DuckLake as the primary public query path throughout
-   (executive summary, architecture, milestones). That draft is not touched
-   beyond a one-line pointer to this ADR in this PR. Does it get a full
-   revision to match ADR-0014/ADR-0004/this ADR, or does it stay as a
-   superseded historical draft once DuckDock's direction (question 1) is
-   settled?
+1. **DuckDock.** Dropped. `seandavi/duckdock` was archived 2026-11-04; it is
+   no longer a program participant (`AGENTS.md` updated, cdsci-lake#166).
+2. **The design doc.** `docs/design/scientific-publication-platform.md` stays
+   as a superseded historical draft. It carries a note pointing here and is
+   not revised.

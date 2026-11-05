@@ -10,7 +10,6 @@ The public products remain separate:
 
 - `bioc-on-ice` owns biological schemas, identifiers, source/taxon/genome scopes, and biological acceptance.
 - `cancer-on-ice` owns suppression, geography, measures, temporal interpretation, aggregate-only policy, and cancer acceptance.
-- DuckDock will own public release discovery, introspection, verification, and Frozen DuckLake access.
 - `icegate` remains the optional stateless Iceberg REST auth/routing/credential-vending gateway.
 
 ## Sources of truth
@@ -31,7 +30,7 @@ When code, documentation, and an accepted ADR disagree, stop and surface the con
 - **Public release semantics are format-neutral.** Immutable manifest + Arrow-compatible schema + Parquet define a release. For the products shipping under bioc-on-ice ADR-0014 / omicidx ADR-0004 / cdsci-lake ADR-0027, the public format is flat Parquet plus co-published DuckDB views (`views.sql`); a Frozen DuckLake catalog was tried and dropped (no real `ATTACH` traffic, doubled bundle size). Iceberg stays optional interoperability.
 - **Temporal models are explicit.** Name `append_immutable`, `upsert_latest_snapshot`, `scd2_release`, or approved `scd2_bitemporal`; never describe a table only as “versioned.”
 - **Domain meaning stays domain-local.** Shared modules own mechanics and validation, not biological or cancer schema values.
-- **DuckDock never exposes the mutable internal lake.** Public artifacts may not contain private bucket locations, local paths, credentials, restricted assets, watermarks, or raw logs.
+- **Public releases never expose the mutable internal lake.** Public artifacts may not contain private bucket locations, local paths, credentials, restricted assets, watermarks, or raw logs.
 - **icegate stays protocol-specific.** Do not add persistent registry, lineage, scheduler, or publication state to the transparent Iceberg proxy.
 
 ## Coding rules
@@ -60,7 +59,7 @@ When code, documentation, and an accepted ADR disagree, stop and surface the con
 - Tests are executable contracts.
 - Agent artifacts, observational memory, handoff files, and scratch notes are non-authoritative and disposable.
 - Do not create a committed scratchpad backlog. Move substantive findings into an issue comment, ADR/spec edit, test, or this design document.
-- Keep one writer per repository/worktree. Parallelize cdsci platform, bioc conversion, cancer conversion, and DuckDock lanes only when ownership does not overlap.
+- Keep one writer per repository/worktree. Parallelize cdsci platform, bioc conversion, and cancer conversion lanes only when ownership does not overlap.
 - Shared-contract changes have one platform owner; product lanes report gaps rather than forking shared behavior locally.
 
 ## Project agents
@@ -71,7 +70,6 @@ Project agents live under `.pi/agents/lake-program/` and default to fresh contex
 - `lake-program.platform-worker` — bounded cdsci shared-platform implementation.
 - `lake-program.bioc-worker` — bounded bioc conversion work.
 - `lake-program.cancer-worker` — bounded cancer conversion work.
-- `lake-program.duckdock-worker` — bounded DuckDock work.
 - `lake-program.contract-reviewer` — independent read-only contract review.
 
 The parent/coordinator retains sequencing, architecture, issue disposition, and final acceptance. Give every child a cold-start task packet with repository/cwd, issue, governing files, exact seam, authority, acceptance, validation, and stop conditions. Use forked context only for bounded trajectory advice that genuinely depends on parent history; use fresh context for scouts, writers, and reviewers.
@@ -85,6 +83,6 @@ uv run ruff check src/ tests/
 uv run pytest -q
 ```
 
-Publication changes additionally run the relevant contract, SCD2, direct-Parquet, Frozen DuckLake, registry, and optional Iceberg acceptance described in `docs/design/scientific-publication-platform.md`.
+Publication changes additionally run the `cdsci-publish` tests (`tests/test_cdsci_publish*.py`) and the relevant product concordance described in ADR-0027.
 
 Report honestly: distinguish offline fixture evidence, local HTTP acceptance, live non-destructive probes, and isolated destructive/security tests. Never claim live validation that was not observed.

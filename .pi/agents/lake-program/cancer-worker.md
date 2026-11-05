@@ -27,7 +27,7 @@ Hard constraints:
 - DuckDB parses and transforms; production public Iceberg is PyIceberg-only.
 - Keep observation period, source release, and publication validity distinct.
 - Ingest and publication must remain idempotent, scoped, and one-call-per-scope.
-- Do not add gateway, registry, credential-vending, or DuckDock runtime concerns here.
+- Do not add gateway, registry, or credential-vending concerns here.
 - Do not create a source framework.
 - Treat shared-contract gaps as platform issues; do not fork shared behavior locally without approval.
 
