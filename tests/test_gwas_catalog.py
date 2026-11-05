@@ -19,9 +19,12 @@ import pytest
 from cdsci.lake import Settings, lake_connect
 from cdsci.lake.sources import gwas_catalog
 from cdsci.lake.sources.gwas_catalog.ingest import ASSOCIATIONS_ZIP, STUDIES_FILES
+from cdsci.lake.transform.models import load_models
+from cdsci.lake.transform.runner import run_all
 
 # the module itself: the package's `ingest` attribute is the function
 INGEST = importlib.import_module("cdsci.lake.sources.gwas_catalog.ingest")
+MODELS = Path(__file__).parent.parent / "transform" / "models"
 TSV, TXT = STUDIES_FILES  # the studies file's name from 2026-10-22, and before
 
 SNAP = "SELECT max(snapshot_id) FROM lake.snapshots()"
@@ -189,6 +192,53 @@ def test_an_undated_directory_needs_a_version(lake_settings, tmp_path):
     summary = gwas_catalog.ingest(directory=str(undated), version="2026-09-15",
                                   settings=lake_settings)
     assert (summary["version"], summary["rows"]) == ("2026-09-15", 2)
+
+
+def test_id_bridges_unnest_the_parents_cells_as_views(lake_settings, tmp_path):
+    """#169: association_snp / association_mapped_trait / study_mapped_trait, one row per
+    element of the raw cell, keyed by the parent's key, CURIEs in lake.ontology's form."""
+    efo, oba = "http://www.ebi.ac.uk/efo/EFO_0008483", "http://purl.obolibrary.org/obo/OBA_VT0001253"
+    rows = [
+        # a haplotype, a list with a repeat, an interaction, a position-form variant
+        assoc(study_accession="GCST000001", snps="rs1; rs2", mapped_trait_uri=f"{efo}, {oba}"),
+        assoc(study_accession="GCST000001", snps="rs3, rs3", mapped_trait_uri=efo),
+        assoc(study_accession="GCST000002", snps="rs4 x chr1:227959354",
+              mapped_trait_uri="http://example.org/no-curie-tail"),
+        assoc(study_accession="GCST000002", snps="rs5"),  # no mapped trait: no bridge row
+    ]
+    studies = [study(study_accession="GCST000001", mapped_trait_uri=f"{oba}, {efo}"),
+               study(study_accession="GCST000002")]
+    d = release(tmp_path / "releases", "2026-10-22", rows, studies)
+    gwas_catalog.ingest(directory=str(d), settings=lake_settings)
+
+    con = lake_connect(lake_settings)
+    try:
+        models = {t: m for t, m in load_models(MODELS).items() if t.startswith("gwas_catalog.")}
+        assert all(m.materialized == "view" for m in models.values())
+        # run_all runs each model's .test.sql grain assertions; a view reports no count
+        assert run_all(con, models) == {"gwas_catalog.association_snp": None,
+                                        "gwas_catalog.association_mapped_trait": None,
+                                        "gwas_catalog.study_mapped_trait": None}
+        assert con.execute("SELECT line_number, snp_id FROM lake.gwas_catalog.association_snp "
+                           "ORDER BY 1, 2").fetchall() == [
+            (1, "rs1"), (1, "rs2"), (2, "rs3"), (3, "chr1:227959354"), (3, "rs4"), (4, "rs5")]
+        assert con.execute("SELECT line_number, trait_id FROM "
+                           "lake.gwas_catalog.association_mapped_trait ORDER BY 1, 2"
+                           ).fetchall() == [
+            (1, "EFO:0008483"), (1, "OBA:VT0001253"), (2, "EFO:0008483"),
+            (3, "http://example.org/no-curie-tail")]
+        assert con.execute("SELECT study_accession, trait_id FROM "
+                           "lake.gwas_catalog.study_mapped_trait ORDER BY 1, 2").fetchall() == [
+            ("GCST000001", "EFO:0008483"), ("GCST000001", "OBA:VT0001253")]
+        # a view: the next release shows through without a rerun
+        gwas_catalog.curate(con, *(tsv(tmp_path / "a.tsv", gwas_catalog.ASSOCIATIONS, rows[:1]),
+                                  tsv(tmp_path / "s.txt", gwas_catalog.STUDIES, studies[1:])),
+                            "2026-11-05")
+        count = "SELECT count(*) FROM lake.gwas_catalog."
+        assert con.execute(count + "association_snp").fetchone() == (2,)
+        assert con.execute(count + "study_mapped_trait").fetchone() == (0,)
+    finally:
+        con.close()
 
 
 def test_latest_walks_to_the_newest_dated_directory(monkeypatch):
