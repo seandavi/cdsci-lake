@@ -84,7 +84,7 @@ def run_cmd(
                 typer.echo(f"  {target}: up to date (skipped)")
                 continue
             rows = runner.run_model(con, model)
-            typer.echo(f"  {target}: {rows} rows")
+            typer.echo(f"  {target}: {'view' if rows is None else f'{rows} rows'}")
     finally:
         con.close()
 
@@ -99,7 +99,7 @@ def run_all_cmd(ctx: typer.Context) -> None:
     finally:
         con.close()
     for target, rows in results.items():
-        typer.echo(f"  {target}: {rows} rows")
+        typer.echo(f"  {target}: {'view' if rows is None else f'{rows} rows'}")
 
 
 if __name__ == "__main__":
