@@ -20,6 +20,8 @@ import duckdb
 from fsspec.implementations.dirfs import DirFileSystem
 from fsspec.implementations.local import LocalFileSystem
 
+from .croissant import croissant
+
 MANIFEST_VERSION = 1
 
 TableSpec = tuple[str, str, str]
@@ -134,6 +136,8 @@ def publish(
     provenance_sql: str | None = None,
     only: Collection[str] | None = None,
     path: Callable[[str, str], str] = default_path,
+    dataset: dict | None = None,
+    field_semantics: dict | None = None,
 ) -> dict:
     """Build one release bundle in `out` from `con`, which has the source(s) attached.
 
@@ -146,6 +150,10 @@ def publish(
     `(comment, {column: doc})`. `code_dir`: the product's own checkout, for
     `manifest["git_sha"]` (not this package's). `provenance_sql`: the product's
     provenance query, or `None` for no provenance section.
+
+    `dataset`: the product's Croissant dataset metadata (name, description, url, license,
+    ...; see `cdsci.publish.croissant`). When given, `croissant.json` is written beside
+    manifest.json; `field_semantics` adds per-column semantics to it. Default None: no file.
     """
     selected = [t for t in tables if only is None or f"{t[0]}.{t[1]}" in only]
     unknown = set(only or ()) - {f"{s}.{t}" for s, t, _ in tables}
@@ -197,6 +205,9 @@ def publish(
     (out / "views.sql").write_text(views)
     (out / "restore.sql").write_text(restore_sql(built, base_url))
     build_db(out / db_file, views, base_url, out)
+    if dataset is not None:
+        doc = croissant(manifest, dataset=dataset, field_semantics=field_semantics)
+        (out / "croissant.json").write_text(json.dumps(doc, indent=2) + "\n")
     (out / "manifest.json.tmp").write_text(json.dumps(manifest, indent=2, default=str) + "\n")
     (out / "manifest.json.tmp").replace(out / "manifest.json")
     print(f"{len(built)} tables, {sum(t['row_count'] for t in built):,} rows, "

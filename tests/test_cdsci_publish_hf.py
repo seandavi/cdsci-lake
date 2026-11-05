@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import duckdb
 import httpx2
 import pytest
-from cdsci.publish import hf
+from cdsci.publish import croissant, hf
 from huggingface_hub.errors import HfHubHTTPError, RepositoryNotFoundError
 
 REPO = "me/product"
@@ -129,6 +129,21 @@ def test_apply_is_one_commit_tagged_with_relative_views(bundle, hub, tmp_path, m
     con.execute(added["views.sql"].decode())
     assert con.execute("SELECT count(*) FROM annotation.gene").fetchone()[0] == 33
     duckdb.connect().execute(added["restore.sql"].decode())  # errors if a row count differs
+
+
+def test_a_bundles_croissant_json_is_pushed_with_download_relative_content_urls(bundle, hub):
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    tables = [{**t, "bytes": 1} for t in manifest["tables"]]
+    doc = croissant({**manifest, "base_url": "https://example.org/latest", "tables": tables},
+                    dataset={"name": "p", "description": "d", "url": "u", "license": "l"})
+    (bundle / "croissant.json").write_text(json.dumps(doc))
+    h = hub(files=[".gitattributes"])
+    _push(bundle, h, apply=True)
+    _, _, ops, _ = h.calls[1]
+    pushed = json.loads(next(o.path_or_fileobj for o in ops if o.path_in_repo == "croissant.json"))
+    assert [f["contentUrl"] for f in pushed["distribution"]] == [
+        "./annotation/gene.parquet", "./provenance/release.parquet"]
+    assert pushed["recordSet"] == doc["recordSet"]
 
 
 def test_a_second_run_with_the_same_manifest_is_a_no_op(bundle, hub, capsys):

@@ -169,6 +169,45 @@ Behaviours chosen, and from where:
   bioc's symmetric-set column detail (cancer's diff is more exact, and bioc's own
   `column_diff` describes it), the old verifier's `AcceptanceReport` / `run_id`.
 
+### Step 6: Croissant 1.1 metadata from the manifest (2026-11-04)
+
+`cdsci.publish.croissant` generates [Croissant 1.1](https://docs.mlcommons.org/croissant/docs/croissant-spec-1.1.html)
+JSON-LD from `manifest.json`: one `cr:FileObject` per table (contentUrl = `base_url` +
+path, sha256, contentSize, `application/x-parquet`) and one `cr:RecordSet` per table with a
+`cr:Field` per column (DuckDB type mapped to a Croissant atomic type, column doc as
+description, `LIST` as `isArray`, `STRUCT` as `subField`, `source.extract.column`). Pure,
+stdlib only. `publish(..., dataset=..., field_semantics=...)` writes `croissant.json` beside
+`manifest.json` only when `dataset` is given, so no product changes until it opts in;
+`upload` regenerates contentUrls per folder (`v{release}/`, `latest/`) and `hf_push`
+download-relative, the same way as `views.sql`.
+
+Decided here:
+
+- Dataset metadata (name, description, url, license, creator, citeAs, keywords) and
+  per-column semantics are product input, merged verbatim onto the `sc:Dataset` and the
+  `cr:Field` (a `dataType` is appended to the atomic one, per the spec's multi-type rule;
+  external-vocabulary prefixes go in `dataset["@context"]`). The package never looks up
+  Bioregistry or any vocabulary.
+- `version` is the manifest `release` (a date, not semver: mlcroissant warns, the spec
+  allows Text; a product may override), `datePublished` the manifest `published_at`.
+- The `@context` is the spec's Appendix 1 with `https://schema.org/`, not the appendix's
+  `http://`: mlcroissant (the reference implementation) rejects the `http` form and Hugging
+  Face emits `https`.
+- A Field `@id` is `schema.table/column` with whitespace folded to `_` (mlcroissant refuses
+  whitespace in an `@id`, and cancer-on-ice has such column names); `name` and
+  `extract.column` keep the real name; a collision raises.
+- A type with no Croissant atomic type (`BLOB`, `MAP`, `UNION`, `INTERVAL`, `BIT`, ...) is
+  `sc:Text` with the raw type in the description, listed by `unmapped(doc)`. Today that is
+  one column across bioc-on-ice and cancer-on-ice (a WKB geometry).
+- The manifest's `provenance` rows are not emitted. Their shape is product-defined
+  (`source`, `source_version`, `url`, `retrieved_at`, ...) and has no clean PROV-O mapping;
+  a dataset-level `prov:wasDerivedFrom` projection is a later step once the products agree
+  what a source row means.
+- `mlcroissant` is a dev-group dependency only (it pulls pandas, scipy, networkx, rdflib):
+  tests validate the generated JSON-LD and read the fixture bundle back through it offline.
+  omicidx's current manifest (no `base_url`, no columns) is not an ADR-0027 manifest yet
+  and gets Croissant when it adopts this package.
+
 ## Consequences
 
 - This amends bioc-on-ice ADR-0015(a), which decided against a shared release

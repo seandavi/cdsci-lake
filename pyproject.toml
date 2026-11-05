@@ -68,6 +68,10 @@ dev = [
     # dev-only: validates manifest.json against cdsci.publish's manifest.schema.json
     # in tests; not a runtime dependency of cdsci-publish itself.
     "jsonschema>=4.23.0",
+    # dev-only: the Croissant reference implementation validates and reads back the
+    # croissant.json cdsci.publish generates (ADR-0027 step 6). It pulls pandas, scipy,
+    # networkx and rdflib, so it is never a runtime dependency of cdsci-publish.
+    "mlcroissant>=1.1.1",
     "pyarrow>=25.0.1",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",

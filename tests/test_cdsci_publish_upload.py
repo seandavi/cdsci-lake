@@ -7,7 +7,7 @@ from datetime import date
 
 import duckdb
 import pytest
-from cdsci.publish import upload
+from cdsci.publish import croissant, upload
 from cdsci.publish.upload import keep_daily_weekly, keep_monthly, keep_newest
 from fsspec.implementations.local import LocalFileSystem
 from pyarrow import fs as pafs
@@ -74,6 +74,24 @@ def test_each_folder_reads_its_own_url_extra_files_travel_and_manifest_last(tmp_
     # keep 4 of 6, the one-off counted; latest/ and non-dated names are untouched
     assert sorted(p.name for p in bucket.iterdir()) == [
         "latest", "v2026-10-18", "v2026-10-25", "v2026-10-29", f"v{RELEASE}", "vnotadate"]
+
+
+def test_a_bundles_croissant_json_travels_with_each_folders_own_content_urls(tmp_path, capsys):
+    bucket, bundle = _bucket(tmp_path), _bundle(tmp_path)
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    doc = croissant({**manifest, "tables": [{**manifest["tables"][0], "bytes": 1}]},
+                    dataset={"name": "p", "description": "d", "url": "u", "license": "l"})
+    (bundle / "croissant.json").write_text(json.dumps(doc))
+    _upload(bundle, bucket, apply=True)
+
+    for folder in (f"v{RELEASE}", "latest"):
+        got = json.loads((bucket / folder / "croissant.json").read_text())
+        assert got["distribution"][0]["contentUrl"] == f"{PUBLIC}/{folder}/annotation/gene.parquet"
+        assert got["recordSet"] == doc["recordSet"]
+    puts = [ln.split()[1] for ln in capsys.readouterr().out.splitlines() if ln.startswith("put")]
+    latest = [p for p in puts if "/latest/" in p]
+    assert latest.index(f"{bucket}/latest/croissant.json") < latest.index(
+        f"{bucket}/latest/manifest.json")
 
 
 def test_dry_run_writes_nothing_and_lists_the_plan(tmp_path, capsys):
