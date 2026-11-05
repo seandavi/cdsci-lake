@@ -16,14 +16,19 @@ from pathlib import Path
 
 from fixtures.contracts import dataset as fx
 
-from cdsci.lake.contracts import ColumnContract, DatasetContract, TableContract, TemporalModel
+from cdsci.lake.contracts import (
+    UNSAFE_PATTERN,
+    ColumnContract,
+    DatasetContract,
+    TableContract,
+    TemporalModel,
+)
 from cdsci.lake.contracts_render import (
     lint_contract,
     render_dataset_json,
     render_dataset_markdown,
     render_table_markdown,
 )
-from cdsci.lake.publish.release import _UNSAFE_PATTERN
 
 FIXTURES = Path(__file__).parent / "fixtures" / "contracts"
 GOLDEN_TABLE_PATH = FIXTURES / "golden_table.md"
@@ -173,7 +178,7 @@ def test_render_table_and_dataset_markdown_contain_no_absolute_path_or_secret():
         render_table_markdown(fx.EVENTS_TABLE),
         render_dataset_markdown(fx.DATASET_CONTRACT),
     ):
-        assert _UNSAFE_PATTERN.search(rendered) is None
+        assert UNSAFE_PATTERN.search(rendered) is None
 
 
 def test_dataset_contract_render_dataset_json_survives_a_second_table():

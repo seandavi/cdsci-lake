@@ -1,6 +1,6 @@
 # Scientific Lake Publication Platform
 
-Status: **Draft architecture proposal**
+Status: **Superseded historical draft** — superseded by [ADR-0027](../adr/0027-shared-release-bundle-package.md) (shared `cdsci-publish` package; flat Parquet + DuckDB views, no Frozen DuckLake, no DuckDock). The `cdsci.lake.publish` module this document describes was deleted (cdsci-lake#166). Kept for history; not revised.
 
 Scope: `cdsci-lake`, `bioc-on-ice`, `cancer-on-ice`, optional Iceberg publication, and `icegate`
 

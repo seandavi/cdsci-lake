@@ -8,9 +8,8 @@ current row per entity across two writer scopes).
 Column names are deliberately domain-neutral -- no biological or cancer
 vocabulary (AGENTS.md).
 
-Both a "producer" test (build a manifest from ``DATASET_CONTRACT`` + this
-fixture) and a "DuckDock-style validator" test (cold-load
-``golden_manifest.json``) consume these same files.
+``test_contracts.py`` and ``test_contracts_render.py`` (golden markdown) consume
+these files.
 """
 
 from __future__ import annotations

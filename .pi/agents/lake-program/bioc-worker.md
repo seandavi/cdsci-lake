@@ -26,7 +26,7 @@ Hard constraints:
 - Production public Iceberg is PyIceberg-only.
 - Ingest and publication must remain idempotent and explicitly scoped.
 - Preserve row-carried release history and provenance unless the approved issue changes that contract.
-- Do not add gateway, credential-vending, registry, or DuckDock runtime concerns here.
+- Do not add gateway, credential-vending, or registry concerns here.
 - Do not create a source framework. Keep one source module simple.
 - Treat shared-contract gaps as platform issues; do not fork shared behavior locally without approval.
 

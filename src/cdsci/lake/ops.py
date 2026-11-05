@@ -31,16 +31,13 @@ from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import duckdb
 
 from .connect import LAKE
 from .contracts import check_asset_ref
 from .log import event, logger
-
-if TYPE_CHECKING:
-    from .publish.release import PublicationReceipt
 
 OPS = "ops"  # the ATTACH alias for the ledger database
 OPS_SCHEMA = "lake_ops"
@@ -271,15 +268,9 @@ def bootstrap(con: duckdb.DuckDBPyConnection) -> None:
             run_id TEXT, recorded_at TIMESTAMPTZ
         );"""
     )
-    # ADR-0014 Amendment 2026-09-22 / cdsci-lake#100: lands `PublicationReceipt.to_json()`
-    # keyed by (release_id, dataset_id, asset_ref), attributed to run_id.
-    con.execute(
-        f"""CREATE TABLE IF NOT EXISTS {_t("publication_receipt")} (
-            receipt_id TEXT, release_id TEXT, dataset_id TEXT, asset_ref TEXT,
-            spec_version TEXT, status TEXT, receipt TEXT, run_id TEXT,
-            recorded_at TIMESTAMPTZ
-        );"""
-    )
+    # `publication_receipt` (ADR-0014 Amendment 2026-09-22 / cdsci-lake#100) was written
+    # only by the retired `cdsci.lake.publish` (cdsci-lake#166); no longer created here.
+    # Existing rows in a deployed ledger are left in place for the owner to drop.
     # ADR-0008 Amendment 2026-09-22 / cdsci-lake#89: attribution for historic
     # SQLMesh-written snapshots (no `commit_extra_info`). ADR-0021 removed the
     # writer; the rows stay readable via `snapshot_run_ids`.
@@ -944,53 +935,3 @@ def snapshot_run_ids(con: duckdb.DuckDBPyConnection, snapshot_ids: list[int]) ->
     ).fetchall()
     return dict(rows)
 
-
-# --- Publication receipts (ADR-0014 Amendment 2026-09-22; cdsci-lake#100) ---
-
-
-def record_publication_receipt(con: duckdb.DuckDBPyConnection, receipt: PublicationReceipt) -> str:
-    """Land ``receipt`` under ``(release_id, dataset_id, asset_ref)`` (delete-then-insert).
-
-    ``asset_ref`` is derived, not a separate caller-supplied field -- the receipt's
-    own ``dataset``/``release`` name the release-as-a-whole asset
-    (``release.<dataset>.<release>``, the same ref
-    :func:`cdsci.lake.publish.builder.record_release` registers via
-    :func:`register_asset`), so re-running the same release's build replaces its one
-    receipt rather than accumulating duplicates. Returns the generated ``receipt_id``.
-    """
-    release_id, dataset_id = receipt.release, receipt.dataset
-    asset_ref = f"release.{dataset_id}.{release_id}"
-    receipt_id = str(uuid.uuid4())
-    # Fall back to the enclosing run() block's run_id when the receipt itself doesn't
-    # carry one, so this row and register_asset()'s last_run_id (also active_run()-
-    # derived) attribute to the same run instead of silently diverging.
-    active = active_run()
-    run_id = receipt.run_id or (active.run_id if active else None)
-    con.execute(
-        f"DELETE FROM {_t('publication_receipt')} "
-        "WHERE release_id = ? AND dataset_id = ? AND asset_ref = ?",
-        [release_id, dataset_id, asset_ref],
-    )
-    con.execute(
-        f"INSERT INTO {_t('publication_receipt')} "
-        "(receipt_id, release_id, dataset_id, asset_ref, spec_version, status, receipt, "
-        " run_id, recorded_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)",
-        [receipt_id, release_id, dataset_id, asset_ref, receipt.spec_version,
-         receipt.status.value, receipt.to_json(), run_id],
-    )
-    return receipt_id
-
-
-def publication_receipts(
-    con: duckdb.DuckDBPyConnection, release_id: str
-) -> list[PublicationReceipt]:
-    """Receipts for ``release_id``, oldest first, decoded back to ``PublicationReceipt``."""
-    from .publish.release import PublicationReceipt  # lazy: publish is a downstream import
-
-    rows = con.execute(
-        f"SELECT receipt FROM {_t('publication_receipt')} "
-        "WHERE release_id = ? ORDER BY recorded_at",
-        [release_id],
-    ).fetchall()
-    return [PublicationReceipt.from_json(r[0]) for r in rows]

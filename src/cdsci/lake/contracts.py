@@ -35,6 +35,22 @@ _SOURCE_REF_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){2}$")
 _CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
 _CREDENTIAL_WORD_PATTERN = re.compile(r"password|secret|token|credential", re.IGNORECASE)
 
+# Anything that must never reach a public artifact or a log line: private/local
+# storage schemes, absolute POSIX paths, credential-shaped tokens (AGENTS.md:
+# public releases never expose the mutable internal lake). Used by
+# :mod:`cdsci.lake.log` to redact and by the contract-render tests as a gate.
+UNSAFE_PATTERN = re.compile(
+    r"(?ix)"
+    r"\b(s3|r2|gs|file|postgres(?:ql)?)://"  # private/local storage schemes
+    r"|(?<![\w./-])/(mnt|home|tmp|etc|var|opt|data)/"  # absolute POSIX path
+    r"|token="
+    r"|password"
+    r"|secret"
+    r"|api[-_]?key"
+    r"|AKIA[0-9A-Z]{16}"
+    r"|ya29\."
+)
+
 
 def check_asset_ref(ref: str) -> None:
     """Reject a malformed or credential-bearing asset ``ref`` (ADR-0014 §5).
@@ -45,9 +61,8 @@ def check_asset_ref(ref: str) -> None:
     credentials (a bare ``@``, anywhere, not just in a URL's netloc -- a scheme-less
     or ``scheme:``-only ref like ``postgres:user:pass@host`` never populates
     ``urlsplit().netloc``; and no case-insensitive password/secret/token/credential
-    substring). Shared by :mod:`cdsci.lake.ops` (any asset type) and
-    :mod:`cdsci.lake.publish.release` (layered under the stricter
-    :func:`check_source_ref`).
+    substring). Used by :mod:`cdsci.lake.ops` for any asset type and layered
+    under the stricter :func:`check_source_ref`.
     """
     if not ref or ref != ref.strip():
         raise ValueError(f"invalid asset ref: {ref!r}")

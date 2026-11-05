@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from .publish.release import _UNSAFE_PATTERN
+from .contracts import UNSAFE_PATTERN
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -49,7 +49,7 @@ def _redact(value: Any) -> Any:
     with a placeholder rather than raising -- a log line is best-effort, not a
     publish-time contract that should crash a run over a field it didn't expect.
     """
-    if isinstance(value, str) and _UNSAFE_PATTERN.search(value):
+    if isinstance(value, str) and UNSAFE_PATTERN.search(value):
         return "<redacted>"
     return value
 
