@@ -208,6 +208,38 @@ Decided here:
   omicidx's current manifest (no `base_url`, no columns) is not an ADR-0027 manifest yet
   and gets Croissant when it adopts this package.
 
+### Nested fields: sibling tables (2026-11-05, #167 / #169)
+
+A nested column (a LIST or STRUCT) stays on its parent table. Where people join on its
+elements (ids) or filter on them (key/value attributes), the source adds a **sibling
+table**: one row per element, keyed by the parent's key. The sibling is additive to the
+manifest; the parent is unchanged. Measured on the live releases (#167): iCite citations
+(931.6M elements, already a table), omicidx biosample and SRA attributes (880M + 674M),
+PubMed authors and grant ids, GWAS Catalog SNP and trait ids (1.2M + 1.3M).
+
+- **When.** Join keys and filterable key/value attributes only. Not short id lists on small
+  tables (cellxgene, encode, cellosaurus, bedbase) and not display-only structs (contact,
+  organization, certificates, reads, qualities, external_links): those are read with the
+  parent, and `unnest` over a small table costs nothing.
+- **In the lake: a view by default** (`-- materialized: view`, a plain-SQL model owned by
+  the source, ADR-0021). The parents change daily; a materialized ~1.5B-row attribute table
+  would be rewritten every day only to be copied again by the bundle build. A lake model is
+  a table only where internal queries measurably need it. Lake name:
+  `<source>.<parent>_<field>` (`gwas_catalog.association_snp`, `bugsigdb.signature_taxon`).
+- **In a release: materialized Parquet, sorted by the lookup key.** The product's publish
+  SELECT for the sibling carries an explicit `ORDER BY <lookup key>`. `publish` runs every
+  COPY with `preserve_insertion_order = false`, so without an `ORDER BY` the Parquet keeps
+  no order at all, however the lake view or its parent is laid out (verified with DuckDB
+  1.5.4: a view over a parent sorted on disk copied unsorted under that setting, and sorted
+  only with the `ORDER BY`). Sorted by the key people look up, the row-group min/max
+  statistics let a remote reader skip most of the file. Product name: `<parent>__<field>`
+  (`clinical.gwas_catalog__association__snp`), the product's own schema convention.
+- **Croissant.** A sibling's parent-key field can declare `references` into the parent's
+  key field; `cr:references` is in the context, and a product passes it today through
+  `field_semantics` (any property merges onto the `cr:Field`). The package does not derive
+  the link itself: it has no table-key metadata to derive it from (a follow-up once the gate's
+  `keys`/`references` input and `field_semantics` share a source).
+
 ## Consequences
 
 - This amends bioc-on-ice ADR-0015(a), which decided against a shared release

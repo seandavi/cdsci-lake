@@ -318,11 +318,11 @@ def test_publish_iceberg_disabled(lake_settings: Settings):
 def test_repo_models_load_as_plain_sql_with_metadata_and_tests():
     """ADR-0021 / #112: every shipped model is plain SQL with its directives and tests."""
     models = load_models(Path(__file__).parents[1] / "transform" / "models")
-    assert len(models) == 15
+    assert len(models) == 18
     for target, m in models.items():
         assert not m.sql.lstrip().upper().startswith("MODEL"), target
         assert not m.license.startswith("UNSPECIFIED"), target
         assert m.description != f"cdsci-lake transform model: {target}", target
         assert m.tests, target
-    assert sum(len(m.tests) for m in models.values()) == 35
+    assert sum(len(m.tests) for m in models.values()) == 46
     build_graph(models)  # parses, no cycles
