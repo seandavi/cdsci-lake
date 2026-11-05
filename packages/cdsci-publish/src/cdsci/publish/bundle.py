@@ -32,7 +32,12 @@ def sql_literal(s):
 
 
 def _url(base_url, t):
-    return f"{base_url}/{t['schema']}/{t['table']}.parquet"
+    return f"{base_url}/{t['path']}"
+
+
+def default_path(schema, table):
+    """`<schema>/<table>.parquet`, the layout `publish` uses unless given another."""
+    return f"{schema}/{table}.parquet"
 
 
 def views_sql(tables, base_url):
@@ -128,10 +133,12 @@ def publish(
     code_dir: Path,
     provenance_sql: str | None = None,
     only: Collection[str] | None = None,
+    path: Callable[[str, str], str] = default_path,
 ) -> dict:
     """Build one release bundle in `out` from `con`, which has the source(s) attached.
 
-    Each table streams to `<schema>/<table>.parquet` (ZSTD) through COPY, so nothing is
+    Each table streams to `path(schema, table)` under `out`, by default
+    `<schema>/<table>.parquet` (ZSTD), through COPY, so nothing is
     materialised in Python. manifest.json is written last, atomically: it marks the bundle
     complete. `out` must be new or empty.
 
@@ -155,19 +162,20 @@ def publish(
     built = []
     for schema, table, sql in selected:
         name = f"{schema}.{table}"
-        path = out / schema / f"{table}.parquet"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        copy_sql = f"COPY ({sql}) TO {sql_literal(str(path))} (FORMAT parquet, COMPRESSION zstd)"
+        rel = path(schema, table)
+        file = out / rel
+        file.parent.mkdir(parents=True, exist_ok=True)
+        copy_sql = f"COPY ({sql}) TO {sql_literal(str(file))} (FORMAT parquet, COMPRESSION zstd)"
         n = con.execute(copy_sql).fetchone()[0]
-        with path.open("rb") as f:
+        with file.open("rb") as f:
             sha256 = hashlib.file_digest(f, "sha256").hexdigest()
         comment, col_docs = docs(name)
-        cols = con.sql(f"DESCRIBE SELECT * FROM read_parquet({sql_literal(str(path))})").fetchall()
+        cols = con.sql(f"DESCRIBE SELECT * FROM read_parquet({sql_literal(str(file))})").fetchall()
         columns = [{"name": c[0], "type": c[1], "doc": col_docs.get(c[0])} for c in cols]
-        built.append({"schema": schema, "table": table, "path": f"{schema}/{table}.parquet",
-                      "row_count": n, "bytes": path.stat().st_size, "sha256": sha256,
+        built.append({"schema": schema, "table": table, "path": rel,
+                      "row_count": n, "bytes": file.stat().st_size, "sha256": sha256,
                       "comment": comment, "columns": columns})
-        print(f"{name:45} {n:>14,} rows {path.stat().st_size:>16,} bytes", flush=True)
+        print(f"{name:45} {n:>14,} rows {file.stat().st_size:>16,} bytes", flush=True)
 
     provenance = []
     if provenance_sql is not None:
