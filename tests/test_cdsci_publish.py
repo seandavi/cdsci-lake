@@ -115,3 +115,19 @@ def test_unknown_table_creates_nothing(con, tmp_path):
         publish(con, out, tables=TABLES, docs=_docs, base_url=out.as_uri(),
                 db_file="product.duckdb", code_dir=HERE, only=["annotation.nope"])
     assert not out.exists()
+
+
+def test_a_product_layout_drives_files_views_and_restore(con, tmp_path):
+    # omicidx: main-schema tables at the folder's top level, marts under their schema
+    out = tmp_path / "release"
+    m = publish(con, out, tables=TABLES + [("main", "gadget", "SELECT * FROM src.widget")],
+                docs=_docs, base_url=out.as_uri(), db_file="product.duckdb", code_dir=HERE,
+                path=lambda s, t: f"{t}.parquet" if s == "main" else f"{s}/{t}.parquet")
+    assert [t["path"] for t in m["tables"]] == ["annotation/widget.parquet", "gadget.parquet"]
+    assert (out / "gadget.parquet").exists()
+    assert f"read_parquet('{out.as_uri()}/gadget.parquet')" in (out / "views.sql").read_text()
+    db = duckdb.connect(str(out / "product.duckdb"), read_only=True)
+    assert db.sql("SELECT count(*) FROM main.gadget").fetchone()[0] == 2
+    local = duckdb.connect()
+    local.execute((out / "restore.sql").read_text())
+    assert local.sql("SELECT count(*) FROM main.gadget").fetchone()[0] == 2
