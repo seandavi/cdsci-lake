@@ -139,7 +139,8 @@ def field(record_set, column, source, semantics=None):
     data_type, depth, members = _type(raw)
     # An @id is an IRI: no whitespace (mlcroissant refuses even escaped). `name` and
     # `extract.column` keep the real column name.
-    fid = f"{record_set}/{re.sub(r'\s+', '_', name)}"
+    slug = re.sub(r"\s+", "_", name)  # outside the f-string: 3.11 has no backslash there
+    fid = f"{record_set}/{slug}"
     f = {"@type": "cr:Field", "@id": fid, "name": name}
     if members is not None:
         f["subField"] = [field(fid, {"name": m, "type": mt, "doc": None}, None)
